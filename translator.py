@@ -1,16 +1,17 @@
-import json
+﻿import json
 import logging
 import os
+import random
+import re
 import threading
 import time
-import random
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import requests
 
-# 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -19,9 +20,7 @@ logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
-
-# 分隔符，用于合并多个短文本
-TEXT_SEPARATOR = "\n---SPLIT---\n"
+DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 
 
 def get_data_dir() -> Path:
@@ -38,12 +37,12 @@ class JaZhTranslator:
         glossary_path: Optional[str] = None,
         cache_path: Optional[str] = None,
         max_workers: int = 5,
+        cancel_event: Optional[threading.Event] = None,
     ):
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         if not self.api_key:
             raise ValueError("未找到 DeepSeek API Key，请在界面输入或设置环境变量 DEEPSEEK_API_KEY")
 
-        # 使用用户数据目录存储缓存
         data_dir = get_data_dir()
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
         self.cache_path = cache_path or str(data_dir / "cache.json")
@@ -52,10 +51,10 @@ class JaZhTranslator:
         self.cache = self._load_json(self.cache_path, {})
         self._cache_dirty = False
         self._save_counter = 0
-        self._cache_lock = threading.Lock()  # 缓存线程锁
-
-        self.max_workers = max_workers  # 并发线程数
-
+        self._cache_lock = threading.RLock()
+        self.max_workers = max_workers
+        self.cancel_event = cancel_event or threading.Event()
+        self.session = requests.Session()
         logger.info(f"翻译器初始化完成，并发数: {max_workers}")
 
     @staticmethod
@@ -87,9 +86,8 @@ class JaZhTranslator:
 
     def flush_cache(self):
         """强制保存缓存（程序退出或翻译完成时调用）"""
-        with self._cache_lock:
-            if self._cache_dirty:
-                self._save_cache(force=True)
+        if self._cache_dirty:
+            self._save_cache(force=True)
 
     def _build_glossary_text(self) -> str:
         """构建术语表文本"""
@@ -98,21 +96,24 @@ class JaZhTranslator:
         lines = [f"{k} => {v}" for k, v in self.glossary.items()]
         return "\n".join(lines)
 
-    def _call_deepseek(self, text: str, max_retries: int = 3) -> str:
+    def _call_deepseek(
+        self,
+        text: str,
+        max_retries: int = 3,
+        text_separator: Optional[str] = None,
+    ) -> str:
         """调用 DeepSeek API，支持重试机制"""
-        # 检查是否是合并文本
-        is_batch = TEXT_SEPARATOR in text
+        sep = text_separator or DEFAULT_TEXT_SEPARATOR
+        is_batch = sep in text
 
         system_prompt = """你是资深日文文学翻译专家，精通日中双语，擅长文学翻译。
-
 【翻译原则】信、雅、达：
 - 信：准确传达原文含义，不随意增删改，保持原作风格和情感基调
 - 雅：译文文笔优美，符合中文表达习惯，避免生硬直译或翻译腔
 - 达：语言流畅自然，通顺易懂，让读者沉浸在故事中
-
 【日文特有表达处理】：
 1. 敬语体系：将敬语转换为符合中文语境的表达，不必过度保留敬称
-2. 姉ちゃん/兄ちゃん等称呼：根据角色关系，译为"姐姐/哥哥"或保留昵称风格
+2. 姐さん/兄さん等称谓：根据角色关系，译为“姐姐/哥哥”或保留昵称风格
 3. 委婉表达：日文的含蓄委婉可适当转化为更直接的中文表达，但要保留情感色彩
 4. 语气词：よ、ね、さ等语气词不必逐字翻译，用自然的中文语气表达即可
 5. 内心独白：保持第一人称叙述的连贯性，内心想法用括号或直接叙述
@@ -122,7 +123,6 @@ class JaZhTranslator:
 2. 叙述描写：文笔优美，有文学质感，避免大白话
 3. 专业术语：按术语表翻译，保持一致
 4. 成语典故：可用恰当中文成语替代，但要自然不生硬
-
 【输出要求】：
 1. 输出仅为译文，不要解释或添加原文
 2. 保持原文段落结构，不合并或拆分段落
@@ -132,11 +132,10 @@ class JaZhTranslator:
         if is_batch:
             system_prompt += f"""
 
-【重要！多段落分隔规则】
-原文由多个独立段落组成，段落之间用'{TEXT_SEPARATOR.strip()}'分隔。
-你必须在译文中保留相同数量的段落，且每个段落之间也必须用'{TEXT_SEPARATOR.strip()}'分隔。
+【重要！多段落分隔规则】原文由多个独立段落组成，段落之间用'{sep.strip()}'分隔。
+你必须在译文中保留相同数量的段落，且每个段落之间也必须用'{sep.strip()}'分隔。
 绝对不能将多个段落合并为一个段落！
-输出格式：译文1{TEXT_SEPARATOR.strip()}译文2{TEXT_SEPARATOR.strip()}译文3..."""
+输出格式：译文1{sep.strip()}译文2{sep.strip()}译文3..."""
 
         user_prompt = (
             f"【术语表】\n{self._build_glossary_text()}\n\n"
@@ -158,19 +157,22 @@ class JaZhTranslator:
 
         last_error = None
         for attempt in range(max_retries):
+            if self.cancel_event.is_set():
+                raise RuntimeError("翻译已取消")
+
             try:
-                resp = requests.post(
+                resp = self.session.post(
                     DEEPSEEK_API_URL,
                     headers=headers,
                     json=payload,
-                    timeout=120
+                    timeout=120,
                 )
 
-                # 处理速率限制
                 if resp.status_code == 429:
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     logger.warning(f"API 限流，等待 {wait_time:.1f} 秒后重试...")
-                    time.sleep(wait_time)
+                    if self.cancel_event.wait(wait_time):
+                        raise RuntimeError("翻译已取消")
                     continue
 
                 resp.raise_for_status()
@@ -196,9 +198,83 @@ class JaZhTranslator:
 
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt + random.uniform(0, 1)
-                time.sleep(wait_time)
+                if self.cancel_event.wait(wait_time):
+                    raise RuntimeError("翻译已取消")
 
         raise RuntimeError(f"翻译失败: {last_error}")
+
+    def _call_deepseek_batch_json(self, texts: List[str], max_retries: int = 2) -> Optional[List[str]]:
+        """批量翻译：要求模型返回 JSON 数组，失败时返回 None 让上层走兜底。"""
+        if not texts:
+            return []
+
+        numbered = [{"idx": i, "text": t} for i, t in enumerate(texts)]
+        system_prompt = """你是日文到中文翻译助手。
+请严格输出 JSON 数组，不要输出任何额外文字。
+数组长度必须与输入一致，索引顺序一致。
+每个元素格式为: {"idx": 整数, "zh": "译文"}"""
+        user_prompt = (
+            f"【术语表】\n{self._build_glossary_text()}\n\n"
+            f"请翻译以下 JSON 数组中的 text 字段并返回 JSON：\n{json.dumps(numbered, ensure_ascii=False)}"
+        )
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": DEEPSEEK_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+        }
+
+        for attempt in range(max_retries):
+            if self.cancel_event.is_set():
+                raise RuntimeError("翻译已取消")
+            try:
+                resp = self.session.post(
+                    DEEPSEEK_API_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=120,
+                )
+                if resp.status_code == 429:
+                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    if self.cancel_event.wait(wait_time):
+                        raise RuntimeError("翻译已取消")
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                raw = data["choices"][0]["message"]["content"].strip()
+                obj = json.loads(raw)
+                arr = obj.get("items") if isinstance(obj, dict) else obj
+                if not isinstance(arr, list) or len(arr) != len(texts):
+                    return None
+
+                out = [None] * len(texts)
+                for item in arr:
+                    if not isinstance(item, dict):
+                        return None
+                    idx = item.get("idx")
+                    zh = item.get("zh")
+                    if not isinstance(idx, int) or idx < 0 or idx >= len(texts) or not isinstance(zh, str):
+                        return None
+                    out[idx] = zh.strip()
+                if any(v is None for v in out):
+                    return None
+                return out
+            except Exception:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    if self.cancel_event.wait(wait_time):
+                        raise RuntimeError("翻译已取消")
+                    continue
+                return None
+
+        return None
 
     def _translate_chunk(self, text: str) -> str:
         """翻译单个文本块（带缓存）"""
@@ -206,19 +282,73 @@ class JaZhTranslator:
         if not text:
             return text
 
-        # 检查缓存
+        if self.cancel_event.is_set():
+            raise RuntimeError("翻译已取消")
+
         with self._cache_lock:
             if text in self.cache:
                 return self.cache[text]
 
         zh = self._call_deepseek(text)
 
-        # 存入缓存
         with self._cache_lock:
             self.cache[text] = zh
 
         self._save_cache()
         return zh
+
+    @staticmethod
+    def _smart_split_text(text: str, chunk_size: int) -> List[str]:
+        """按段落+句子优先切分，尽量避免生硬按字符截断。"""
+        text = text.strip()
+        if not text:
+            return []
+        if len(text) <= chunk_size:
+            return [text]
+
+        paragraphs = [p for p in text.split("\n") if p]
+        chunks: List[str] = []
+        current = ""
+
+        def flush_current():
+            nonlocal current
+            if current:
+                chunks.append(current)
+                current = ""
+
+        for para in paragraphs:
+            if len(para) > chunk_size:
+                sentences = re.split(r"(?<=[。！？!?…])", para)
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+
+                    if len(sentence) > chunk_size:
+                        flush_current()
+                        for i in range(0, len(sentence), chunk_size):
+                            chunks.append(sentence[i:i + chunk_size])
+                        continue
+
+                    if not current:
+                        current = sentence
+                    elif len(current) + 1 + len(sentence) <= chunk_size:
+                        current += "\n" + sentence
+                    else:
+                        flush_current()
+                        current = sentence
+                continue
+
+            if not current:
+                current = para
+            elif len(current) + 1 + len(para) <= chunk_size:
+                current += "\n" + para
+            else:
+                flush_current()
+                current = para
+
+        flush_current()
+        return chunks
 
     def translate(self, text: str, chunk_size: int = 1200) -> str:
         """翻译文本，支持缓存和长文本分块"""
@@ -226,35 +356,14 @@ class JaZhTranslator:
         if not text:
             return text
 
-        # 检查缓存
         with self._cache_lock:
             if text in self.cache:
                 return self.cache[text]
 
-        # 分块处理长文本
         if len(text) <= chunk_size:
             zh = self._call_deepseek(text)
         else:
-            paragraphs = text.split('\n')
-            chunks = []
-            current_chunk = ""
-
-            for para in paragraphs:
-                if len(current_chunk) + len(para) + 1 <= chunk_size:
-                    current_chunk += ('\n' if current_chunk else '') + para
-                else:
-                    if current_chunk:
-                        chunks.append(current_chunk)
-                    if len(para) > chunk_size:
-                        for i in range(0, len(para), chunk_size):
-                            chunks.append(para[i:i + chunk_size])
-                    else:
-                        current_chunk = para
-
-            if current_chunk:
-                chunks.append(current_chunk)
-
-            # 并发翻译长文本的各个分块
+            chunks = self._smart_split_text(text, chunk_size)
             with ThreadPoolExecutor(max_workers=min(self.max_workers, len(chunks))) as executor:
                 futures = {executor.submit(self._translate_chunk, c): i for i, c in enumerate(chunks)}
                 results = [None] * len(chunks)
@@ -272,49 +381,40 @@ class JaZhTranslator:
     def translate_batch(
         self,
         texts: List[str],
-        progress_callback=None,
-        batch_size: int = 4
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        batch_size: int = 4,
     ) -> Dict[str, str]:
-        """
-        并发批量翻译多个文本
-
-        Args:
-            texts: 待翻译文本列表
-            progress_callback: 进度回调函数 (completed, total)
-            batch_size: 单次 API 合并的文本数量（短文本合并）
-
-        Returns:
-            {原文: 译文} 字典
-        """
-        results = {}
+        """并发批量翻译多个文本"""
+        results: Dict[str, str] = {}
         total = len(texts)
         completed = 0
 
-        # 分离已缓存和未缓存的文本
-        uncached = []
+        uncached_unique: List[str] = []
+        seen_uncached = set()
+
         with self._cache_lock:
             for text in texts:
                 if text in self.cache:
                     results[text] = self.cache[text]
                     completed += 1
-                else:
-                    uncached.append(text)
+                elif text not in seen_uncached:
+                    uncached_unique.append(text)
+                    seen_uncached.add(text)
 
-        logger.info(f"批量翻译: {total} 条，缓存命中 {completed} 条，待翻译 {len(uncached)} 条")
+        logger.info(f"批量翻译: {total} 条，缓存命中 {completed} 条，待翻译去重后 {len(uncached_unique)} 条")
 
         if progress_callback:
             progress_callback(completed, total)
 
-        if not uncached:
+        if not uncached_unique:
             return results
 
-        # 将短文本合并成批次，减少 API 调用次数
         batches = []
         current_batch = []
         current_length = 0
-        max_batch_length = 800  # 合并后最大长度
+        max_batch_length = 800
 
-        for text in uncached:
+        for text in uncached_unique:
             if len(text) <= 200 and current_length + len(text) < max_batch_length and len(current_batch) < batch_size:
                 current_batch.append(text)
                 current_length += len(text)
@@ -325,7 +425,6 @@ class JaZhTranslator:
                     current_batch = [text]
                     current_length = len(text)
                 else:
-                    # 长文本单独处理
                     batches.append([text])
                     current_batch = []
                     current_length = 0
@@ -334,31 +433,44 @@ class JaZhTranslator:
             batches.append(current_batch)
 
         logger.info(f"合并为 {len(batches)} 个批次进行并发翻译")
+        mismatch_count = 0
 
-        # 并发翻译各批次
-        def translate_batch(batch: List[str]) -> List[Tuple[str, str]]:
-            """翻译一个批次"""
+        def translate_one_batch(batch: List[str]) -> List[Tuple[str, str]]:
+            nonlocal mismatch_count
+            if self.cancel_event.is_set():
+                raise RuntimeError("翻译已取消")
+
             if len(batch) == 1:
                 text = batch[0]
                 zh = self._translate_chunk(text)
                 return [(text, zh)]
-            else:
-                # 合并多个短文本
-                combined = TEXT_SEPARATOR.join(batch)
-                combined_zh = self._translate_chunk(combined)
-                parts = combined_zh.split(TEXT_SEPARATOR)
 
-                # 确保分割数量匹配
-                if len(parts) != len(batch):
-                    logger.warning(f"分割数量不匹配: {len(parts)} vs {len(batch)}，回退逐条翻译")
-                    return [(t, self._translate_chunk(t)) for t in batch]
+            # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
+            json_parts = self._call_deepseek_batch_json(batch)
+            if json_parts and len(json_parts) == len(batch):
+                return list(zip(batch, json_parts))
 
-                return list(zip(batch, parts))
+            separator = f"\n---SPLIT-{uuid.uuid4().hex}---\n"
+            combined = separator.join(batch)
+            combined_zh = self._call_deepseek(combined, text_separator=separator)
+            parts = combined_zh.split(separator)
+
+            if len(parts) != len(batch):
+                with self._cache_lock:
+                    mismatch_count += 1
+                return [(t, self._translate_chunk(t)) for t in batch]
+
+            return list(zip(batch, parts))
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(translate_batch, batch): batch for batch in batches}
+            futures = {executor.submit(translate_one_batch, batch): batch for batch in batches}
 
             for future in as_completed(futures):
+                if self.cancel_event.is_set():
+                    for f in futures:
+                        f.cancel()
+                    raise RuntimeError("翻译已取消")
+
                 try:
                     batch_results = future.result()
                     for original, translated in batch_results:
@@ -368,25 +480,37 @@ class JaZhTranslator:
                             progress_callback(completed, total)
                 except Exception as e:
                     logger.error(f"批次翻译失败: {e}")
-                    # 回退：逐条翻译失败的批次
                     batch = futures[future]
                     for text in batch:
+                        if self.cancel_event.is_set():
+                            raise RuntimeError("翻译已取消")
                         try:
                             zh = self._translate_chunk(text)
                             results[text] = zh
                         except Exception as e2:
                             logger.error(f"翻译失败: {e2}")
-                            results[text] = text  # 保留原文
+                            results[text] = text
                         completed += 1
                         if progress_callback:
                             progress_callback(completed, total)
 
         self._save_cache(force=True)
+        if mismatch_count:
+            logger.warning(f"批量拆分回退 {mismatch_count} 次（模型输出与批次数不一致，已自动逐条翻译）")
+
+        for text in texts:
+            if text not in results:
+                with self._cache_lock:
+                    cached = self.cache.get(text)
+                if cached is not None:
+                    results[text] = cached
+
         return results
 
     def __del__(self):
         """析构时保存缓存"""
         try:
             self.flush_cache()
+            self.session.close()
         except Exception:
             pass
