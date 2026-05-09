@@ -1,11 +1,12 @@
 ﻿import logging
 import os
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import traceback
 
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import NavigableString
 
 from epub_io import (
     apply_toc_translations,
@@ -28,14 +29,15 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("EPUB 日译中 (DeepSeek)")
-        self.geometry("700x310")
-        self.minsize(500, 200)
+        self.geometry("780x340")
+        self.minsize(580, 240)
         self.default_dir = os.getcwd()
 
         self.running = False
         self.completed = False
         self.translator = None
         self.cancel_event = threading.Event()
+        self.translation_start_time = 0.0
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar(value="output_zh.epub")
@@ -55,6 +57,29 @@ class App(tk.Tk):
 
     def _set_progress(self, value: float):
         self._run_on_ui_thread(self.progress_var.set, value)
+
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        if h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    def _build_stats_text(self, completed: int, total: int, total_chars: int) -> str:
+        elapsed = self._format_elapsed(time.time() - self.translation_start_time)
+        stats = self.translator.get_stats() if self.translator else {}
+        api_total = stats.get("api_requests_total", 0)
+        batch_total = stats.get("batch_total", 0)
+        batch_ok = stats.get("batch_json_success", 0)
+        batch_fb = stats.get("batch_fallback", 0)
+        batch_ok_rate = (batch_ok * 100.0 / batch_total) if batch_total else 100.0
+        batch_fb_rate = (batch_fb * 100.0 / batch_total) if batch_total else 0.0
+        return (
+            f"翻译中... {completed}/{total} | 字符:{total_chars} | 耗时:{elapsed} | "
+            f"批量成功率:{batch_ok_rate:.1f}% | 回退率:{batch_fb_rate:.1f}% | API请求:{api_total}"
+        )
 
     def _show_info(self, title: str, message: str):
         self._run_on_ui_thread(messagebox.showinfo, title, message)
@@ -90,7 +115,7 @@ class App(tk.Tk):
         self.bar = ttk.Progressbar(self, maximum=100, variable=self.progress_var)
         self.bar.grid(row=4, column=1, sticky="ew", **pad)
 
-        tk.Label(self, textvariable=self.status_var, fg="#333", anchor="w").grid(
+        tk.Label(self, textvariable=self.status_var, fg="#333", anchor="w", justify="left", wraplength=700).grid(
             row=5, column=1, sticky="ew", **pad
         )
 
@@ -179,6 +204,7 @@ class App(tk.Tk):
         self.running = True
         self.completed = False
         self.cancel_event.clear()
+        self.translation_start_time = time.time()
 
         thread = threading.Thread(target=self.run_translate, args=(inp, out, api_key), daemon=True)
         thread.start()
@@ -263,9 +289,9 @@ class App(tk.Tk):
             def on_progress(completed, total):
                 progress = completed * 100 / total if total > 0 else 0
                 self._set_progress(progress)
-                self._set_status(f"翻译中... {completed}/{total} ({progress:.1f}%)")
+                self._set_status(self._build_stats_text(completed, total, total_chars))
 
-            self._set_status(f"开始翻译... 共 {total_texts} 个文本块")
+            self._set_status(f"开始翻译... 文本块:{total_texts} | 字符:{total_chars}")
 
             results = self.translator.translate_batch(
                 all_texts,
@@ -329,7 +355,8 @@ class App(tk.Tk):
 
             self.completed = True
             self._set_progress(100)
-            self._set_status(f"完成: {out}")
+            final_stats = self._build_stats_text(total_texts, total_texts, total_chars)
+            self._set_status(f"完成: {out} | {final_stats}")
             self._reset_buttons_async()
 
             logger.info(f"翻译完成: {out}")

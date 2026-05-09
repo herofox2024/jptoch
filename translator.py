@@ -52,10 +52,26 @@ class JaZhTranslator:
         self._cache_dirty = False
         self._save_counter = 0
         self._cache_lock = threading.RLock()
+        self._stats_lock = threading.Lock()
         self.max_workers = max_workers
         self.cancel_event = cancel_event or threading.Event()
         self.session = requests.Session()
+        self.stats = {
+            "api_requests_total": 0,
+            "batch_total": 0,
+            "batch_json_success": 0,
+            "batch_fallback": 0,
+            "batch_split_mismatch": 0,
+        }
         logger.info(f"翻译器初始化完成，并发数: {max_workers}")
+
+    def _inc_stat(self, key: str, delta: int = 1):
+        with self._stats_lock:
+            self.stats[key] = self.stats.get(key, 0) + delta
+
+    def get_stats(self) -> Dict[str, int]:
+        with self._stats_lock:
+            return dict(self.stats)
 
     @staticmethod
     def _load_json(path: str, default) -> dict:
@@ -161,6 +177,7 @@ class JaZhTranslator:
                 raise RuntimeError("翻译已取消")
 
             try:
+                self._inc_stat("api_requests_total")
                 resp = self.session.post(
                     DEEPSEEK_API_URL,
                     headers=headers,
@@ -235,6 +252,7 @@ class JaZhTranslator:
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
             try:
+                self._inc_stat("api_requests_total")
                 resp = self.session.post(
                     DEEPSEEK_API_URL,
                     headers=headers,
@@ -445,9 +463,11 @@ class JaZhTranslator:
                 zh = self._translate_chunk(text)
                 return [(text, zh)]
 
+            self._inc_stat("batch_total")
             # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
             json_parts = self._call_deepseek_batch_json(batch)
             if json_parts and len(json_parts) == len(batch):
+                self._inc_stat("batch_json_success")
                 return list(zip(batch, json_parts))
 
             separator = f"\n---SPLIT-{uuid.uuid4().hex}---\n"
@@ -458,6 +478,8 @@ class JaZhTranslator:
             if len(parts) != len(batch):
                 with self._cache_lock:
                     mismatch_count += 1
+                self._inc_stat("batch_fallback")
+                self._inc_stat("batch_split_mismatch")
                 return [(t, self._translate_chunk(t)) for t in batch]
 
             return list(zip(batch, parts))

@@ -15,6 +15,14 @@ class DummyTranslator(JaZhTranslator):
         self._cache_dirty = False
         self._save_counter = 0
         self._cache_lock = threading.RLock()
+        self._stats_lock = threading.Lock()
+        self.stats = {
+            "api_requests_total": 0,
+            "batch_total": 0,
+            "batch_json_success": 0,
+            "batch_fallback": 0,
+            "batch_split_mismatch": 0,
+        }
         self.max_workers = 2
         self.cancel_event = threading.Event()
 
