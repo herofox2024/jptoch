@@ -47,6 +47,24 @@ class App(tk.Tk):
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _run_on_ui_thread(self, fn, *args, **kwargs):
+        self.after(0, lambda: fn(*args, **kwargs))
+
+    def _set_status(self, text: str):
+        self._run_on_ui_thread(self.status_var.set, text)
+
+    def _set_progress(self, value: float):
+        self._run_on_ui_thread(self.progress_var.set, value)
+
+    def _show_info(self, title: str, message: str):
+        self._run_on_ui_thread(messagebox.showinfo, title, message)
+
+    def _show_error(self, title: str, message: str):
+        self._run_on_ui_thread(messagebox.showerror, title, message)
+
+    def _reset_buttons_async(self):
+        self._run_on_ui_thread(self._reset_buttons)
+
     def _build_ui(self):
         pad = {"padx": 10, "pady": 6}
 
@@ -195,10 +213,10 @@ class App(tk.Tk):
 
     def run_translate(self, inp, out, api_key):
         try:
-            self.status_var.set("初始化翻译器...")
+            self._set_status("初始化翻译器...")
             self.translator = JaZhTranslator(api_key=api_key, cancel_event=self.cancel_event)
 
-            self.status_var.set("读取 EPUB 中...")
+            self._set_status("读取 EPUB 中...")
             book = load_book(inp)
 
             toc_titles = extract_toc_titles(book)
@@ -244,10 +262,10 @@ class App(tk.Tk):
 
             def on_progress(completed, total):
                 progress = completed * 100 / total if total > 0 else 0
-                self.progress_var.set(progress)
-                self.status_var.set(f"翻译中... {completed}/{total} ({progress:.1f}%)")
+                self._set_progress(progress)
+                self._set_status(f"翻译中... {completed}/{total} ({progress:.1f}%)")
 
-            self.status_var.set(f"开始翻译... 共 {total_texts} 个文本块")
+            self._set_status(f"开始翻译... 共 {total_texts} 个文本块")
 
             results = self.translator.translate_batch(
                 all_texts,
@@ -256,10 +274,10 @@ class App(tk.Tk):
             )
 
             if self.cancel_event.is_set() or not self.running:
-                self.status_var.set("已取消")
-                self.progress_var.set(0)
-                self._reset_buttons()
-                messagebox.showinfo("取消", "翻译已取消")
+                self._set_status("已取消")
+                self._set_progress(0)
+                self._reset_buttons_async()
+                self._show_info("取消", "翻译已取消")
                 return
 
             for record in text_tag_map:
@@ -301,7 +319,7 @@ class App(tk.Tk):
                 logger.info(f"应用 {len(toc_translations)} 个目录标题翻译")
                 apply_toc_translations(book, toc_translations)
 
-            self.status_var.set("写入 EPUB 中...")
+            self._set_status("写入 EPUB 中...")
             save_book(out, book)
 
             chinese_mode = self.direction_var.get() == "zh"
@@ -310,20 +328,20 @@ class App(tk.Tk):
             self.translator.flush_cache()
 
             self.completed = True
-            self.progress_var.set(100)
-            self.status_var.set(f"完成: {out}")
-            self._reset_buttons()
+            self._set_progress(100)
+            self._set_status(f"完成: {out}")
+            self._reset_buttons_async()
 
             logger.info(f"翻译完成: {out}")
-            messagebox.showinfo("完成", f"翻译完成\n输出文件: {out}")
+            self._show_info("完成", f"翻译完成\n输出文件: {out}")
 
         except Exception as e:
             logger.error(f"翻译失败: {e}\n{traceback.format_exc()}")
-            self.status_var.set(f"失败: {str(e)}")
-            self.progress_var.set(0)
-            self._reset_buttons()
+            self._set_status(f"失败: {str(e)}")
+            self._set_progress(0)
+            self._reset_buttons_async()
 
-            messagebox.showerror("错误", f"翻译失败:\n{e}")
+            self._show_error("错误", f"翻译失败:\n{e}")
 
     def _reset_buttons(self):
         self.running = False

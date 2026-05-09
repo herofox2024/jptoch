@@ -209,14 +209,17 @@ def repair_epub(path: str) -> str:
 
         # 重新打包 EPUB
         with zipfile.ZipFile(temp_epub, 'w', zipfile.ZIP_DEFLATED) as zf:
+            mimetype_path = os.path.join(temp_dir, "mimetype")
+            if os.path.exists(mimetype_path):
+                zf.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
             for root, dirs, files in os.walk(temp_dir):
                 if "repaired.epub" in files:
                     files.remove("repaired.epub")
                 for file in files:
                     file_path = os.path.join(root, file)
-                    arc_name = os.path.relpath(file_path, temp_dir)
-                    # 统一使用正斜杠
-                    arc_name = arc_name.replace("\\", "/")
+                    arc_name = os.path.relpath(file_path, temp_dir).replace("\\", "/")
+                    if arc_name == "mimetype":
+                        continue
                     zf.write(file_path, arc_name)
 
         logger.info(f"EPUB 修复完成: {temp_epub}")
@@ -240,7 +243,7 @@ def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
     """
     try:
         return epub.read_epub(path)
-    except KeyError as e:
+    except (KeyError, zipfile.BadZipFile, ValueError, OSError) as e:
         if not try_repair:
             raise RuntimeError(f"EPUB 文件损坏: {e}")
 
