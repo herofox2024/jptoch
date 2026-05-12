@@ -199,3 +199,70 @@ Ruby 标签被移除，只保留翻译文本。
 
 MIT License
 
+## DeepSeek + Sakura 双后端说明
+
+项目已支持两种翻译后端，可在 GUI 中切换：
+
+- `DeepSeek`：云端 API，默认 `Base URL = https://api.deepseek.com/chat/completions`，默认模型 `deepseek-chat`
+- `Sakura`：本地/自建 OpenAI 兼容服务，默认 `Base URL = http://127.0.0.1:8080/v1/chat/completions`，默认模型 `sakura-v1.0`
+
+### GUI 使用
+
+1. 在“服务提供方”选择 `DeepSeek` 或 `Sakura`
+2. 程序会自动填充对应默认 `Base URL` 与“模型名”
+3. 如你的网关地址或模型名不同，可手动覆盖
+4. 点击“开始翻译”
+
+### API Key 规则
+
+- 选择 `DeepSeek` 时：必须填写 API Key（或设置环境变量 `DEEPSEEK_API_KEY`）
+- 选择 `Sakura` 时：可留空。程序内部会自动使用占位 Key `sk-local` 以兼容部分网关
+
+### 环境变量（可选）
+
+若你想免手动输入，可提前设置：
+
+```bash
+# Windows
+set DEEPSEEK_API_KEY=your-api-key
+
+# Linux/macOS
+export DEEPSEEK_API_KEY=your-api-key
+```
+
+### 注意事项
+
+- `Sakura` 模式依赖本地/自建服务先启动，并且接口需兼容 `chat/completions`
+- 若使用反向代理或第三方网关，请确认 `Base URL` 与模型名与服务端配置一致
+- 当前界面标题仍显示 `EPUB 日译中 (DeepSeek)`，但功能上已经支持双后端切换
+
+
+## �����޸ģ�v1.5��
+
+### 1) �����������ģ��
+- ���������ṩ��ѡ��`DeepSeek` / `Sakura` / `Gemini` / `�Զ���`
+- �����ɱ༭������`Base URL`��`ģ����`
+- ������֧�� provider + api_url + model ���Σ�֧���Զ���ȫ `/chat/completions` �˵�
+- `Sakura` ģʽ�� Key ʱ�Զ�ʹ��ռλ `sk-local`��`DeepSeek/Gemini/Custom` ����Ҫ�� API Key
+
+### 2) GUI ������ǿ
+- ���ڳߴ����Ϊ `920x460`����С `760x420`��
+- ���� EPUB ���Զ�Ԥ���ɷ����ַ������첽���㣬���������棩
+- ���������������JSON����ť��֧��һ��������������Զ����ݾ��ļ�
+- �������Զ���ȡ���ʵ�飩������
+
+### 3) ������·���ȶ����Ż�
+- �����ṹ����������Ϊ JSON ����`translations + new_terms`
+- �����Զ���ȡ����ʱ��֧������������������ϴ��ȥ�ز�����д�� `glossary.json`
+- ��ǿ JSON �����ݴ������ݴ���������ǰ�������ı�
+- ���� 502 ��������ж��߼���������Ч����
+- ��������С�� `4` ����Ϊ `5`
+
+### 4) ͳ������־
+- ͳ����������`batch_delimiter_success`��`batch_json_parse_fail`��`glossary_new_terms_added`
+- ״̬��չʾ��ǿ���ܳɹ��ʡ�JSON �ɹ��ʡ������ʡ�JSON ʧ�ܴ�����API ������������������
+- �����ļ���־�����`~/.epub_translator/logs/app-YYYYMMDD.log`
+
+### 5) ������˵��
+- ���θĶ���Ҫ�漰 `app.py` �� `translator.py`
+- ����������������Ŀ¼ `_tmp_manga_translator_ui/` �� JSON �ļ� `wenku_6590ff1cf1b791665f9886c4.json`����ǰδ���������̣�
