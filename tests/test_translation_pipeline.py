@@ -1,14 +1,16 @@
 ﻿import threading
 import unittest
+from unittest import mock
 
 from bs4 import BeautifulSoup
 
 from app import App
-from translator import JaZhTranslator
+from translator import FastFailError, JaZhTranslator
 
 
 class DummyTranslator(JaZhTranslator):
     def __init__(self):
+        self.provider = "deepseek"
         self.api_key = "x"
         self.glossary = {}
         self.cache = {}
@@ -24,6 +26,10 @@ class DummyTranslator(JaZhTranslator):
             "batch_split_mismatch": 0,
         }
         self.max_workers = 2
+        self.batch_size = 4
+        self.max_batch_length = 800
+        self.max_text_size_for_batch = 200
+        self.chunk_size = 1200
         self.cancel_event = threading.Event()
 
     def _save_cache(self, force: bool = False):
@@ -64,6 +70,32 @@ class TranslatorTests(unittest.TestCase):
         res = t.translate_batch(["A", "B"], batch_size=4)
         self.assertEqual(res["A"], "ZH:A")
         self.assertEqual(res["B"], "ZH:B")
+
+    def test_fast_fail_502_not_swallowed(self):
+        t = DummyTranslator()
+        t.cancel_event = threading.Event()
+        t.api_key = "x"
+        t.api_url = "http://example.com/v1/chat/completions"
+        t.model = "m"
+        t.temperature = 0.1
+        t.top_p = None
+        t.frequency_penalty = None
+        t.extract_glossary = False
+        t.session = mock.Mock()
+        resp = mock.Mock()
+        resp.status_code = 502
+        resp.raise_for_status = mock.Mock()
+        t.session.post.return_value = resp
+
+        with self.assertRaises(FastFailError):
+            t._call_deepseek("abc")
+
+    def test_replace_glossary_thread_safe(self):
+        t = DummyTranslator()
+        with mock.patch("builtins.open", mock.mock_open()):
+            t.glossary_path = "fake_glossary.json"
+            t.replace_glossary({"A": "甲"})
+        self.assertEqual(t.glossary.get("A"), "甲")
 
 
 class AppLogicTests(unittest.TestCase):

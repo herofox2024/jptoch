@@ -27,6 +27,10 @@ GEMINI_MODEL = "gemini-2.5-pro"
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 
 
+class FastFailError(RuntimeError):
+    """用于标识应立即中断流程的不可恢复错误（如明确配置的 HTTP 502）。"""
+
+
 def get_data_dir() -> Path:
     """获取用户数据目录，用于存储缓存和配置"""
     data_dir = Path.home() / ".epub_translator"
@@ -34,7 +38,43 @@ def get_data_dir() -> Path:
     return data_dir
 
 
+PERFORMANCE_PRESETS = {
+    "default": {
+        "label": "默认",
+        "description": "稳定安全，适合所有账户",
+        "max_workers": 5,
+        "batch_size": 4,
+        "max_batch_length": 800,
+        "max_text_size_for_batch": 200,
+        "chunk_size": 1200,
+    },
+    "balanced": {
+        "label": "适中",
+        "description": "推荐配置，效率与稳定性兼顾",
+        "max_workers": 12,
+        "batch_size": 10,
+        "max_batch_length": 4000,
+        "max_text_size_for_batch": 600,
+        "chunk_size": 2500,
+    },
+    "extreme": {
+        "label": "极端",
+        "description": "极限速度，高风险",
+        "max_workers": 25,
+        "batch_size": 15,
+        "max_batch_length": 8000,
+        "max_text_size_for_batch": 1000,
+        "chunk_size": 4000,
+    },
+}
+
+
 class JaZhTranslator:
+    # 类常量：配置参数
+    CACHE_SAVE_THRESHOLD = 20  # 缓存保存阈值，每 N 次更新后保存
+    API_TIMEOUT = 120  # API 请求超时时间（秒）
+    MAX_RETRIES = 3  # API 请求最大重试次数
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -47,8 +87,13 @@ class JaZhTranslator:
         glossary_path: Optional[str] = None,
         cache_path: Optional[str] = None,
         max_workers: int = 5,
+        batch_size: int = 4,
+        max_batch_length: int = 800,
+        max_text_size_for_batch: int = 200,
+        chunk_size: int = 1200,
         cancel_event: Optional[threading.Event] = None,
         extract_glossary: bool = False,
+        preset: Optional[str] = None,
     ):
         self.provider = (provider or "deepseek").strip().lower()
         if self.provider not in {"deepseek", "sakura", "gemini", "custom"}:
@@ -87,6 +132,16 @@ class JaZhTranslator:
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
         self.cache_path = cache_path or str(data_dir / "cache.json")
 
+        # 应用性能预设（如果指定）
+        if preset and preset in PERFORMANCE_PRESETS:
+            preset_config = PERFORMANCE_PRESETS[preset]
+            max_workers = preset_config["max_workers"]
+            batch_size = preset_config["batch_size"]
+            max_batch_length = preset_config["max_batch_length"]
+            max_text_size_for_batch = preset_config["max_text_size_for_batch"]
+            chunk_size = preset_config["chunk_size"]
+            logger.info(f"应用性能预设: {preset}")
+
         self.glossary = self._load_json(self.glossary_path, {})
         self.cache = self._load_json(self.cache_path, {})
         self._cache_dirty = False
@@ -94,8 +149,16 @@ class JaZhTranslator:
         self._cache_lock = threading.RLock()
         self._stats_lock = threading.Lock()
         self.max_workers = max_workers
+        self.batch_size = batch_size
+        self.max_batch_length = max_batch_length
+        self.max_text_size_for_batch = max_text_size_for_batch
+        self.chunk_size = chunk_size
         self.cancel_event = cancel_event or threading.Event()
         self.session = requests.Session()
+        # 连接池大小与并发数匹配，避免 "Connection pool is full" 警告
+        adapter = requests.adapters.HTTPAdapter(pool_connections=self.max_workers, pool_maxsize=self.max_workers)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         self.extract_glossary = bool(extract_glossary)
         self.stats = {
             "api_requests_total": 0,
@@ -108,7 +171,8 @@ class JaZhTranslator:
             "glossary_new_terms_added": 0,
         }
         logger.info(
-            f"翻译器初始化完成: provider={self.provider}, model={self.model}, api_url={self.api_url}, 并发数: {max_workers}"
+            f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
+            f"并发数={self.max_workers}, 批量大小={self.batch_size}"
         )
 
     @staticmethod
@@ -136,7 +200,7 @@ class JaZhTranslator:
         try:
             obj = json.loads(text)
             return obj if isinstance(obj, dict) else None
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             pass
 
         m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
@@ -144,7 +208,7 @@ class JaZhTranslator:
             try:
                 obj = json.loads(m.group(1).strip())
                 return obj if isinstance(obj, dict) else None
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
 
         start = text.find("{")
@@ -153,7 +217,7 @@ class JaZhTranslator:
             try:
                 obj = json.loads(text[start:end + 1].strip())
                 return obj if isinstance(obj, dict) else None
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 return None
         return None
 
@@ -183,7 +247,7 @@ class JaZhTranslator:
             self._cache_dirty = True
             self._save_counter += 1
 
-            if force or self._save_counter >= 20:
+            if force or self._save_counter >= self.CACHE_SAVE_THRESHOLD:
                 try:
                     with open(self.cache_path, "w", encoding="utf-8") as f:
                         json.dump(self.cache, f, ensure_ascii=False, indent=2)
@@ -199,10 +263,13 @@ class JaZhTranslator:
 
     def _build_glossary_text(self) -> str:
         """构建术语表文本"""
-        if not self.glossary:
+        with self._cache_lock:
+            glossary_snapshot = dict(self.glossary)
+
+        if not glossary_snapshot:
             return "无术语表。"
         lines = []
-        for k, v in self.glossary.items():
+        for k, v in glossary_snapshot.items():
             if isinstance(v, dict):
                 dst = str(v.get("dst", "")).strip()
                 info = str(v.get("info", "")).strip()
@@ -219,7 +286,7 @@ class JaZhTranslator:
     def _call_deepseek(
         self,
         text: str,
-        max_retries: int = 3,
+        max_retries: int = 3,  # 可通过 JaZhTranslator.MAX_RETRIES 调整默认值
         text_separator: Optional[str] = None,
     ) -> str:
         """调用模型 API，支持重试机制"""
@@ -297,7 +364,7 @@ class JaZhTranslator:
                     self.api_url,
                     headers=headers,
                     json=payload,
-                    timeout=120,
+                    timeout=self.API_TIMEOUT,
                 )
 
                 if resp.status_code == 429:
@@ -307,11 +374,19 @@ class JaZhTranslator:
                         raise RuntimeError("翻译已取消")
                     continue
                 if resp.status_code == 502:
-                    raise RuntimeError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
+                    raise FastFailError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
 
                 resp.raise_for_status()
                 data = resp.json()
-                return data["choices"][0]["message"]["content"].strip()
+                # 验证响应格式
+                choices = data.get("choices", [])
+                if not choices:
+                    raise KeyError("API 响应缺少 choices 字段")
+                message = choices[0].get("message", {})
+                content = message.get("content", "")
+                if not content:
+                    raise KeyError("API 响应缺少 content 字段")
+                return content.strip()
 
             except requests.exceptions.Timeout:
                 last_error = "请求超时"
@@ -322,10 +397,12 @@ class JaZhTranslator:
             except requests.exceptions.HTTPError as e:
                 last_error = f"HTTP 错误: {e}"
                 logger.warning(f"HTTP 错误 (尝试 {attempt + 1}/{max_retries}): {e}")
-            except (KeyError, IndexError) as e:
+            except (json.JSONDecodeError, KeyError, IndexError) as e:
                 last_error = f"API 响应格式错误: {e}"
                 logger.error(f"API 响应格式错误: {e}")
                 break
+            except FastFailError:
+                raise
             except Exception as e:
                 last_error = f"未知错误: {e}"
                 logger.error(f"未知错误: {e}")
@@ -388,7 +465,7 @@ JSON 顶层字段：
                     self.api_url,
                     headers=headers,
                     json=payload,
-                    timeout=120,
+                    timeout=self.API_TIMEOUT,
                 )
                 if resp.status_code == 429:
                     wait_time = 2 ** attempt + random.uniform(0, 1)
@@ -396,10 +473,20 @@ JSON 顶层字段：
                         raise RuntimeError("翻译已取消")
                     continue
                 if resp.status_code == 502:
-                    raise RuntimeError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
+                    raise FastFailError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
                 resp.raise_for_status()
                 data = resp.json()
-                raw = data["choices"][0]["message"]["content"].strip()
+                # 验证响应格式
+                choices = data.get("choices", [])
+                if not choices:
+                    self._inc_stat("batch_json_parse_fail")
+                    return None
+                message = choices[0].get("message", {})
+                raw = message.get("content", "")
+                if not raw:
+                    self._inc_stat("batch_json_parse_fail")
+                    return None
+                raw = raw.strip()
                 obj = self._extract_json_object(raw)
                 if not isinstance(obj, dict):
                     self._inc_stat("batch_json_parse_fail")
@@ -427,7 +514,10 @@ JSON 顶层字段：
                 if not isinstance(raw_terms, list):
                     raw_terms = []
                 return {"translations": out, "new_terms": raw_terms}
-            except Exception:
+            except FastFailError:
+                raise
+            except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
+                logger.warning(f"批量翻译请求失败 (尝试 {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     if self.cancel_event.wait(wait_time):
@@ -436,6 +526,13 @@ JSON 顶层字段：
                 return None
 
         return None
+
+    def replace_glossary(self, glossary: Dict[str, str]) -> None:
+        """线程安全替换术语表，并持久化到 glossary_path。"""
+        with self._cache_lock:
+            self.glossary = dict(glossary or {})
+            with open(self.glossary_path, "w", encoding="utf-8") as f:
+                json.dump(self.glossary, f, ensure_ascii=False, indent=2)
 
     @staticmethod
     def _clean_new_terms(raw_terms: List[dict]) -> List[Tuple[str, str]]:
@@ -563,20 +660,23 @@ JSON 顶层字段：
         flush_current()
         return chunks
 
-    def translate(self, text: str, chunk_size: int = 1200) -> str:
+    def translate(self, text: str, chunk_size: Optional[int] = None) -> str:
         """翻译文本，支持缓存和长文本分块"""
         text = text.strip()
         if not text:
             return text
 
+        # 使用实例配置，允许传入覆盖
+        effective_chunk_size = chunk_size if chunk_size is not None else self.chunk_size
+
         with self._cache_lock:
             if text in self.cache:
                 return self.cache[text]
 
-        if len(text) <= chunk_size:
+        if len(text) <= effective_chunk_size:
             zh = self._call_deepseek(text)
         else:
-            chunks = self._smart_split_text(text, chunk_size)
+            chunks = self._smart_split_text(text, effective_chunk_size)
             with ThreadPoolExecutor(max_workers=min(self.max_workers, len(chunks))) as executor:
                 futures = {executor.submit(self._translate_chunk, c): i for i, c in enumerate(chunks)}
                 results = [None] * len(chunks)
@@ -595,12 +695,15 @@ JSON 顶层字段：
         self,
         texts: List[str],
         progress_callback: Optional[Callable[[int, int], None]] = None,
-        batch_size: int = 4,
+        batch_size: Optional[int] = None,
     ) -> Dict[str, str]:
         """并发批量翻译多个文本"""
         results: Dict[str, str] = {}
         total = len(texts)
         completed = 0
+
+        # 使用实例配置，允许传入覆盖
+        effective_batch_size = batch_size if batch_size is not None else self.batch_size
 
         uncached_unique: List[str] = []
         seen_uncached = set()
@@ -625,16 +728,16 @@ JSON 顶层字段：
         batches = []
         current_batch = []
         current_length = 0
-        max_batch_length = 800
+        max_batch_length = self.max_batch_length
 
         for text in uncached_unique:
-            if len(text) <= 200 and current_length + len(text) < max_batch_length and len(current_batch) < batch_size:
+            if len(text) <= self.max_text_size_for_batch and current_length + len(text) < max_batch_length and len(current_batch) < effective_batch_size:
                 current_batch.append(text)
                 current_length += len(text)
             else:
                 if current_batch:
                     batches.append(current_batch)
-                if len(text) <= 200:
+                if len(text) <= self.max_text_size_for_batch:
                     current_batch = [text]
                     current_length = len(text)
                 else:

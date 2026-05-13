@@ -17,7 +17,7 @@ from epub_io import (
     save_book,
     set_reading_direction,
 )
-from translator import JaZhTranslator, get_data_dir
+from translator import JaZhTranslator, get_data_dir, PERFORMANCE_PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +53,11 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("EPUB 日译中 (DeepSeek)")
-        self.geometry("920x460")
-        self.minsize(760, 420)
+        self.geometry("920x500")
+        self.minsize(760, 460)
         self.default_dir = os.getcwd()
 
-        self.running = False
+        self._running_event = threading.Event()  # 线程安全的运行状态标志
         self.completed = False
         self.translator = None
         self.cancel_event = threading.Event()
@@ -74,6 +74,7 @@ class App(tk.Tk):
         self.progress_var = tk.DoubleVar(value=0)
         self.direction_var = tk.StringVar(value="zh")
         self.extract_glossary_var = tk.BooleanVar(value=False)
+        self.preset_var = tk.StringVar(value="default")  # 性能预设：default/balanced/extreme
         self._estimate_after_id = None
         self._estimate_seq = 0
 
@@ -81,6 +82,19 @@ class App(tk.Tk):
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    @property
+    def running(self) -> bool:
+        """线程安全地获取运行状态。"""
+        return self._running_event.is_set()
+
+    @running.setter
+    def running(self, value: bool):
+        """线程安全地设置运行状态。"""
+        if value:
+            self._running_event.set()
+        else:
+            self._running_event.clear()
 
     def _run_on_ui_thread(self, fn, *args, **kwargs):
         self.after(0, lambda: fn(*args, **kwargs))
@@ -114,8 +128,10 @@ class App(tk.Tk):
         batch_ok_rate = (batch_ok * 100.0 / batch_total) if batch_total else 100.0
         batch_json_ok_rate = (batch_json_ok * 100.0 / batch_total) if batch_total else 100.0
         batch_fb_rate = (batch_fb * 100.0 / batch_total) if batch_total else 0.0
+        # 根据完成状态显示不同文案
+        status_prefix = "翻译完成" if completed >= total else "翻译中..."
         return (
-            f"翻译中... {completed}/{total} | 字符:{total_chars} | 耗时:{elapsed} | "
+            f"{status_prefix} {completed}/{total} | 字符:{total_chars} | 耗时:{elapsed} | "
             f"批量成功率:{batch_ok_rate:.1f}% | JSON成功率:{batch_json_ok_rate:.1f}% | 回退率:{batch_fb_rate:.1f}% | "
             f"JSON失败:{batch_json_fail} | API请求:{api_total} | 新增术语:{terms_added}"
         )
@@ -168,15 +184,37 @@ class App(tk.Tk):
         tk.Radiobutton(dir_frame, text="中文习惯（从左到右）", variable=self.direction_var, value="zh").pack(side="left")
         tk.Radiobutton(dir_frame, text="保持原版（从右到左）", variable=self.direction_var, value="ja").pack(side="left", padx=(20, 0))
 
+        # 性能预设选择
+        tk.Label(self, text="性能预设:").grid(row=7, column=0, sticky="w", **pad)
+        preset_frame = tk.Frame(self)
+        preset_frame.grid(row=7, column=1, sticky="w", **pad)
+        self.preset_combo = ttk.Combobox(
+            preset_frame,
+            textvariable=self.preset_var,
+            values=["default", "balanced", "extreme"],
+            state="readonly",
+            width=12,
+        )
+        self.preset_combo.pack(side="left")
+        self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_change)
+
+        self.preset_desc_label = tk.Label(
+            preset_frame,
+            text=PERFORMANCE_PRESETS["default"]["description"],
+            fg="#666",
+            anchor="w",
+        )
+        self.preset_desc_label.pack(side="left", padx=(10, 0))
+
         self.bar = ttk.Progressbar(self, maximum=100, variable=self.progress_var)
-        self.bar.grid(row=7, column=1, sticky="ew", **pad)
+        self.bar.grid(row=8, column=1, sticky="ew", **pad)
 
         tk.Label(self, textvariable=self.status_var, fg="#333", anchor="w", justify="left", wraplength=700).grid(
-            row=8, column=1, sticky="ew", **pad
+            row=9, column=1, sticky="ew", **pad
         )
 
         btn_frame = tk.Frame(self)
-        btn_frame.grid(row=9, column=1, sticky="w", **pad)
+        btn_frame.grid(row=10, column=1, sticky="w", **pad)
 
         self.start_btn = tk.Button(btn_frame, text="开始翻译", command=self.start, width=12)
         self.start_btn.pack(side="left", padx=(0, 10))
@@ -203,7 +241,7 @@ class App(tk.Tk):
 
         data_dir = get_data_dir()
         tk.Label(self, text=f"缓存: {data_dir}", fg="#999", font=("Arial", 8), anchor="w").grid(
-            row=10, column=1, columnspan=3, sticky="ew", padx=10, pady=(0, 6)
+            row=11, column=1, columnspan=3, sticky="ew", padx=10, pady=(0, 6)
         )
 
         self.columnconfigure(1, weight=1)
@@ -221,6 +259,27 @@ class App(tk.Tk):
             self.api_url_var.set("")
             self.model_var.set("")
         else:
+            self.api_url_var.set("https://api.deepseek.com/chat/completions")
+            self.model_var.set("deepseek-chat")
+
+    def _on_preset_change(self, event=None):
+        """处理性能预设变化，选择极端模式时弹出警告。"""
+        preset = self.preset_var.get()
+        preset_config = PERFORMANCE_PRESETS.get(preset, PERFORMANCE_PRESETS["default"])
+        self.preset_desc_label.config(text=preset_config["description"])
+
+        # 极端模式警告
+        if preset == "extreme":
+            messagebox.showwarning(
+                "高风险警告",
+                "【极端模式风险提示】\n\n"
+                "1. 高并发可能频繁触发 API 限流（429错误），导致大量重试\n"
+                "2. 大批量请求失败时回退代价高，可能反而拖慢整体速度\n"
+                "3. 内存占用显著增加，低配电脑可能卡顿\n"
+                "4. 单次请求超时风险上升\n\n"
+                "建议：仅在付费账户、高配电脑、稳定网络环境下使用。\n"
+                "如遇频繁限流，请切回【适中】或【默认】模式。",
+            )
             self.api_url_var.set("https://api.deepseek.com/chat/completions")
             self.model_var.set("deepseek-chat")
 
@@ -310,7 +369,7 @@ class App(tk.Tk):
                 json.dump(clean_glossary, f, ensure_ascii=False, indent=2)
 
             if self.translator is not None:
-                self.translator.glossary = clean_glossary
+                self.translator.replace_glossary(clean_glossary)
 
             logger.info(f"Glossary imported: {path} -> {glossary_path} ({len(clean_glossary)} entries)")
             self.status_var.set(f"Glossary imported: {len(clean_glossary)} entries")
@@ -461,7 +520,8 @@ class App(tk.Tk):
                 api_url=api_url,
                 model=model,
                 extract_glossary=extract_glossary,
-                cancel_event=self.cancel_event
+                cancel_event=self.cancel_event,
+                preset=self.preset_var.get(),
             )
 
             self._set_status("读取 EPUB 中...")
@@ -518,7 +578,6 @@ class App(tk.Tk):
             results = self.translator.translate_batch(
                 all_texts,
                 progress_callback=on_progress,
-                batch_size=5,
             )
 
             if self.cancel_event.is_set() or not self.running:
@@ -578,7 +637,7 @@ class App(tk.Tk):
             self.completed = True
             self._set_progress(100)
             final_stats = self._build_stats_text(total_texts, total_texts, total_chars)
-            self._set_status(f"完成: {out} | {final_stats}")
+            self._set_status(f"{final_stats} | 输出: {out}")
             self._reset_buttons_async()
 
             logger.info(f"翻译完成: {out}")
