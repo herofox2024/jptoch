@@ -154,6 +154,28 @@ export DEEPSEEK_API_KEY=your-api-key
 
 ## 版本记录
 
+### v1.5_b（2026-05-13 ~ 2026-05-14）
+
+- 术语表数据链路重构：
+  - 新增统一分类 schema：`Person/Location/Org/Item/Skill/Creature`
+  - 新增导入归一化解析，兼容三种输入格式：
+    - 扁平 `{src: dst}`
+    - 扁平 `{src: {"dst": "...", "info": "..."}}`
+    - 分类结构 `{Person:[...], ...}`
+  - 导入冲突策略固定为 `keep_old`（保留旧值），并输出 `新增/跳过/冲突` 统计
+- 术语文件可靠性增强：
+  - 术语写入改为原子写入（`.tmp + replace`）
+  - 导入备份改为时间戳版本：`glossary.backup.before_import.YYYYMMDD-HHMMSS.json`
+- 术语召回优化（降低 token 与延迟）：
+  - 新增“按当前文本批次召回术语”（精确匹配 + 去重 + 上限控制）
+  - Prompt 注入从“全量术语”改为“仅注入命中术语”
+- 自动提取术语并轨：
+  - `_merge_new_terms_into_glossary()` 统一走同一 schema 与同一冲突策略（`keep_old`）
+  - 自动提取术语保留 `info/source`（默认 `source="auto"`）用于审计
+- 测试补齐与回归：
+  - 新增导入归一化、冲突策略、原子写入、术语召回、自动术语并轨相关测试
+  - 当前本地回归结果：`15 passed`
+
 ### v1.5_a
 
 - **性能预设功能**：三种模式（默认/适中/极端），一键优化并发与批量参数

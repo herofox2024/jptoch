@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import traceback
 import json
+import shutil
 
 from bs4 import NavigableString
 
@@ -74,6 +75,7 @@ class App(tk.Tk):
         self.progress_var = tk.DoubleVar(value=0)
         self.direction_var = tk.StringVar(value="zh")
         self.extract_glossary_var = tk.BooleanVar(value=False)
+        self.enable_glossary_var = tk.BooleanVar(value=False)
         self.preset_var = tk.StringVar(value="default")  # 性能预设：default/balanced/extreme
         self._estimate_after_id = None
         self._estimate_seq = 0
@@ -239,9 +241,28 @@ class App(tk.Tk):
         )
         self.extract_glossary_cb.pack(side="left", padx=(10, 0))
 
+        self.enable_glossary_cb = tk.Checkbutton(
+            btn_frame,
+            text="启用术语表",
+            variable=self.enable_glossary_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        self.enable_glossary_cb.pack(side="left", padx=(10, 0))
+
+        self.glossary_notice_label = tk.Label(
+            self,
+            text="提示：开启术语表后默认读取 C:\\Users\\HUAWEI\\.epub_translator\\glossary.json，token 消耗会翻倍，请谨慎使用。",
+            fg="#b45309",
+            anchor="w",
+            justify="left",
+            wraplength=760,
+        )
+        self.glossary_notice_label.grid(row=11, column=1, columnspan=3, sticky="ew", padx=10, pady=(0, 2))
+
         data_dir = get_data_dir()
         tk.Label(self, text=f"缓存: {data_dir}", fg="#999", font=("Arial", 8), anchor="w").grid(
-            row=11, column=1, columnspan=3, sticky="ew", padx=10, pady=(0, 6)
+            row=12, column=1, columnspan=3, sticky="ew", padx=10, pady=(0, 6)
         )
 
         self.columnconfigure(1, weight=1)
@@ -350,32 +371,45 @@ class App(tk.Tk):
             return
 
         if not isinstance(payload, dict):
-            messagebox.showerror("Error", "Glossary JSON must be an object: {source: target}")
+            messagebox.showerror("Error", "Glossary JSON 顶层必须是对象")
             return
 
-        clean_glossary = {str(k): str(v) for k, v in payload.items()}
+        normalized_glossary, import_stats = JaZhTranslator.normalize_glossary_payload(payload)
         data_dir = get_data_dir()
         glossary_path = data_dir / "glossary.json"
-        backup_path = data_dir / "glossary.backup.before_import.json"
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_path = data_dir / f"glossary.backup.before_import.{timestamp}.json"
 
         try:
+            has_existing = glossary_path.exists()
             if glossary_path.exists():
-                with open(glossary_path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-                with open(backup_path, "w", encoding="utf-8") as f:
-                    json.dump(existing, f, ensure_ascii=False, indent=2)
+                shutil.copy2(glossary_path, backup_path)
 
-            with open(glossary_path, "w", encoding="utf-8") as f:
-                json.dump(clean_glossary, f, ensure_ascii=False, indent=2)
+            JaZhTranslator._atomic_write_json(glossary_path, normalized_glossary)
 
             if self.translator is not None:
-                self.translator.replace_glossary(clean_glossary)
+                self.translator.replace_glossary(normalized_glossary)
 
-            logger.info(f"Glossary imported: {path} -> {glossary_path} ({len(clean_glossary)} entries)")
-            self.status_var.set(f"Glossary imported: {len(clean_glossary)} entries")
+            accepted = import_stats.get("accepted", 0)
+            skipped = import_stats.get("skipped", 0)
+            conflicts = import_stats.get("conflicts", 0)
+            logger.info(
+                "Glossary imported: %s -> %s (accepted=%s skipped=%s conflicts=%s)",
+                path,
+                glossary_path,
+                accepted,
+                skipped,
+                conflicts,
+            )
+            self.status_var.set(f"Glossary imported: 新增{accepted} 跳过{skipped} 冲突{conflicts}")
             messagebox.showinfo(
                 "Done",
-                f"Glossary import succeeded\nEntries: {len(clean_glossary)}\nTarget: {glossary_path}",
+                (
+                    "Glossary import succeeded\n"
+                    f"Accepted: {accepted}\nSkipped: {skipped}\nConflicts: {conflicts}\n"
+                    f"Target: {glossary_path}\n"
+                    f"Backup: {backup_path if has_existing else 'N/A'}"
+                ),
             )
         except Exception as e:
             logger.error(f"Glossary import failed: {e}")
@@ -451,6 +485,7 @@ class App(tk.Tk):
         api_url = self.api_url_var.get().strip()
         model = self.model_var.get().strip()
         extract_glossary = bool(self.extract_glossary_var.get())
+        enable_glossary = bool(self.enable_glossary_var.get())
 
         if not inp or not os.path.exists(inp):
             messagebox.showerror("错误", "请选择有效的输入 EPUB")
@@ -478,7 +513,7 @@ class App(tk.Tk):
 
         thread = threading.Thread(
             target=self.run_translate,
-            args=(inp, out, api_key, provider, api_url, model, extract_glossary),
+            args=(inp, out, api_key, provider, api_url, model, extract_glossary, enable_glossary),
             daemon=True
         )
         thread.start()
@@ -511,7 +546,7 @@ class App(tk.Tk):
 
         self.destroy()
 
-    def run_translate(self, inp, out, api_key, provider, api_url, model, extract_glossary):
+    def run_translate(self, inp, out, api_key, provider, api_url, model, extract_glossary, enable_glossary):
         try:
             self._set_status("初始化翻译器...")
             self.translator = JaZhTranslator(
@@ -520,6 +555,7 @@ class App(tk.Tk):
                 api_url=api_url,
                 model=model,
                 extract_glossary=extract_glossary,
+                enable_glossary=enable_glossary,
                 cancel_event=self.cancel_event,
                 preset=self.preset_var.get(),
             )

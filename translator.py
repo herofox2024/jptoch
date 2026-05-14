@@ -6,11 +6,30 @@ import re
 import threading
 import time
 import uuid
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
+
+# YAML 模块延迟加载（可选依赖）
+_yaml_module = None
+_yaml_available = None
+
+
+def _get_yaml():
+    """延迟加载 yaml 模块，避免启动时报错"""
+    global _yaml_module, _yaml_available
+    if _yaml_available is None:
+        try:
+            import yaml
+            _yaml_module = yaml
+            _yaml_available = True
+        except ImportError:
+            _yaml_available = False
+            logging.warning("PyYAML not installed. YAML prompt templates will not be supported. Install with: pip install pyyaml")
+    return _yaml_module if _yaml_available else None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +55,77 @@ def get_data_dir() -> Path:
     data_dir = Path.home() / ".epub_translator"
     data_dir.mkdir(exist_ok=True)
     return data_dir
+
+
+def get_dict_dir() -> Path:
+    """获取 dict/ 目录路径（存放提示词模板）"""
+    # 优先使用项目目录下的 dict/
+    project_dict = Path(__file__).parent / "dict"
+    if project_dict.exists():
+        return project_dict
+    # 回退到用户数据目录
+    data_dict = get_data_dir() / "dict"
+    data_dict.mkdir(exist_ok=True)
+    return data_dict
+
+
+def load_prompt_template(dict_dir: Path, stem: str) -> Optional[Dict[str, Any]]:
+    """
+    加载提示词模板文件，优先级：.yaml > .yml > .json
+
+    Args:
+        dict_dir: dict/ 目录路径
+        stem: 文件名（不含扩展名）
+
+    Returns:
+        解析后的字典，加载失败返回 None
+    """
+    for ext in ('.yaml', '.yml', '.json'):
+        path = dict_dir / (stem + ext)
+        if not path.exists():
+            continue
+
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            if ext in ('.yaml', '.yml'):
+                yaml = _get_yaml()
+                if yaml is None:
+                    logging.warning(f"Cannot load YAML template {path}: PyYAML not installed")
+                    continue
+                data = yaml.safe_load(content)
+            else:
+                data = json.loads(content)
+
+            if isinstance(data, dict):
+                logging.debug(f"Loaded prompt template from: {path}")
+                return data
+        except Exception as e:
+            logging.warning(f"Failed to load prompt template {path}: {e}")
+
+    return None
+
+
+def resolve_template_vars(template: str, **kwargs) -> str:
+    """
+    替换模板中的 {{{var}}} 占位符
+
+    Args:
+        template: 模板字符串
+        **kwargs: 变量键值对
+
+    Returns:
+        替换后的字符串
+    """
+    result = template
+    for key, value in kwargs.items():
+        result = result.replace("{{{" + key + "}}}", str(value) if value is not None else "")
+    return result
+
+
+# 默认术语分类
+DEFAULT_GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
 
 
 PERFORMANCE_PRESETS = {
@@ -93,6 +183,7 @@ class JaZhTranslator:
         chunk_size: int = 1200,
         cancel_event: Optional[threading.Event] = None,
         extract_glossary: bool = False,
+        enable_glossary: bool = True,
         preset: Optional[str] = None,
     ):
         self.provider = (provider or "deepseek").strip().lower()
@@ -131,6 +222,7 @@ class JaZhTranslator:
         data_dir = get_data_dir()
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
         self.cache_path = cache_path or str(data_dir / "cache.json")
+        self.enable_glossary = bool(enable_glossary)
 
         # 应用性能预设（如果指定）
         if preset and preset in PERFORMANCE_PRESETS:
@@ -142,12 +234,26 @@ class JaZhTranslator:
             chunk_size = preset_config["chunk_size"]
             logger.info(f"应用性能预设: {preset}")
 
-        self.glossary = self._load_json(self.glossary_path, {})
+        self.glossary = self._load_json(self.glossary_path, {}) if self.enable_glossary else {}
         self.cache = self._load_json(self.cache_path, {})
+
+        # 术语表分类（需要在 _count_glossary_terms 之前初始化）
+        self.glossary_categories = DEFAULT_GLOSSARY_CATEGORIES
+
+        # 记录术语表加载情况
+        glossary_count = self._count_glossary_terms()
+        if not self.enable_glossary:
+            logger.info(f"术语表已禁用（默认路径: {self.glossary_path}）")
+        elif glossary_count > 0:
+            logger.info(f"加载术语表: {glossary_count} 条术语（来源: {self.glossary_path}）")
+        else:
+            logger.info(f"术语表为空或不存在: {self.glossary_path}")
+
         self._cache_dirty = False
         self._save_counter = 0
         self._cache_lock = threading.RLock()
         self._stats_lock = threading.Lock()
+        self._glossary_prompt_max_terms = 120
         self.max_workers = max_workers
         self.batch_size = batch_size
         self.max_batch_length = max_batch_length
@@ -160,6 +266,12 @@ class JaZhTranslator:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         self.extract_glossary = bool(extract_glossary)
+
+        # 加载提示词模板
+        dict_dir = get_dict_dir()
+        self._extraction_prompt_data = load_prompt_template(dict_dir, "glossary_extraction_prompt")
+        self._output_format_data = load_prompt_template(dict_dir, "system_prompt_hq_format")
+
         self.stats = {
             "api_requests_total": 0,
             "batch_total": 0,
@@ -241,6 +353,90 @@ class JaZhTranslator:
                 return default
         return default
 
+    @staticmethod
+    def _atomic_write_json(path: Union[str, Path], payload: Dict[str, Any]) -> None:
+        """原子写入 JSON，避免异常中断导致文件损坏。"""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=str(target.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_name, str(target))
+        except Exception:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
+            raise
+
+    @classmethod
+    def normalize_glossary_payload(cls, payload: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
+        """
+        归一化术语表为分类结构。
+        支持：
+        1) {src: dst}
+        2) {src: {"dst"/"translation", "info"}}
+        3) {Person:[{original,translation}], ...}
+        冲突策略：keep_old（同 original 出现多次时保留首次）。
+        """
+        normalized: Dict[str, List[Dict[str, str]]] = {c: [] for c in DEFAULT_GLOSSARY_CATEGORIES}
+        stats = {"accepted": 0, "skipped": 0, "conflicts": 0}
+        seen_by_original: Dict[str, str] = {}
+
+        def _add_entry(src_raw: Any, dst_raw: Any, category: str = "Item", info_raw: Any = ""):
+            src = str(src_raw).strip()
+            dst = str(dst_raw).strip()
+            info = str(info_raw).strip()
+            if not src or not dst:
+                stats["skipped"] += 1
+                return
+            if category not in DEFAULT_GLOSSARY_CATEGORIES:
+                category = "Item"
+            prev = seen_by_original.get(src)
+            if prev is not None:
+                if prev != dst:
+                    stats["conflicts"] += 1
+                stats["skipped"] += 1
+                return
+            seen_by_original[src] = dst
+            entry = {"original": src, "translation": dst}
+            if info:
+                entry["info"] = info
+            normalized[category].append(entry)
+            stats["accepted"] += 1
+
+        if not isinstance(payload, dict):
+            return normalized, stats
+
+        has_category_key = any(k in payload and isinstance(payload.get(k), list) for k in DEFAULT_GLOSSARY_CATEGORIES)
+        if has_category_key:
+            for category in DEFAULT_GLOSSARY_CATEGORIES:
+                entries = payload.get(category, [])
+                if not isinstance(entries, list):
+                    continue
+                for item in entries:
+                    if not isinstance(item, dict):
+                        stats["skipped"] += 1
+                        continue
+                    src = item.get("original", item.get("src", ""))
+                    dst = item.get("translation", item.get("dst", ""))
+                    info = item.get("info", "")
+                    _add_entry(src, dst, category=category, info_raw=info)
+            return normalized, stats
+
+        for src, value in payload.items():
+            if isinstance(value, dict):
+                dst = value.get("dst", value.get("translation", ""))
+                info = value.get("info", "")
+            else:
+                dst = value
+                info = ""
+            _add_entry(src, dst, category="Item", info_raw=info)
+
+        return normalized, stats
+
     def _save_cache(self, force: bool = False):
         """保存缓存到文件，使用延迟写入策略"""
         with self._cache_lock:
@@ -261,27 +457,208 @@ class JaZhTranslator:
         if self._cache_dirty:
             self._save_cache(force=True)
 
-    def _build_glossary_text(self) -> str:
-        """构建术语表文本"""
+    def _count_glossary_terms(self) -> int:
+        """统计术语表中的术语数量"""
+        if not self.glossary:
+            return 0
+
+        # 检测是否为新格式（分类结构）
+        is_categorized = any(
+            key in self.glossary and isinstance(self.glossary.get(key), list)
+            for key in self.glossary_categories
+        )
+
+        if is_categorized:
+            total = 0
+            for category in self.glossary_categories:
+                entries = self.glossary.get(category, [])
+                if isinstance(entries, list):
+                    total += len(entries)
+            return total
+        else:
+            return len(self.glossary)
+
+    def _select_glossary_entries(self, context_text: str, max_terms: Optional[int] = None) -> List[Dict[str, str]]:
+        """按上下文召回相关术语，仅返回命中项。"""
+        if not self.enable_glossary:
+            return []
+        with self._cache_lock:
+            glossary_snapshot = dict(self.glossary)
+        if not glossary_snapshot:
+            return []
+
+        selected: List[Dict[str, str]] = []
+        seen_original = set()
+        limit = max_terms or self._glossary_prompt_max_terms
+
+        # 新格式优先
+        is_categorized = any(
+            key in glossary_snapshot and isinstance(glossary_snapshot.get(key), list)
+            for key in self.glossary_categories
+        )
+        if is_categorized:
+            for category in self.glossary_categories:
+                entries = glossary_snapshot.get(category, [])
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    original = str(entry.get("original", entry.get("src", ""))).strip()
+                    translation = str(entry.get("translation", entry.get("dst", ""))).strip()
+                    if not original or not translation:
+                        continue
+                    if original in seen_original:
+                        continue
+                    if original in context_text:
+                        selected.append({"original": original, "translation": translation})
+                        seen_original.add(original)
+                        if len(selected) >= limit:
+                            return selected
+            return selected
+
+        # 旧格式兜底
+        for k, v in glossary_snapshot.items():
+            original = str(k).strip()
+            if not original or original in seen_original:
+                continue
+            if isinstance(v, dict):
+                translation = str(v.get("dst", v.get("translation", ""))).strip()
+            else:
+                translation = str(v).strip()
+            if not translation:
+                continue
+            if original in context_text:
+                selected.append({"original": original, "translation": translation})
+                seen_original.add(original)
+                if len(selected) >= limit:
+                    return selected
+        return selected
+
+    def _build_glossary_text(self, selected_entries: Optional[List[Dict[str, str]]] = None) -> str:
+        """构建术语表文本；传入 selected_entries 时仅输出命中术语。"""
+        if selected_entries is not None:
+            if not selected_entries:
+                return "无术语表。"
+            lines = []
+            for item in selected_entries:
+                original = str(item.get("original", "")).strip()
+                translation = str(item.get("translation", "")).strip()
+                if original and translation:
+                    lines.append(f"{original}->{translation}")
+            return "\n".join(lines) if lines else "无术语表。"
+
+        """构建术语表文本，兼容新旧两种格式"""
         with self._cache_lock:
             glossary_snapshot = dict(self.glossary)
 
         if not glossary_snapshot:
             return "无术语表。"
+
         lines = []
-        for k, v in glossary_snapshot.items():
-            if isinstance(v, dict):
-                dst = str(v.get("dst", "")).strip()
-                info = str(v.get("info", "")).strip()
-                if dst and info:
-                    lines.append(f"{k}->{dst} #{info}")
-                elif dst:
-                    lines.append(f"{k}->{dst}")
+
+        # 检测是否为新格式（分类结构）
+        is_categorized = any(
+            key in glossary_snapshot and isinstance(glossary_snapshot.get(key), list)
+            for key in self.glossary_categories
+        )
+
+        if is_categorized:
+            # 新格式：按分类输出
+            for category in self.glossary_categories:
+                entries = glossary_snapshot.get(category, [])
+                if not isinstance(entries, list) or not entries:
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    original = entry.get("original", entry.get("src", ""))
+                    translation = entry.get("translation", entry.get("dst", ""))
+                    if original and translation:
+                        lines.append(f"{original}->{translation}")
+        else:
+            # 旧格式：扁平结构
+            for k, v in glossary_snapshot.items():
+                if isinstance(v, dict):
+                    dst = str(v.get("dst", "")).strip()
+                    info = str(v.get("info", "")).strip()
+                    if dst and info:
+                        lines.append(f"{k}->{dst} #{info}")
+                    elif dst:
+                        lines.append(f"{k}->{dst}")
+                    else:
+                        lines.append(f"{k} => {json.dumps(v, ensure_ascii=False)}")
                 else:
-                    lines.append(f"{k} => {json.dumps(v, ensure_ascii=False)}")
-            else:
-                lines.append(f"{k} => {v}")
-        return "\n".join(lines)
+                    lines.append(f"{k} => {v}")
+
+        return "\n".join(lines) if lines else "无术语表。"
+
+    def _build_batch_system_prompt(self) -> str:
+        """
+        构建批量翻译的系统提示词（使用模板）
+
+        Returns:
+            完整的系统提示词
+        """
+        # 基础提示词
+        base_prompt = """你是日文到中文翻译助手。
+请严格输出 JSON 对象，不要输出任何额外文字。
+JSON 顶层字段：
+1) "translations": 数组，长度必须与输入一致，索引顺序一致，元素格式 {"idx": 整数, "zh": "译文"}。
+2) "new_terms": 数组，元素格式 {"src": "原词", "dst": "译词", "category": "分类"}，没有则返回空数组。
+   - category 可选值：Person, Location, Org, Item, Skill, Creature
+   - 若无法确定分类，可省略 category 字段"""
+
+        # 尝试从模板加载
+        if self._output_format_data:
+            template = self._output_format_data.get("system_prompt_template", "")
+            if template:
+                # 组装模板
+                base_part = self._output_format_data.get("system_prompt_base", "")
+                format_part = self._output_format_data.get("system_prompt_output_format", "")
+                extraction_rules = self._output_format_data.get("optional_extraction_rules", "")
+
+                if self.extract_glossary:
+                    optional_rules = extraction_rules
+                else:
+                    no_extract = self._output_format_data.get("system_prompt_no_extract", "")
+                    optional_rules = no_extract if no_extract else '\n当未启用术语抽取时，必须返回 "new_terms": []。'
+
+                system_prompt = resolve_template_vars(
+                    template,
+                    system_prompt_base=base_part or base_prompt,
+                    system_prompt_output_format=format_part,
+                    optional_extraction_rules=optional_rules,
+                    target_lang="简体中文"
+                )
+                # 追加术语提取规则
+                if self.extract_glossary and self._extraction_prompt_data:
+                    extraction_prompt = self._extraction_prompt_data.get("glossary_extraction_prompt", "")
+                    if extraction_prompt:
+                        extraction_prompt = resolve_template_vars(extraction_prompt, target_lang="简体中文")
+                        system_prompt += "\n\n" + extraction_prompt
+
+                return system_prompt
+
+        # 回退到硬编码
+        if not self.extract_glossary:
+            return base_prompt + '\n\n当未启用术语抽取时，必须返回 "new_terms": []。'
+
+        # 添加术语提取规则
+        extraction_rules = """
+术语抽取规则：
+- 仅提取专有名词或固定术语（人名/地名/组织/招式/装备等）
+- 不提取通用词、语气词、普通动词形容词
+- 每批最多返回 5 条，宁缺毋滥
+- 每条术语建议指定 category 字段"""
+
+        # 追加模板中的抽取规则
+        if self._extraction_prompt_data:
+            template_extraction = self._extraction_prompt_data.get("glossary_extraction_prompt", "")
+            if template_extraction:
+                extraction_rules = "\n" + resolve_template_vars(template_extraction, target_lang="简体中文")
+
+        return base_prompt + "\n" + extraction_rules
 
     def _call_deepseek(
         self,
@@ -331,8 +708,9 @@ class JaZhTranslator:
 绝对不能将多个段落合并为一个段落！
 输出格式：译文1{sep.strip()}译文2{sep.strip()}译文3..."""
 
+        selected_entries = self._select_glossary_entries(text)
         user_prompt = (
-            f"【术语表】\n{self._build_glossary_text()}\n\n"
+            f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
             f"请将以下日文翻译为优美流畅的中文：\n{text}"
         )
 
@@ -420,21 +798,14 @@ class JaZhTranslator:
             return {"translations": [], "new_terms": []}
 
         numbered = [{"idx": i, "text": t} for i, t in enumerate(texts)]
-        system_prompt = """你是日文到中文翻译助手。
-请严格输出 JSON 对象，不要输出任何额外文字。
-JSON 顶层字段：
-1) "translations": 数组，长度必须与输入一致，索引顺序一致，元素格式 {"idx": 整数, "zh": "译文"}。
-2) "new_terms": 数组，元素格式 {"src": "原词", "dst": "译词"}，没有则返回空数组。"""
-        if not self.extract_glossary:
-            system_prompt += '\n当未启用术语抽取时，必须返回 "new_terms": []。'
-        else:
-            system_prompt += """
-术语抽取规则：
-- 仅提取专有名词或固定术语（人名/地名/组织/招式/装备等）
-- 不提取通用词、语气词、普通动词形容词
-- 每批最多返回 5 条，宁缺毋滥"""
+
+        # 从模板构建系统提示词
+        system_prompt = self._build_batch_system_prompt()
+        context_text = "\n".join(texts)
+        selected_entries = self._select_glossary_entries(context_text)
+
         user_prompt = (
-            f"【术语表】\n{self._build_glossary_text()}\n\n"
+            f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
             f"请翻译以下 JSON 数组中的 text 字段并返回 JSON：\n{json.dumps(numbered, ensure_ascii=False)}"
         )
         headers = {
@@ -527,63 +898,178 @@ JSON 顶层字段：
 
         return None
 
-    def replace_glossary(self, glossary: Dict[str, str]) -> None:
+    def replace_glossary(self, glossary: Dict[str, Any]) -> None:
         """线程安全替换术语表，并持久化到 glossary_path。"""
         with self._cache_lock:
-            self.glossary = dict(glossary or {})
-            with open(self.glossary_path, "w", encoding="utf-8") as f:
-                json.dump(self.glossary, f, ensure_ascii=False, indent=2)
+            normalized, _ = self.normalize_glossary_payload(glossary or {})
+            self.glossary = normalized
+            self._atomic_write_json(self.glossary_path, self.glossary)
 
     @staticmethod
-    def _clean_new_terms(raw_terms: List[dict]) -> List[Tuple[str, str]]:
-        """清洗术语：最短长度、排除通用词、去重。"""
+    def _clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
+        """
+        清洗术语：最短长度、排除通用词、去重，保留分类信息。
+
+        Returns:
+            清洗后的术语列表，每个元素包含
+            {"src": ..., "dst": ..., "category": ..., "info"?: ..., "source": ...}
+        """
         if not raw_terms:
             return []
+
+        # 通用词停用表（不提取）
         stop_words = {
             "我们", "你们", "他们", "这个", "那个", "这里", "那里", "然后", "但是", "因为", "所以",
             "可以", "不会", "已经", "正在", "没有", "非常", "真的", "老师", "学校", "城市", "国家",
-            "魔法", "剑", "勇者", "魔王",
+            "魔法", "剑", "勇者", "魔王", "世界", "时间", "地方", "事情", "东西", "样子",
+            "之后", "之前", "起来", "下去", "出来", "进去", "回来", "过来",
         }
-        cleaned: List[Tuple[str, str]] = []
+
+        # 分类映射（处理各种变体）
+        category_map = {
+            "person": "Person",
+            "角色": "Person",
+            "人物": "Person",
+            "location": "Location",
+            "地点": "Location",
+            "场所": "Location",
+            "org": "Org",
+            "organization": "Org",
+            "组织": "Org",
+            "团体": "Org",
+            "item": "Item",
+            "物品": "Item",
+            "装备": "Item",
+            "道具": "Item",
+            "skill": "Skill",
+            "技能": "Skill",
+            "招式": "Skill",
+            "魔法": "Skill",
+            "creature": "Creature",
+            "生物": "Creature",
+            "怪物": "Creature",
+            "宠物": "Creature",
+        }
+
+        cleaned: List[Dict[str, Any]] = []
         seen = set()
+
         for item in raw_terms:
             if not isinstance(item, dict):
                 continue
-            src = str(item.get("src", "")).strip()
-            dst = str(item.get("dst", "")).strip()
+
+            # 兼容多种字段名
+            src = str(item.get("src", item.get("original", ""))).strip()
+            dst = str(item.get("dst", item.get("translation", ""))).strip()
+            raw_category = item.get("category", item.get("cat", ""))
+            info = str(item.get("info", "")).strip()
+            source = str(item.get("source", "auto")).strip() or "auto"
+
             if not src or not dst:
                 continue
             if len(src) < 2 or len(dst) < 2:
                 continue
             if src in stop_words or dst in stop_words:
                 continue
+
+            # 标准化分类
+            category = "Item"  # 默认分类
+            if raw_category:
+                normalized = str(raw_category).lower().strip()
+                category = category_map.get(normalized, raw_category if raw_category in DEFAULT_GLOSSARY_CATEGORIES else "Item")
+
             key = (src, dst)
             if key in seen:
                 continue
             seen.add(key)
-            cleaned.append(key)
+
+            cleaned.append({
+                "src": src,
+                "dst": dst,
+                "category": category,
+                "info": info,
+                "source": source,
+            })
+
         return cleaned
 
-    def _merge_new_terms_into_glossary(self, terms: List[Tuple[str, str]]) -> int:
-        """增量写入 glossary.json（仅新增，不覆盖）。"""
+    def _merge_new_terms_into_glossary(self, terms: List[Dict[str, Any]]) -> int:
+        """
+        增量写入 glossary.json（仅新增，不覆盖）。
+        使用与导入一致的分类 schema 与 keep_old 冲突策略。
+
+        Args:
+            terms: 清洗后的术语列表，每个元素包含
+                   {"src", "dst", "category", "info"?, "source"?}
+
+        Returns:
+            新增的术语数量
+        """
         if not terms:
             return 0
+
         added = 0
+        conflicts = 0
+        skipped = 0
         with self._cache_lock:
-            for src, dst in terms:
-                if src in self.glossary:
+            # 先将当前术语统一归一化到分类 schema
+            normalized_existing, _ = self.normalize_glossary_payload(self.glossary or {})
+            self.glossary = normalized_existing
+
+            existing_by_original: Dict[str, str] = {}
+            for cat in self.glossary_categories:
+                for entry in self.glossary.get(cat, []):
+                    if not isinstance(entry, dict):
+                        continue
+                    original = str(entry.get("original", entry.get("src", ""))).strip()
+                    translation = str(entry.get("translation", entry.get("dst", ""))).strip()
+                    if original and translation and original not in existing_by_original:
+                        existing_by_original[original] = translation
+
+            for term in terms:
+                src = str(term.get("src", "")).strip()
+                dst = str(term.get("dst", "")).strip()
+                category = str(term.get("category", "Item")).strip() or "Item"
+                info = str(term.get("info", "")).strip()
+                source = str(term.get("source", "auto")).strip() or "auto"
+                if not src or not dst:
+                    skipped += 1
                     continue
-                self.glossary[src] = dst
+                if category not in self.glossary_categories:
+                    category = "Item"
+
+                prev = existing_by_original.get(src)
+                if prev is not None:
+                    if prev != dst:
+                        conflicts += 1
+                    skipped += 1
+                    continue
+
+                new_entry: Dict[str, str] = {
+                    "original": src,
+                    "translation": dst,
+                }
+                if info:
+                    new_entry["info"] = info
+                if source:
+                    new_entry["source"] = source
+                self.glossary[category].append(new_entry)
+                existing_by_original[src] = dst
                 added += 1
+
             if added > 0:
                 try:
-                    with open(self.glossary_path, "w", encoding="utf-8") as f:
-                        json.dump(self.glossary, f, ensure_ascii=False, indent=2)
+                    self._atomic_write_json(self.glossary_path, self.glossary)
                 except Exception as e:
                     logger.warning(f"术语表写入失败: {e}")
                     added = 0
+
         if added > 0:
             self._inc_stat("glossary_new_terms_added", added)
+            logger.info(f"新增 {added} 条术语到术语表")
+        if conflicts > 0 or skipped > 0:
+            logger.info(f"自动术语合并统计: added={added} skipped={skipped} conflicts={conflicts}")
+
         return added
 
     def _translate_chunk(self, text: str) -> str:
