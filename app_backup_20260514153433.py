@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import os
 import threading
 import time
@@ -21,23 +21,6 @@ from epub_io import (
 from translator import JaZhTranslator, get_data_dir, PERFORMANCE_PRESETS
 
 logger = logging.getLogger(__name__)
-
-# ── 主题配色 ──────────────────────────────────────────────
-THEME = {
-    "bg":          "#f5f6fa",
-    "sidebar":     "#2c3e50",
-    "sidebar_text":"#ecf0f1",
-    "sidebar_active": "#3498db",
-    "card_bg":     "#ffffff",
-    "card_border": "#dcdde1",
-    "text":        "#2f3542",
-    "text_light":  "#636e72",
-    "accent":      "#3498db",
-    "success":     "#2ecc71",
-    "warning":     "#f39c12",
-    "danger":      "#e74c3c",
-    "progress_bg": "#dfe6e9",
-}
 
 
 def setup_logging():
@@ -70,70 +53,56 @@ def setup_logging():
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("EPUB 日译中翻译器")
-        self.geometry("1020x640")
-        self.minsize(860, 560)
-        self.configure(bg=THEME["bg"])
+        self.title("EPUB 日译中 (DeepSeek)")
+        self.geometry("920x500")
+        self.minsize(760, 460)
         self.default_dir = os.getcwd()
 
-        self._running_event = threading.Event()
+        self._running_event = threading.Event()  # 线程安全的运行状态标志
         self.completed = False
         self.translator = None
         self.cancel_event = threading.Event()
         self.translation_start_time = 0.0
 
-        # ── 变量 ──
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar(value="output_zh.epub")
         self.api_key_var = tk.StringVar(value="")
         self.provider_var = tk.StringVar(value="deepseek")
-        self.provider_display_var = tk.StringVar(value="DeepSeek")
         self.api_url_var = tk.StringVar(value="")
         self.model_var = tk.StringVar(value="")
+        self.status_var = tk.StringVar(value="准备就绪")
         self.estimate_var = tk.StringVar(value="预估字符: -")
-        self.realtime_src_var = tk.StringVar(value="")
-        self.realtime_dst_var = tk.StringVar(value="")
         self.progress_var = tk.DoubleVar(value=0)
         self.direction_var = tk.StringVar(value="zh")
         self.extract_glossary_var = tk.BooleanVar(value=False)
         self.enable_glossary_var = tk.BooleanVar(value=False)
-        self.preset_var = tk.StringVar(value="default")
+        self.preset_var = tk.StringVar(value="default")  # 性能预设：default/balanced/extreme
         self._estimate_after_id = None
         self._estimate_seq = 0
-
-        # 统计卡片变量
-        self.stat_completed_var = tk.StringVar(value="0")
-        self.stat_total_var = tk.StringVar(value="0")
-        self.stat_elapsed_var = tk.StringVar(value="00:00")
-        self.stat_speed_var = tk.StringVar(value="-")
-        self.stat_api_var = tk.StringVar(value="0")
-        self.stat_success_var = tk.StringVar(value="-")
-        self.stat_fail_var = tk.StringVar(value="0")
-        self.stat_terms_var = tk.StringVar(value="0")
 
         self.input_var.trace_add("write", self._on_input_var_change)
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # ── 属性 ──
     @property
     def running(self) -> bool:
+        """线程安全地获取运行状态。"""
         return self._running_event.is_set()
 
     @running.setter
     def running(self, value: bool):
+        """线程安全地设置运行状态。"""
         if value:
             self._running_event.set()
         else:
             self._running_event.clear()
 
-    # ── 线程辅助 ──
     def _run_on_ui_thread(self, fn, *args, **kwargs):
         self.after(0, lambda: fn(*args, **kwargs))
 
     def _set_status(self, text: str):
-        logger.info(f"[状态] {text}")
+        self._run_on_ui_thread(self.status_var.set, text)
 
     def _set_progress(self, value: float):
         self._run_on_ui_thread(self.progress_var.set, value)
@@ -161,6 +130,7 @@ class App(tk.Tk):
         batch_ok_rate = (batch_ok * 100.0 / batch_total) if batch_total else 100.0
         batch_json_ok_rate = (batch_json_ok * 100.0 / batch_total) if batch_total else 100.0
         batch_fb_rate = (batch_fb * 100.0 / batch_total) if batch_total else 0.0
+        # 根据完成状态显示不同文案
         status_prefix = "翻译完成" if completed >= total else "翻译中..."
         return (
             f"{status_prefix} {completed}/{total} | 字符:{total_chars} | 耗时:{elapsed} | "
@@ -177,285 +147,125 @@ class App(tk.Tk):
     def _reset_buttons_async(self):
         self._run_on_ui_thread(self._reset_buttons)
 
-    # ════════════════════════════════════════════════════════
-    #  UI 构建
-    # ════════════════════════════════════════════════════════
     def _build_ui(self):
-        # ── 左侧导航栏 ──
-        self.sidebar = tk.Frame(self, bg=THEME["sidebar"], width=160)
-        self.sidebar.pack(side="left", fill="y")
-        self.sidebar.pack_propagate(False)
+        pad = {"padx": 10, "pady": 6}
 
-        tk.Label(
-            self.sidebar, text="EPUB 翻译器 V2.0", bg=THEME["sidebar"],
-            fg="white", font=("Microsoft YaHei UI", 12, "bold"),
-        ).pack(pady=(18, 24))
-
-        self._nav_buttons = []
-        nav_items = [
-            ("task",   "任务"),
-            ("api",    "接口配置"),
-            ("option", "翻译选项"),
-            ("status", "状态监控"),
-        ]
-        for key, label in nav_items:
-            btn = tk.Button(
-                self.sidebar, text=label, anchor="w", padx=18,
-                font=("Microsoft YaHei UI", 10),
-                bg=THEME["sidebar"], fg=THEME["sidebar_text"],
-                activebackground=THEME["sidebar_active"], activeforeground="white",
-                bd=0, cursor="hand2",
-                command=lambda k=key: self._show_page(k),
-            )
-            btn.pack(fill="x", pady=2)
-            self._nav_buttons.append((key, btn))
-
-        # ── 右侧内容区 ──
-        self.content = tk.Frame(self, bg=THEME["bg"])
-        self.content.pack(side="left", fill="both", expand=True)
-
-        self.pages = {}
-        for key in ("task", "api", "option", "status"):
-            page = tk.Frame(self.content, bg=THEME["bg"])
-            self.pages[key] = page
-
-        self._build_task_page(self.pages["task"])
-        self._build_api_page(self.pages["api"])
-        self._build_option_page(self.pages["option"])
-        self._build_status_page(self.pages["status"])
-
-        self._show_page("task")
-
-    # ── 页面切换 ──
-    def _show_page(self, key: str):
-        for k, page in self.pages.items():
-            page.pack_forget()
-        self.pages[key].pack(fill="both", expand=True, padx=20, pady=14)
-        for k, btn in self._nav_buttons:
-            if k == key:
-                btn.configure(bg=THEME["sidebar_active"], fg="white")
-            else:
-                btn.configure(bg=THEME["sidebar"], fg=THEME["sidebar_text"])
-
-    # ── 卡片容器辅助 ──
-    @staticmethod
-    def _make_card(parent, title: str) -> tk.LabelFrame:
-        card = tk.LabelFrame(
-            parent, text=f"  {title}  ", bg=THEME["card_bg"],
-            fg=THEME["text"], font=("Microsoft YaHei UI", 10, "bold"),
-            padx=12, pady=10, bd=1, relief="groove",
-        )
-        return card
-
-    # ── 任务页面 ──
-    def _build_task_page(self, parent):
-        card = self._make_card(parent, "文件设置")
-        card.pack(fill="x", pady=(0, 10))
-
-        pad = {"padx": 8, "pady": 6}
-
-        tk.Label(card, text="输入 EPUB:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=0, column=0, sticky="w", **pad)
-        self.input_entry = tk.Entry(card, textvariable=self.input_var, font=("Microsoft YaHei UI", 9))
+        tk.Label(self, text="输入 EPUB:").grid(row=0, column=0, sticky="w", **pad)
+        self.input_entry = tk.Entry(self, textvariable=self.input_var)
         self.input_entry.grid(row=0, column=1, sticky="ew", **pad)
-        tk.Button(card, text="选择...", command=self.pick_input, width=8, cursor="hand2").grid(row=0, column=2, **pad)
-        tk.Label(card, textvariable=self.estimate_var, fg=THEME["text_light"], bg=THEME["card_bg"], anchor="w", font=("Microsoft YaHei UI", 8)).grid(row=0, column=3, sticky="w", **pad)
+        tk.Button(self, text="选择...", command=self.pick_input, width=8).grid(row=0, column=2, **pad)
+        tk.Label(self, textvariable=self.estimate_var, fg="#666", anchor="w").grid(
+            row=0, column=3, sticky="w", **pad
+        )
 
-        tk.Label(card, text="输出 EPUB:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=1, column=0, sticky="w", **pad)
-        self.output_entry = tk.Entry(card, textvariable=self.output_var, font=("Microsoft YaHei UI", 9))
+        tk.Label(self, text="输出 EPUB:").grid(row=1, column=0, sticky="w", **pad)
+        self.output_entry = tk.Entry(self, textvariable=self.output_var)
         self.output_entry.grid(row=1, column=1, sticky="ew", **pad)
-        tk.Button(card, text="选择...", command=self.pick_output, width=8, cursor="hand2").grid(row=1, column=2, **pad)
+        tk.Button(self, text="选择...", command=self.pick_output, width=8).grid(row=1, column=2, **pad)
 
-        card.columnconfigure(1, weight=1)
+        tk.Label(self, text="API Key:").grid(row=2, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.api_key_var, show="*").grid(row=2, column=1, sticky="ew", **pad)
 
-        # 操作按钮
-        btn_card = self._make_card(parent, "操作")
-        btn_card.pack(fill="x", pady=(0, 10))
+        tk.Label(self, text="服务提供方:").grid(row=3, column=0, sticky="w", **pad)
+        provider_frame = tk.Frame(self)
+        provider_frame.grid(row=3, column=1, sticky="w", **pad)
+        tk.Radiobutton(provider_frame, text="DeepSeek", variable=self.provider_var, value="deepseek", command=self._on_provider_change).pack(side="left")
+        tk.Radiobutton(provider_frame, text="Sakura", variable=self.provider_var, value="sakura", command=self._on_provider_change).pack(side="left", padx=(20, 0))
+        tk.Radiobutton(provider_frame, text="Gemini", variable=self.provider_var, value="gemini", command=self._on_provider_change).pack(side="left", padx=(20, 0))
+        tk.Radiobutton(provider_frame, text="自定义", variable=self.provider_var, value="custom", command=self._on_provider_change).pack(side="left", padx=(20, 0))
 
-        btn_frame = tk.Frame(btn_card, bg=THEME["card_bg"])
-        btn_frame.pack(fill="x")
+        tk.Label(self, text="Base URL:").grid(row=4, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.api_url_var).grid(row=4, column=1, sticky="ew", **pad)
 
-        self.start_btn = tk.Button(
-            btn_frame, text="▶ 开始翻译", command=self.start, width=14,
-            bg=THEME["accent"], fg="white", font=("Microsoft YaHei UI", 10, "bold"),
-            activebackground="#2980b9", activeforeground="white", cursor="hand2", bd=0,
-        )
-        self.start_btn.pack(side="left", padx=(0, 10))
+        tk.Label(self, text="模型名:").grid(row=5, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.model_var).grid(row=5, column=1, sticky="ew", **pad)
 
-        self.cancel_btn = tk.Button(
-            btn_frame, text="取消", command=self.cancel, width=8,
-            state="disabled", cursor="hand2",
-        )
-        self.cancel_btn.pack(side="left")
+        tk.Label(self, text="翻页方向:").grid(row=6, column=0, sticky="w", **pad)
+        dir_frame = tk.Frame(self)
+        dir_frame.grid(row=6, column=1, sticky="w", **pad)
+        tk.Radiobutton(dir_frame, text="中文习惯（从左到右）", variable=self.direction_var, value="zh").pack(side="left")
+        tk.Radiobutton(dir_frame, text="保持原版（从右到左）", variable=self.direction_var, value="ja").pack(side="left", padx=(20, 0))
 
-        # 缓存路径
-        data_dir = get_data_dir()
-        tk.Label(
-            parent, text=f"缓存目录: {data_dir}", fg=THEME["text_light"],
-            bg=THEME["bg"], font=("Microsoft YaHei UI", 8), anchor="w",
-        ).pack(fill="x", pady=(6, 0))
-
-    # ── 接口配置页面 ──
-    def _build_api_page(self, parent):
-        card = self._make_card(parent, "API 配置")
-        card.pack(fill="x", pady=(0, 10))
-
-        pad = {"padx": 8, "pady": 6}
-
-        tk.Label(card, text="服务提供方:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=0, column=0, sticky="w", **pad)
-        self.provider_combo = ttk.Combobox(
-            card, textvariable=self.provider_display_var,
-            values=["DeepSeek", "Sakura", "Gemini", "自定义"],
-            state="readonly", width=14,
-        )
-        self.provider_combo.grid(row=0, column=1, sticky="w", **pad)
-        self.provider_combo.bind("<<ComboboxSelected>>", self._on_provider_combo_change)
-
-        tk.Label(card, text="API Key:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=1, column=0, sticky="w", **pad)
-        tk.Entry(card, textvariable=self.api_key_var, show="*", font=("Microsoft YaHei UI", 9)).grid(row=1, column=1, sticky="ew", **pad)
-
-        tk.Label(card, text="Base URL:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=2, column=0, sticky="w", **pad)
-        tk.Entry(card, textvariable=self.api_url_var, font=("Microsoft YaHei UI", 9)).grid(row=2, column=1, sticky="ew", **pad)
-
-        tk.Label(card, text="模型名:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=3, column=0, sticky="w", **pad)
-        tk.Entry(card, textvariable=self.model_var, font=("Microsoft YaHei UI", 9)).grid(row=3, column=1, sticky="ew", **pad)
-
-        card.columnconfigure(1, weight=1)
-
-        self._on_provider_change()
-
-    # ── 翻译选项页面 ──
-    def _build_option_page(self, parent):
-        # 性能预设
-        preset_card = self._make_card(parent, "性能预设")
-        preset_card.pack(fill="x", pady=(0, 10))
-
-        pad = {"padx": 8, "pady": 6}
-        preset_frame = tk.Frame(preset_card, bg=THEME["card_bg"])
-        preset_frame.pack(fill="x", **pad)
-
+        # 性能预设选择
+        tk.Label(self, text="性能预设:").grid(row=7, column=0, sticky="w", **pad)
+        preset_frame = tk.Frame(self)
+        preset_frame.grid(row=7, column=1, sticky="w", **pad)
         self.preset_combo = ttk.Combobox(
-            preset_frame, textvariable=self.preset_var,
+            preset_frame,
+            textvariable=self.preset_var,
             values=["default", "balanced", "extreme"],
-            state="readonly", width=14,
+            state="readonly",
+            width=12,
         )
         self.preset_combo.pack(side="left")
         self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_change)
 
         self.preset_desc_label = tk.Label(
-            preset_frame, text=PERFORMANCE_PRESETS["default"]["description"],
-            fg=THEME["text_light"], bg=THEME["card_bg"], anchor="w",
-            font=("Microsoft YaHei UI", 9),
+            preset_frame,
+            text=PERFORMANCE_PRESETS["default"]["description"],
+            fg="#666",
+            anchor="w",
         )
-        self.preset_desc_label.pack(side="left", padx=(12, 0))
+        self.preset_desc_label.pack(side="left", padx=(10, 0))
 
-        # 翻页方向
-        dir_card = self._make_card(parent, "翻页方向")
-        dir_card.pack(fill="x", pady=(0, 10))
+        self.bar = ttk.Progressbar(self, maximum=100, variable=self.progress_var)
+        self.bar.grid(row=8, column=1, sticky="ew", **pad)
 
-        dir_frame = tk.Frame(dir_card, bg=THEME["card_bg"])
-        dir_frame.pack(fill="x", padx=8, pady=6)
-        tk.Radiobutton(
-            dir_frame, text="中文习惯（从左到右）", variable=self.direction_var,
-            value="zh", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9),
-        ).pack(side="left")
-        tk.Radiobutton(
-            dir_frame, text="保持原版（从右到左）", variable=self.direction_var,
-            value="ja", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9),
-        ).pack(side="left", padx=(20, 0))
+        tk.Label(self, textvariable=self.status_var, fg="#333", anchor="w", justify="left", wraplength=700).grid(
+            row=9, column=1, sticky="ew", **pad
+        )
 
-        # 术语表
-        glossary_card = self._make_card(parent, "术语表")
-        glossary_card.pack(fill="x", pady=(0, 10))
+        btn_frame = tk.Frame(self)
+        btn_frame.grid(row=10, column=1, sticky="w", **pad)
 
-        glos_frame = tk.Frame(glossary_card, bg=THEME["card_bg"])
-        glos_frame.pack(fill="x", padx=8, pady=6)
+        self.start_btn = tk.Button(btn_frame, text="开始翻译", command=self.start, width=12)
+        self.start_btn.pack(side="left", padx=(0, 10))
+
+        self.cancel_btn = tk.Button(btn_frame, text="取消", command=self.cancel, state="disabled", width=8)
+        self.cancel_btn.pack(side="left")
 
         self.import_glossary_btn = tk.Button(
-            glos_frame, text="导入术语表 JSON", command=self.import_glossary_json,
-            width=16, cursor="hand2",
+            btn_frame,
+            text="导入术语表JSON",
+            command=self.import_glossary_json,
+            width=14,
         )
-        self.import_glossary_btn.pack(side="left", padx=(0, 12))
+        self.import_glossary_btn.pack(side="left", padx=(10, 0))
 
         self.extract_glossary_cb = tk.Checkbutton(
-            glos_frame, text="自动提取术语（实验）", variable=self.extract_glossary_var,
-            onvalue=True, offvalue=False, bg=THEME["card_bg"],
-            font=("Microsoft YaHei UI", 9),
+            btn_frame,
+            text="自动提取术语（实验）",
+            variable=self.extract_glossary_var,
+            onvalue=True,
+            offvalue=False,
         )
-        self.extract_glossary_cb.pack(side="left", padx=(0, 12))
+        self.extract_glossary_cb.pack(side="left", padx=(10, 0))
 
         self.enable_glossary_cb = tk.Checkbutton(
-            glos_frame, text="启用术语表", variable=self.enable_glossary_var,
-            onvalue=True, offvalue=False, bg=THEME["card_bg"],
-            font=("Microsoft YaHei UI", 9),
+            btn_frame,
+            text="启用术语表",
+            variable=self.enable_glossary_var,
+            onvalue=True,
+            offvalue=False,
         )
-        self.enable_glossary_cb.pack(side="left")
+        self.enable_glossary_cb.pack(side="left", padx=(10, 0))
 
         self.glossary_notice_label = tk.Label(
-            glossary_card,
+            self,
             text="提示：开启术语表后默认读取 C:\\Users\\HUAWEI\\.epub_translator\\glossary.json，token 消耗会翻倍，请谨慎使用。",
-            fg=THEME["warning"], bg=THEME["card_bg"], anchor="w",
-            justify="left", wraplength=640, font=("Microsoft YaHei UI", 8),
+            fg="#b45309",
+            anchor="w",
+            justify="left",
+            wraplength=760,
         )
-        self.glossary_notice_label.pack(fill="x", padx=8, pady=(0, 4))
+        self.glossary_notice_label.grid(row=11, column=1, columnspan=3, sticky="ew", padx=10, pady=(0, 2))
 
-    # ── 状态监控页面 ──
-    def _build_status_page(self, parent):
-        # 统计卡片行
-        cards_row = tk.Frame(parent, bg=THEME["bg"])
-        cards_row.pack(fill="x", pady=(0, 10))
+        data_dir = get_data_dir()
+        tk.Label(self, text=f"缓存: {data_dir}", fg="#999", font=("Arial", 8), anchor="w").grid(
+            row=12, column=1, columnspan=3, sticky="ew", padx=10, pady=(0, 6)
+        )
 
-        stat_items = [
-            ("已完成", self.stat_completed_var, THEME["accent"]),
-            ("总文本块", self.stat_total_var, THEME["text"]),
-            ("新增术语", self.stat_terms_var, THEME["accent"]),
-            ("耗时", self.stat_elapsed_var, THEME["text"]),
-            ("速度", self.stat_speed_var, THEME["success"]),
-            ("API 请求", self.stat_api_var, THEME["text"]),
-            ("成功率", self.stat_success_var, THEME["success"]),
-            ("失败数", self.stat_fail_var, THEME["danger"]),
-        ]
-        for i, (label, var, color) in enumerate(stat_items):
-            card = tk.Frame(cards_row, bg=THEME["card_bg"], bd=1, relief="groove")
-            card.pack(side="left", fill="both", expand=True, padx=3)
-            tk.Label(card, text=label, bg=THEME["card_bg"], fg=THEME["text_light"],
-                     font=("Microsoft YaHei UI", 8)).pack(pady=(8, 0))
-            tk.Label(card, textvariable=var, bg=THEME["card_bg"], fg=color,
-                     font=("Microsoft YaHei UI", 14, "bold")).pack(pady=(2, 8))
-
-        # 进度条
-        progress_card = self._make_card(parent, "翻译进度")
-        progress_card.pack(fill="x", pady=(0, 10))
-
-        self.bar = ttk.Progressbar(progress_card, maximum=100, variable=self.progress_var, length=400)
-        self.bar.pack(fill="x", padx=8, pady=8)
-
-        # 实时翻译展示
-        rt_card = self._make_card(parent, "实时翻译")
-        rt_card.pack(fill="both", expand=True, pady=(0, 10))
-
-        tk.Label(
-            rt_card, textvariable=self.realtime_src_var, bg=THEME["card_bg"],
-            fg=THEME["text"], anchor="w", justify="left", wraplength=680,
-            font=("Microsoft YaHei UI", 9),
-        ).pack(fill="x", padx=12, pady=(6, 2))
-
-        tk.Frame(rt_card, bg=THEME["card_border"], height=1).pack(fill="x", padx=12, pady=2)
-
-        tk.Label(
-            rt_card, textvariable=self.realtime_dst_var, bg=THEME["card_bg"],
-            fg=THEME["accent"], anchor="w", justify="left", wraplength=680,
-            font=("Microsoft YaHei UI", 9),
-        ).pack(fill="x", padx=12, pady=(2, 6))
-
-    # ════════════════════════════════════════════════════════
-    #  事件处理
-    # ════════════════════════════════════════════════════════
-    # 下拉框显示文本 -> 内部值映射
-    _PROVIDER_MAP = {"DeepSeek": "deepseek", "Sakura": "sakura", "Gemini": "gemini", "自定义": "custom"}
-
-    def _on_provider_combo_change(self, event=None):
-        display = self.provider_combo.get()
-        self.provider_var.set(self._PROVIDER_MAP.get(display, "deepseek"))
+        self.columnconfigure(1, weight=1)
         self._on_provider_change()
 
     def _on_provider_change(self):
@@ -474,9 +284,12 @@ class App(tk.Tk):
             self.model_var.set("deepseek-chat")
 
     def _on_preset_change(self, event=None):
+        """处理性能预设变化，选择极端模式时弹出警告。"""
         preset = self.preset_var.get()
         preset_config = PERFORMANCE_PRESETS.get(preset, PERFORMANCE_PRESETS["default"])
         self.preset_desc_label.config(text=preset_config["description"])
+
+        # 极端模式警告
         if preset == "extreme":
             messagebox.showwarning(
                 "高风险警告",
@@ -488,6 +301,8 @@ class App(tk.Tk):
                 "建议：仅在付费账户、高配电脑、稳定网络环境下使用。\n"
                 "如遇频繁限流，请切回【适中】或【默认】模式。",
             )
+            self.api_url_var.set("https://api.deepseek.com/chat/completions")
+            self.model_var.set("deepseek-chat")
 
     @staticmethod
     def _extract_text(tag) -> str:
@@ -580,15 +395,21 @@ class App(tk.Tk):
             conflicts = import_stats.get("conflicts", 0)
             logger.info(
                 "Glossary imported: %s -> %s (accepted=%s skipped=%s conflicts=%s)",
-                path, glossary_path, accepted, skipped, conflicts,
+                path,
+                glossary_path,
+                accepted,
+                skipped,
+                conflicts,
             )
-            logger.info(f"Glossary imported: 新增{accepted} 跳过{skipped} 冲突{conflicts}")
+            self.status_var.set(f"Glossary imported: 新增{accepted} 跳过{skipped} 冲突{conflicts}")
             messagebox.showinfo(
                 "Done",
-                f"Glossary import succeeded\n"
-                f"Accepted: {accepted}\nSkipped: {skipped}\nConflicts: {conflicts}\n"
-                f"Target: {glossary_path}\n"
-                f"Backup: {backup_path if has_existing else 'N/A'}",
+                (
+                    "Glossary import succeeded\n"
+                    f"Accepted: {accepted}\nSkipped: {skipped}\nConflicts: {conflicts}\n"
+                    f"Target: {glossary_path}\n"
+                    f"Backup: {backup_path if has_existing else 'N/A'}"
+                ),
             )
         except Exception as e:
             logger.error(f"Glossary import failed: {e}")
@@ -656,9 +477,6 @@ class App(tk.Tk):
         all_texts.extend(extract_toc_titles(book))
         return sum(len(t) for t in all_texts)
 
-    # ════════════════════════════════════════════════════════
-    #  翻译核心逻辑
-    # ════════════════════════════════════════════════════════
     def start(self):
         inp = self.input_var.get().strip()
         out = self.output_var.get().strip()
@@ -693,13 +511,10 @@ class App(tk.Tk):
         self.cancel_event.clear()
         self.translation_start_time = time.time()
 
-        # 切换到状态监控页
-        self._show_page("status")
-
         thread = threading.Thread(
             target=self.run_translate,
             args=(inp, out, api_key, provider, api_url, model, extract_glossary, enable_glossary),
-            daemon=True,
+            daemon=True
         )
         thread.start()
         logger.info(f"开始翻译: {inp} -> {out}")
@@ -707,7 +522,7 @@ class App(tk.Tk):
     def cancel(self):
         self.running = False
         self.cancel_event.set()
-        logger.info("正在取消...")
+        self.status_var.set("正在取消...")
         logger.info("用户请求取消翻译")
 
     def _on_close(self):
@@ -730,34 +545,6 @@ class App(tk.Tk):
                 logger.error(f"保存缓存失败: {e}")
 
         self.destroy()
-
-    def _update_stat_cards(self, completed: int, total: int, total_chars: int):
-        """更新状态监控页的统计卡片。"""
-        elapsed_sec = time.time() - self.translation_start_time
-        self.stat_completed_var.set(str(completed))
-        self.stat_total_var.set(str(total))
-        self.stat_elapsed_var.set(self._format_elapsed(elapsed_sec))
-        if elapsed_sec > 0 and total_chars > 0:
-            chars_per_sec = total_chars / elapsed_sec * (completed / total) if total > 0 else 0
-            self.stat_speed_var.set(f"{chars_per_sec:.0f} 字/秒")
-        stats = self.translator.get_stats() if self.translator else {}
-        self.stat_api_var.set(str(stats.get("api_requests_total", 0)))
-        self.stat_terms_var.set(str(stats.get("glossary_new_terms_added", 0)))
-        batch_total = stats.get("batch_total", 0)
-        batch_ok = stats.get("batch_json_success", 0) + stats.get("batch_delimiter_success", 0)
-        if batch_total > 0:
-            self.stat_success_var.set(f"{batch_ok * 100.0 / batch_total:.1f}%")
-        else:
-            self.stat_success_var.set("-")
-        self.stat_fail_var.set(str(stats.get("batch_json_parse_fail", 0)))
-
-    def _update_realtime(self, src: str, dst: str):
-        """更新实时翻译显示。"""
-        # 截断超长文本，只显示前 200 字符
-        src_display = src[:200] + "..." if len(src) > 200 else src
-        dst_display = dst[:200] + "..." if len(dst) > 200 else dst
-        self.realtime_src_var.set(f"日文: {src_display}")
-        self.realtime_dst_var.set(f"中文: {dst_display}")
 
     def run_translate(self, inp, out, api_key, provider, api_url, model, extract_glossary, enable_glossary):
         try:
@@ -821,17 +608,12 @@ class App(tk.Tk):
                 progress = completed * 100 / total if total > 0 else 0
                 self._set_progress(progress)
                 self._set_status(self._build_stats_text(completed, total, total_chars))
-                self._run_on_ui_thread(self._update_stat_cards, completed, total, total_chars)
-
-            def on_item(src, dst):
-                self._run_on_ui_thread(self._update_realtime, src, dst)
 
             self._set_status(f"开始翻译... 文本块:{total_texts} | 字符:{total_chars}")
 
             results = self.translator.translate_batch(
                 all_texts,
                 progress_callback=on_progress,
-                item_callback=on_item,
             )
 
             if self.cancel_event.is_set() or not self.running:
@@ -890,7 +672,6 @@ class App(tk.Tk):
 
             self.completed = True
             self._set_progress(100)
-            self._run_on_ui_thread(self._update_stat_cards, total_texts, total_texts, total_chars)
             final_stats = self._build_stats_text(total_texts, total_texts, total_chars)
             self._set_status(f"{final_stats} | 输出: {out}")
             self._reset_buttons_async()
@@ -903,6 +684,7 @@ class App(tk.Tk):
             self._set_status(f"失败: {str(e)}")
             self._set_progress(0)
             self._reset_buttons_async()
+
             self._show_error("错误", f"翻译失败:\n{e}")
 
     def _reset_buttons(self):

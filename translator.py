@@ -1181,6 +1181,7 @@ JSON 顶层字段：
         self,
         texts: List[str],
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        item_callback: Optional[Callable[[str, str], None]] = None,
         batch_size: Optional[int] = None,
     ) -> Dict[str, str]:
         """并发批量翻译多个文本"""
@@ -1297,6 +1298,8 @@ JSON 顶层字段：
                     for original, translated in batch_results:
                         results[original] = translated
                         completed += 1
+                        if item_callback:
+                            item_callback(original, translated)
                         if progress_callback:
                             progress_callback(completed, total)
                 except Exception as e:
@@ -1314,6 +1317,8 @@ JSON 顶层字段：
                             logger.error(f"翻译失败: {e2}")
                             results[text] = text
                         completed += 1
+                        if item_callback:
+                            item_callback(text, results[text])
                         if progress_callback:
                             progress_callback(completed, total)
 
