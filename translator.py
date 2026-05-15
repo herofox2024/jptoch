@@ -38,11 +38,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+DOUBAO_API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+DOUBAO_MODEL = "Doubao-Seed-1.6-flash"
 SAKURA_API_URL = "http://127.0.0.1:8080/v1/chat/completions"
 SAKURA_MODEL = "sakura-v1.0"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-GEMINI_MODEL = "gemini-2.5-pro"
+GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 
 
@@ -57,15 +59,102 @@ def get_data_dir() -> Path:
     return data_dir
 
 
+# 内置提示词模板（打包 exe 时项目 dict/ 不可用，自动释放到用户目录）
+_BUILTIN_TEMPLATES = {
+    "glossary_extraction_prompt.yaml": """\
+# 术语提取规则模板 / Glossary Extraction Rules Template
+# 使用方法：此文件定义术语提取的质量控制规则，拼接到系统提示词后
+
+glossary_extraction_prompt: |
+  **术语提取规则 (GLOSSARY EXTRACTION RULES):**
+
+  **目标语言: {{{target_lang}}}**
+
+  # 提取任务
+  仅提取高度专有的专有名词（人名、地名、特殊技能等），需要跨章节保持一致翻译。
+
+  # 规则与约束
+
+  ## 1. 宁缺毋滥原则
+  *   **不强制提取**：如果没有术语符合条件，返回 `"new_terms": []`。返回空数组完全正常。
+  *   **不提取通用词**：不要提取普通名词、动词、形容词。
+      *   例：❌ "学校"、"老师"、"美味"、"魔法"、"剑"、"魔王"
+      *   例：✅ "UA高中"、"艾克斯卡利巴"、"龟派气功"
+  *   **不提取模糊术语**：如果词可以直译（如"红龙"），除非是特定角色名，否则不提取。
+  *   **有疑问则跳过**：如果不确定是否为专有名词，不提取。
+
+  ## 2. 噪音清洗
+  *   忽略 OCR 噪音或乱码
+  *   跳过语法破碎的文本片段
+
+  ## 3. 边界规范化
+  *   移除敬称后缀：-san/-kun/-chan/-sama/-sensei 等
+  *   提取核心词：如"The Holy Sword Excalibur"只提取"Excalibur"
+
+  # 分类类别
+  *   **Person**: 人物名（唯一角色名）
+  *   **Location**: 地名（城市、商店、场所）
+  *   **Org**: 组织/团体名
+  *   **Item**: 传说/命名物品
+  *   **Skill**: 特殊招式/魔法名
+  *   **Creature**: 虚构生物/命名宠物
+
+  # 数量控制
+  *   每批最多返回 5 条术语
+  *   宁缺毋滥，质量优先
+""",
+    "system_prompt_hq_format.yaml": """\
+# 批量翻译输出格式模板 / Batch Translation Output Format Template
+# 用于 _call_deepseek_batch_json 方法的系统提示词
+
+system_prompt_base: |
+  你是日文到中文翻译助手。
+  请严格输出 JSON 对象，不要输出任何额外文字。
+
+system_prompt_output_format: |
+  JSON 顶层字段：
+  1) "translations": 数组，长度必须与输入一致，索引顺序一致，元素格式 {"idx": 整数, "zh": "译文"}。
+  2) "new_terms": 数组，元素格式 {"src": "原词", "dst": "译词", "category": "分类"}，没有则返回空数组。
+     - category 可选值：Person, Location, Org, Item, Skill, Creature
+     - 若无法确定分类，可省略 category 字段
+
+system_prompt_no_extract: |
+  当未启用术语抽取时，必须返回 "new_terms": []。
+
+# 开启术语提取时的追加规则（会替换 {{{optional_extraction_rules}}} 占位符）
+optional_extraction_rules: |
+  术语抽取规则：
+  - 仅提取专有名词或固定术语（人名/地名/组织/招式/装备等）
+  - 不提取通用词、语气词、普通动词形容词
+  - 每批最多返回 5 条，宁缺毋滥
+  - 每条术语需指定 category 字段
+
+# 完整模板（运行时组装）
+system_prompt_template: |
+  {{{system_prompt_base}}}
+  {{{system_prompt_output_format}}}
+  {{{optional_extraction_rules}}}
+""",
+}
+
+
 def get_dict_dir() -> Path:
     """获取 dict/ 目录路径（存放提示词模板）"""
     # 优先使用项目目录下的 dict/
     project_dict = Path(__file__).parent / "dict"
     if project_dict.exists():
         return project_dict
-    # 回退到用户数据目录
+    # 回退到用户数据目录，自动释放内置模板
     data_dict = get_data_dir() / "dict"
     data_dict.mkdir(exist_ok=True)
+    for filename, content in _BUILTIN_TEMPLATES.items():
+        target = data_dict / filename
+        if not target.exists():
+            try:
+                target.write_text(content, encoding="utf-8")
+                logging.info(f"已释放内置模板: {target}")
+            except Exception as e:
+                logging.warning(f"释放内置模板失败 {target}: {e}")
     return data_dict
 
 
@@ -187,12 +276,19 @@ class JaZhTranslator:
         preset: Optional[str] = None,
     ):
         self.provider = (provider or "deepseek").strip().lower()
-        if self.provider not in {"deepseek", "sakura", "gemini", "custom"}:
+        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "custom"}:
             raise ValueError(f"不支持的提供方: {provider}")
 
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY", "")
+        self.api_key = api_key or ""
+        if not self.api_key:
+            if self.provider == "deepseek":
+                self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
+            elif self.provider == "doubao":
+                self.api_key = os.getenv("DOUBAO_API_KEY", "") or os.getenv("ARK_API_KEY", "")
         if self.provider == "deepseek" and not self.api_key:
             raise ValueError("未找到 DeepSeek API Key，请在界面输入或设置环境变量 DEEPSEEK_API_KEY")
+        if self.provider == "doubao" and not self.api_key:
+            raise ValueError("未找到豆包 API Key，请在界面输入或设置环境变量 DOUBAO_API_KEY / ARK_API_KEY")
         if self.provider == "gemini" and not self.api_key:
             raise ValueError("未找到 Gemini API Key，请在界面输入")
         if self.provider == "sakura" and not self.api_key:
@@ -206,6 +302,9 @@ class JaZhTranslator:
         if self.provider == "sakura":
             default_url = SAKURA_API_URL
             default_model = SAKURA_MODEL
+        elif self.provider == "doubao":
+            default_url = DOUBAO_API_URL
+            default_model = DOUBAO_MODEL
         elif self.provider == "gemini":
             default_url = GEMINI_API_URL
             default_model = GEMINI_MODEL
@@ -286,6 +385,12 @@ class JaZhTranslator:
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
             f"并发数={self.max_workers}, 批量大小={self.batch_size}"
         )
+
+    def _apply_provider_payload_options(self, payload: Dict[str, Any]) -> None:
+        """为特定提供方追加请求参数。"""
+        if self.provider in {"deepseek", "doubao"}:
+            # 用户要求关闭深度思考。
+            payload["thinking"] = {"type": "disabled"}
 
     @staticmethod
     def _normalize_api_url(url: str) -> str:
@@ -726,6 +831,7 @@ JSON 顶层字段：
             ],
             "temperature": self.temperature,
         }
+        self._apply_provider_payload_options(payload)
         if self.top_p is not None:
             payload["top_p"] = self.top_p
         if self.frequency_penalty is not None:
@@ -820,6 +926,7 @@ JSON 顶层字段：
             ],
             "temperature": 0.1 if self.provider == "deepseek" else self.temperature,
         }
+        self._apply_provider_payload_options(payload)
         if self.top_p is not None:
             payload["top_p"] = self.top_p
         if self.frequency_penalty is not None:
@@ -904,6 +1011,55 @@ JSON 顶层字段：
             normalized, _ = self.normalize_glossary_payload(glossary or {})
             self.glossary = normalized
             self._atomic_write_json(self.glossary_path, self.glossary)
+
+    @classmethod
+    def merge_glossaries(
+        cls,
+        existing: Dict[str, List[Dict[str, str]]],
+        incoming: Dict[str, List[Dict[str, str]]],
+    ) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
+        """
+        将 incoming 术语增量合并到 existing 中（keep_old 冲突策略）。
+
+        Args:
+            existing: 已有术语表（分类结构）
+            incoming: 新导入的术语表（分类结构，已归一化）
+
+        Returns:
+            (merged, stats)  merged 为合并后的术语表，stats 含 added/skipped/conflicts
+        """
+        merged = {c: list(existing.get(c, [])) for c in DEFAULT_GLOSSARY_CATEGORIES}
+        stats = {"added": 0, "skipped": 0, "conflicts": 0}
+        seen: Dict[str, str] = {}
+        for cat in DEFAULT_GLOSSARY_CATEGORIES:
+            for entry in merged[cat]:
+                original = str(entry.get("original", "")).strip()
+                translation = str(entry.get("translation", "")).strip()
+                if original and original not in seen:
+                    seen[original] = translation
+
+        for cat in DEFAULT_GLOSSARY_CATEGORIES:
+            for entry in incoming.get(cat, []):
+                src = str(entry.get("original", entry.get("src", ""))).strip()
+                dst = str(entry.get("translation", entry.get("dst", ""))).strip()
+                if not src or not dst:
+                    stats["skipped"] += 1
+                    continue
+                prev = seen.get(src)
+                if prev is not None:
+                    if prev != dst:
+                        stats["conflicts"] += 1
+                    stats["skipped"] += 1
+                    continue
+                new_entry = {"original": src, "translation": dst}
+                for k in ("info", "source"):
+                    if k in entry and entry[k]:
+                        new_entry[k] = entry[k]
+                merged[cat].append(new_entry)
+                seen[src] = dst
+                stats["added"] += 1
+
+        return merged, stats
 
     @staticmethod
     def _clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:

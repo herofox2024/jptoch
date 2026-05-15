@@ -8,6 +8,11 @@ import traceback
 import json
 import shutil
 
+try:
+    from tkinterdnd2 import TkinterDnD  # optional
+except Exception:
+    TkinterDnD = None
+
 from bs4 import NavigableString
 
 from epub_io import (
@@ -67,7 +72,7 @@ def setup_logging():
     logger.info(f"日志文件: {log_path}")
 
 
-class App(tk.Tk):
+class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
     def __init__(self):
         super().__init__()
         self.title("EPUB 日译中翻译器")
@@ -187,7 +192,7 @@ class App(tk.Tk):
         self.sidebar.pack_propagate(False)
 
         tk.Label(
-            self.sidebar, text="EPUB 翻译器 V2.0", bg=THEME["sidebar"],
+            self.sidebar, text="EPUB 翻译器 V2.0.1", bg=THEME["sidebar"],
             fg="white", font=("Microsoft YaHei UI", 12, "bold"),
         ).pack(pady=(18, 24))
 
@@ -257,6 +262,11 @@ class App(tk.Tk):
         tk.Label(card, text="输入 EPUB:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=0, column=0, sticky="w", **pad)
         self.input_entry = tk.Entry(card, textvariable=self.input_var, font=("Microsoft YaHei UI", 9))
         self.input_entry.grid(row=0, column=1, sticky="ew", **pad)
+        if TkinterDnD is not None:
+            self.input_entry.drop_target_register("DND_Files")
+            self.input_entry.dnd_bind("<<Drop>>", self._on_input_drop)
+            self.input_entry.dnd_bind("<<DnDEnter>>", self._on_input_drag_enter)
+            self.input_entry.dnd_bind("<<DnDLeave>>", self._on_input_drag_leave)
         tk.Button(card, text="选择...", command=self.pick_input, width=8, cursor="hand2").grid(row=0, column=2, **pad)
         tk.Label(card, textvariable=self.estimate_var, fg=THEME["text_light"], bg=THEME["card_bg"], anchor="w", font=("Microsoft YaHei UI", 8)).grid(row=0, column=3, sticky="w", **pad)
 
@@ -304,7 +314,7 @@ class App(tk.Tk):
         tk.Label(card, text="服务提供方:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=0, column=0, sticky="w", **pad)
         self.provider_combo = ttk.Combobox(
             card, textvariable=self.provider_display_var,
-            values=["DeepSeek", "Sakura", "Gemini", "自定义"],
+            values=["DeepSeek", "Doubao", "Sakura", "Gemini", "自定义"],
             state="readonly", width=14,
         )
         self.provider_combo.grid(row=0, column=1, sticky="w", **pad)
@@ -312,6 +322,11 @@ class App(tk.Tk):
 
         tk.Label(card, text="API Key:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=1, column=0, sticky="w", **pad)
         tk.Entry(card, textvariable=self.api_key_var, show="*", font=("Microsoft YaHei UI", 9)).grid(row=1, column=1, sticky="ew", **pad)
+        self.test_btn = tk.Button(
+            card, text="测试连接", command=self._test_api_connection,
+            width=8, cursor="hand2",
+        )
+        self.test_btn.grid(row=1, column=2, **pad)
 
         tk.Label(card, text="Base URL:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=2, column=0, sticky="w", **pad)
         tk.Entry(card, textvariable=self.api_url_var, font=("Microsoft YaHei UI", 9)).grid(row=2, column=1, sticky="ew", **pad)
@@ -392,7 +407,7 @@ class App(tk.Tk):
 
         self.glossary_notice_label = tk.Label(
             glossary_card,
-            text="提示：开启术语表后默认读取 C:\\Users\\HUAWEI\\.epub_translator\\glossary.json，token 消耗会翻倍，请谨慎使用。",
+            text=f"提示：开启术语表后默认读取 {get_data_dir() / 'glossary.json'}，token 消耗会翻倍，请谨慎使用。",
             fg=THEME["warning"], bg=THEME["card_bg"], anchor="w",
             justify="left", wraplength=640, font=("Microsoft YaHei UI", 8),
         )
@@ -451,7 +466,7 @@ class App(tk.Tk):
     #  事件处理
     # ════════════════════════════════════════════════════════
     # 下拉框显示文本 -> 内部值映射
-    _PROVIDER_MAP = {"DeepSeek": "deepseek", "Sakura": "sakura", "Gemini": "gemini", "自定义": "custom"}
+    _PROVIDER_MAP = {"DeepSeek": "deepseek", "Doubao": "doubao", "Sakura": "sakura", "Gemini": "gemini", "自定义": "custom"}
 
     def _on_provider_combo_change(self, event=None):
         display = self.provider_combo.get()
@@ -463,15 +478,18 @@ class App(tk.Tk):
         if provider == "sakura":
             self.api_url_var.set("http://127.0.0.1:8080/v1/chat/completions")
             self.model_var.set("sakura-v1.0")
+        elif provider == "doubao":
+            self.api_url_var.set("https://ark.cn-beijing.volces.com/api/v3/chat/completions")
+            self.model_var.set("Doubao-Seed-1.6-flash")
         elif provider == "gemini":
             self.api_url_var.set("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
-            self.model_var.set("gemini-2.5-pro")
+            self.model_var.set("gemini-2.5-flash")
         elif provider == "custom":
             self.api_url_var.set("")
             self.model_var.set("")
         else:
             self.api_url_var.set("https://api.deepseek.com/chat/completions")
-            self.model_var.set("deepseek-chat")
+            self.model_var.set("deepseek-v4-flash")
 
     def _on_preset_change(self, event=None):
         preset = self.preset_var.get()
@@ -488,6 +506,79 @@ class App(tk.Tk):
                 "建议：仅在付费账户、高配电脑、稳定网络环境下使用。\n"
                 "如遇频繁限流，请切回【适中】或【默认】模式。",
             )
+
+    def _test_api_connection(self):
+        api_key = self.api_key_var.get().strip()
+        api_url = self.api_url_var.get().strip()
+        model = self.model_var.get().strip()
+        provider = self.provider_var.get().strip().lower()
+
+        if not api_key and provider != "sakura":
+            messagebox.showwarning("提示", "请先填写 API Key")
+            return
+        if not api_url:
+            messagebox.showwarning("提示", "请先填写 Base URL")
+            return
+        if not model:
+            messagebox.showwarning("提示", "请先填写模型名")
+            return
+
+        api_url = JaZhTranslator._normalize_api_url(api_url)
+        self.test_btn.config(state="disabled", text="测试中...")
+
+        def do_test():
+            import requests
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 1,
+            }
+            if provider in {"deepseek", "doubao"}:
+                payload["thinking"] = {"type": "disabled"}
+
+            try:
+                resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
+                if resp.status_code == 401:
+                    self._run_on_ui_thread(
+                        messagebox.showerror, "认证失败", "API Key 无效或已过期，请检查后重试。"
+                    )
+                elif resp.status_code == 402:
+                    self._run_on_ui_thread(
+                        messagebox.showerror, "余额不足", "API 账户余额不足或已欠费，请充值后重试。"
+                    )
+                elif resp.status_code == 429:
+                    self._run_on_ui_thread(
+                        messagebox.showwarning, "限流提示", "API Key 有效，但当前触发限流，请稍后再试。"
+                    )
+                elif 200 <= resp.status_code < 300:
+                    self._run_on_ui_thread(
+                        messagebox.showinfo, "连接成功", "API Key 有效，连接测试通过！"
+                    )
+                else:
+                    detail = resp.text[:200]
+                    self._run_on_ui_thread(
+                        messagebox.showerror, "连接失败", f"HTTP {resp.status_code}\n{detail}"
+                    )
+            except requests.exceptions.Timeout:
+                self._run_on_ui_thread(
+                    messagebox.showerror, "连接超时", "请求超时（15秒），请检查网络或 Base URL 是否正确。"
+                )
+            except requests.exceptions.ConnectionError:
+                self._run_on_ui_thread(
+                    messagebox.showerror, "连接失败", "无法连接服务器，请检查 Base URL 和网络。"
+                )
+            except Exception as e:
+                self._run_on_ui_thread(
+                    messagebox.showerror, "测试异常", str(e)
+                )
+            finally:
+                self._run_on_ui_thread(self.test_btn.config, state="normal", text="测试连接")
+
+        threading.Thread(target=do_test, daemon=True).start()
 
     @staticmethod
     def _extract_text(tag) -> str:
@@ -517,12 +608,42 @@ class App(tk.Tk):
             filetypes=[("EPUB files", "*.epub"), ("All files", "*.*")],
         )
         if path:
-            self.input_var.set(path)
-            base = os.path.splitext(os.path.basename(path))[0]
-            out_path = os.path.join(os.path.dirname(path), f"{base}_zh.epub")
-            self.output_var.set(out_path)
-            logger.info(f"选择输入文件: {path}")
-            self._schedule_estimate(path)
+            self._set_input_path(path)
+
+    def _set_input_path(self, path):
+        self.input_var.set(path)
+        base = os.path.splitext(os.path.basename(path))[0]
+        out_path = os.path.join(os.path.dirname(path), f"{base}_zh.epub")
+        self.output_var.set(out_path)
+        logger.info(f"选择输入文件: {path}")
+        self._schedule_estimate(path)
+
+    def _on_input_drop(self, event):
+        raw = event.data
+        # tkinterdnd2 返回格式：
+        #   单文件（无空格）: {C:/path/to/file.epub}
+        #   单文件（有空格）: {C:/path with spaces/file.epub}
+        #   多文件: {C:/a.epub} {C:/b.epub}
+        # 使用正则提取所有花括号内的路径，取第一个
+        import re
+        paths = re.findall(r'\{([^}]+)\}', raw)
+        if not paths:
+            # 无花括号包裹的情况（某些平台）
+            paths = raw.strip().split()
+        path = paths[0].strip() if paths else ""
+        if not path.lower().endswith(".epub"):
+            messagebox.showwarning("提示", "请拖入 .epub 文件")
+            return
+        if not os.path.isfile(path):
+            messagebox.showwarning("提示", f"文件不存在: {path}")
+            return
+        self._set_input_path(path)
+
+    def _on_input_drag_enter(self, event):
+        self.input_entry.configure(bg="#d5f5e3")
+
+    def _on_input_drag_leave(self, event):
+        self.input_entry.configure(bg="white")
 
     def pick_output(self):
         current = self.output_var.get().strip()
@@ -566,33 +687,45 @@ class App(tk.Tk):
         backup_path = data_dir / f"glossary.backup.before_import.{timestamp}.json"
 
         try:
+            # 读取现有术语表，增量合并
+            existing = JaZhTranslator._load_json(str(glossary_path), {}) if glossary_path.exists() else {}
+            if existing:
+                # 先归一化现有术语表
+                existing_normalized, _ = JaZhTranslator.normalize_glossary_payload(existing)
+                # 增量合并：新术语追加到已有术语表
+                merged, merge_stats = JaZhTranslator.merge_glossaries(existing_normalized, normalized_glossary)
+            else:
+                merged = normalized_glossary
+                merge_stats = {"added": import_stats.get("accepted", 0), "skipped": import_stats.get("skipped", 0), "conflicts": import_stats.get("conflicts", 0)}
+
+            # 备份
             has_existing = glossary_path.exists()
-            if glossary_path.exists():
+            if has_existing:
                 shutil.copy2(glossary_path, backup_path)
 
-            JaZhTranslator._atomic_write_json(glossary_path, normalized_glossary)
+            JaZhTranslator._atomic_write_json(glossary_path, merged)
 
             if self.translator is not None:
-                self.translator.replace_glossary(normalized_glossary)
+                self.translator.replace_glossary(merged)
 
-            accepted = import_stats.get("accepted", 0)
-            skipped = import_stats.get("skipped", 0)
-            conflicts = import_stats.get("conflicts", 0)
+            added = merge_stats.get("added", 0)
+            skipped = merge_stats.get("skipped", 0)
+            conflicts = merge_stats.get("conflicts", 0)
             logger.info(
-                "Glossary imported: %s -> %s (accepted=%s skipped=%s conflicts=%s)",
-                path, glossary_path, accepted, skipped, conflicts,
+                "Glossary imported: %s -> %s (added=%s skipped=%s conflicts=%s)",
+                path, glossary_path, added, skipped, conflicts,
             )
-            logger.info(f"Glossary imported: 新增{accepted} 跳过{skipped} 冲突{conflicts}")
+            logger.info(f"术语表增量导入: 新增{added} 跳过{skipped} 冲突{conflicts}")
             messagebox.showinfo(
                 "Done",
-                f"Glossary import succeeded\n"
-                f"Accepted: {accepted}\nSkipped: {skipped}\nConflicts: {conflicts}\n"
-                f"Target: {glossary_path}\n"
-                f"Backup: {backup_path if has_existing else 'N/A'}",
+                f"术语表增量导入完成\n"
+                f"新增: {added}\n跳过(已存在): {skipped}\n冲突: {conflicts}\n"
+                f"目标: {glossary_path}\n"
+                f"备份: {backup_path if has_existing else 'N/A'}",
             )
         except Exception as e:
             logger.error(f"Glossary import failed: {e}")
-            messagebox.showerror("Error", f"Glossary import failed:\n{e}")
+            messagebox.showerror("Error", f"术语表导入失败:\n{e}")
 
     def _on_input_var_change(self, *_):
         if self.running:
@@ -675,8 +808,15 @@ class App(tk.Tk):
         if not out:
             messagebox.showerror("错误", "请填写输出文件名")
             return
-        if provider in {"deepseek", "gemini", "custom"} and not api_key:
-            provider_name = "DeepSeek" if provider == "deepseek" else ("Gemini" if provider == "gemini" else "自定义")
+        if provider in {"deepseek", "doubao", "gemini", "custom"} and not api_key:
+            if provider == "deepseek":
+                provider_name = "DeepSeek"
+            elif provider == "doubao":
+                provider_name = "Doubao"
+            elif provider == "gemini":
+                provider_name = "Gemini"
+            else:
+                provider_name = "自定义"
             messagebox.showerror("错误", f"请填写 {provider_name} API Key")
             return
         if not api_url:

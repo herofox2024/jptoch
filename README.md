@@ -8,7 +8,7 @@
   - 左侧深色导航栏，4 个页面切换：任务 / 接口配置 / 翻译选项 / 状态监控
   - 卡片化组件（LabelFrame 包裹各功能模块）
   - 主题配色系统（`THEME` 字典统一管理颜色）
-  - 标题显示版本号"EPUB 翻译器 V2.0"
+  - 标题显示版本号"EPUB 翻译器 V2.0.1"
 - **接口配置改为下拉框**：服务提供方从 Radiobutton 改为 Combobox 下拉选择
 - **状态监控页增强**：
   - 8 个统计卡片：已完成、总文本块、新增术语、耗时、速度、API 请求、成功率、失败数
@@ -97,7 +97,7 @@ python app.py
 │ │ 翻译选项 │  ├───────────────────────────────────── │
 │ │ 状态监控 │  │  [接口配置] 页面                     │
 │ └──────────┘  │   API配置卡片                       │
-│               │     服务提供方/API Key/Base URL/模型 │
+│               │     服务提供方/API Key/测试连接/Base URL/模型 │
 │  左侧导航     ├───────────────────────────────────── │
 │  (点击切换)   │  [翻译选项] 页面                     │
 │               │   性能预设 / 翻页方向 / 术语表       │
@@ -110,10 +110,10 @@ python app.py
 
 ### 基本步骤
 
-1. 选择输入 EPUB
+1. 选择输入 EPUB（支持拖拽文件到输入框）
 2. 确认输出路径
 3. 点击左侧导航栏切换到「接口配置」页面
-4. 从下拉框选择服务提供方（DeepSeek / Sakura / Gemini / 自定义）
+4. 从下拉框选择服务提供方（DeepSeek / Doubao / Sakura / Gemini / 自定义）
 5. 设置 API Key（Sakura 可留空，会使用 `sk-local`）
 6. 检查 `Base URL` 与 `Model`（切换服务提供方会自动填充默认值）
 7. 点击左侧导航栏切换到「翻译选项」页面
@@ -146,7 +146,11 @@ python app.py
 
 - `DeepSeek`：
   - 默认 URL：`https://api.deepseek.com/chat/completions`
-  - 默认模型：`deepseek-chat`
+  - 默认模型：`deepseek-v4-flash`
+  - 需要 API Key
+- `Doubao`（火山引擎豆包）：
+  - 默认 URL：`https://ark.cn-beijing.volces.com/api/v3/chat/completions`
+  - 默认模型：`Doubao-Seed-1.6-flash`
   - 需要 API Key
 - `Sakura`（本地/自建 OpenAI 兼容服务）：
   - 默认 URL：`http://127.0.0.1:8080/v1/chat/completions`
@@ -154,21 +158,23 @@ python app.py
   - API Key 可留空（程序会使用 `sk-local`）
 - `Gemini`（OpenAI 兼容入口）：
   - 默认 URL：`https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`
-  - 默认模型：`gemini-2.5-pro`
+  - 默认模型：`gemini-2.5-flash`
   - 需要 API Key
 - `Custom`：
   - 需自行填写可用的 `Base URL`、`Model`、API Key
 
 ## 环境变量
 
-可选：预先设置 DeepSeek Key，减少手动输入。
+可选：预先设置 DeepSeek 或 Doubao Key，减少手动输入。
 
 ```bash
 # Windows
 set DEEPSEEK_API_KEY=your-api-key
+set DOUBAO_API_KEY=your-api-key
 
 # Linux/macOS
 export DEEPSEEK_API_KEY=your-api-key
+export DOUBAO_API_KEY=your-api-key
 ```
 
 ## 术语表
@@ -204,6 +210,32 @@ export DEEPSEEK_API_KEY=your-api-key
 - 若使用自建/代理网关，请确认接口兼容 `chat/completions`
 
 ## 版本记录
+
+### v2.0.1（2026-05-15）
+
+#### 新增功能
+- **新增豆包（Doubao）服务提供方**：下拉选项新增 Doubao，支持火山引擎豆包大模型
+- **API Key 连接测试**：接口配置页新增「测试连接」按钮，翻译前验证 Key 有效性，提前拦截 401/402 错误
+- **拖拽上传 EPUB**：输入 EPUB 支持拖拽文件到输入框，自动识别路径并填入（需安装 tkinterdnd2）
+- **术语表增量导入**：导入 JSON 时改为增量合并模式，不覆盖已有术语，冲突保留旧翻译
+
+#### 参数调整
+- **关闭深度思考**：DeepSeek/豆包请求自动注入 `thinking: {"type": "disabled"}`，降低 token 消耗
+- **模型名更新**：
+  - DeepSeek：`deepseek-chat` → `deepseek-v4-flash`
+  - Doubao：`Doubao-Seed-1.6-flash`
+  - Gemini：`gemini-2.5-pro` → `gemini-2.5-flash`
+
+#### 稳定性修复
+- **tkinterdnd2 可选依赖**：未安装时自动回退普通 Tk，应用不会启动崩溃
+- **拖拽路径解析稳健性**：使用正则提取路径，正确处理空格路径和多文件场景
+- **切换 Provider 不清空 Key**：误触下拉切换不再丢失已输入 API Key
+- **备份提示条件准确**：导入术语表时提示与实际备份行为一致
+- **内置模板自动释放**：打包 exe 后首次运行自动生成 `~/.epub_translator/dict/` 下 YAML 模板
+- **术语表提示路径动态化**：提示文案使用 `get_data_dir()` 获取真实路径，不再硬编码用户名
+
+#### 依赖更新
+- `requirements.txt` 新增 `tkinterdnd2`
 
 ### v2.0（2026-05-14）
 
