@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import re
+import sys
 import threading
 import time
 import uuid
@@ -139,12 +140,20 @@ system_prompt_template: |
 
 
 def get_dict_dir() -> Path:
-    """获取 dict/ 目录路径（存放提示词模板）"""
-    # 优先使用项目目录下的 dict/
-    project_dict = Path(__file__).parent / "dict"
-    if project_dict.exists():
-        return project_dict
-    # 回退到用户数据目录，自动释放内置模板
+    """获取 dict/ 目录路径（存放提示词模板）
+
+    开发模式（源码运行）：优先使用项目目录下的 dict/
+    打包模式（PyInstaller exe）：使用用户数据目录，首次运行自动释放内置模板
+    """
+    is_frozen = getattr(sys, "frozen", False)
+
+    if not is_frozen:
+        # 开发模式：优先项目目录
+        project_dict = Path(__file__).parent / "dict"
+        if project_dict.exists():
+            return project_dict
+
+    # 打包模式或项目目录无 dict/：使用用户数据目录，自动释放内置模板
     data_dict = get_data_dir() / "dict"
     data_dict.mkdir(exist_ok=True)
     for filename, content in _BUILTIN_TEMPLATES.items():

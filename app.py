@@ -1053,5 +1053,8 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
 
 if __name__ == "__main__":
     setup_logging()
+    # 预释放提示词模板到用户目录（打包 exe 首次运行时需要）
+    from translator import get_dict_dir
+    get_dict_dir()
     app = App()
     app.mainloop()
