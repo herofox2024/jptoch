@@ -249,6 +249,10 @@ class TranslateWorker(QObject):
             emit_stat(total_texts, total_texts)
             self.finished.emit(cfg.out)
         except Exception as e:
+            # User-triggered cancel should end as a normal stop instead of an error.
+            if self.cancel_event.is_set() and "翻译已取消" in str(e):
+                self.finished.emit("已取消")
+                return
             self.error_detail.emit(traceback.format_exc())
             self.failed.emit(f"{e}\n{traceback.format_exc()}")
 
@@ -670,7 +674,7 @@ class QtAppWindow(QWidget):
             ("speed", "速度(块/秒)"),
             ("char_speed", "速度(字/秒)"),
             ("api", "API 请求"),
-            ("token", "Token ??"),
+            ("token", "Token 消耗"),
             ("success", "成功率"),
             ("fail", "失败数"),
         ]
