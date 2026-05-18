@@ -391,6 +391,12 @@ class QtAppWindow(QWidget):
         self.nav_api_btn.clicked.connect(lambda: self._switch_page("api"))
         nav_layout.addWidget(self.nav_api_btn)
 
+        self.nav_status_btn = PushButton("状态监控")
+        self.nav_status_btn.setIcon(FluentIcon.HISTORY.icon())
+        self.nav_status_btn.setCheckable(True)
+        self.nav_status_btn.clicked.connect(lambda: self._switch_page("status"))
+        nav_layout.addWidget(self.nav_status_btn)
+
         nav_layout.addStretch(1)
 
         self.nav_settings_btn = PushButton("设置")
@@ -755,6 +761,7 @@ class QtAppWindow(QWidget):
         self.page_area.setWidget(self.pages[key])
         self.nav_task_btn.setChecked(key == "task")
         self.nav_api_btn.setChecked(key == "api")
+        self.nav_status_btn.setChecked(key == "status")
         self.nav_settings_btn.setChecked(key == "option")
 
     def _current_provider_key(self) -> str:
