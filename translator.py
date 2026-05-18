@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import os
 import random
@@ -283,6 +283,7 @@ class JaZhTranslator:
         extract_glossary: bool = False,
         enable_glossary: bool = True,
         preset: Optional[str] = None,
+        enable_thinking: bool = False,
     ):
         self.provider = (provider or "deepseek").strip().lower()
         if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "custom"}:
@@ -374,6 +375,7 @@ class JaZhTranslator:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         self.extract_glossary = bool(extract_glossary)
+        self.enable_thinking = bool(enable_thinking)
 
         # 加载提示词模板
         dict_dir = get_dict_dir()
@@ -382,6 +384,8 @@ class JaZhTranslator:
 
         self.stats = {
             "api_requests_total": 0,
+            "api_requests_failed": 0,
+            "tokens_total": 0,
             "batch_total": 0,
             "batch_json_success": 0,
             "batch_delimiter_success": 0,
@@ -397,7 +401,7 @@ class JaZhTranslator:
 
     def _apply_provider_payload_options(self, payload: Dict[str, Any]) -> None:
         """为特定提供方追加请求参数。"""
-        if self.provider in {"deepseek", "doubao"}:
+        if (not self.enable_thinking) and self.provider in {"deepseek", "doubao", "gemini", "custom"}:
             # 用户要求关闭深度思考。
             payload["thinking"] = {"type": "disabled"}
 
@@ -450,6 +454,21 @@ class JaZhTranslator:
     def _inc_stat(self, key: str, delta: int = 1):
         with self._stats_lock:
             self.stats[key] = self.stats.get(key, 0) + delta
+
+    def _accumulate_usage_tokens(self, data: Dict[str, Any]) -> None:
+        """Accumulate usage.total_tokens from OpenAI-compatible responses when present."""
+        if not isinstance(data, dict):
+            return
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            return
+        total = usage.get("total_tokens")
+        try:
+            tokens = int(total)
+        except (TypeError, ValueError):
+            return
+        if tokens > 0:
+            self._inc_stat("tokens_total", tokens)
 
     def get_stats(self) -> Dict[str, int]:
         with self._stats_lock:
@@ -861,16 +880,19 @@ JSON 顶层字段：
                 )
 
                 if resp.status_code == 429:
+                    self._inc_stat("api_requests_failed")
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     logger.warning(f"API 限流，等待 {wait_time:.1f} 秒后重试...")
                     if self.cancel_event.wait(wait_time):
                         raise RuntimeError("翻译已取消")
                     continue
                 if resp.status_code == 502:
+                    self._inc_stat("api_requests_failed")
                     raise FastFailError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
 
                 resp.raise_for_status()
                 data = resp.json()
+                self._accumulate_usage_tokens(data)
                 # 验证响应格式
                 choices = data.get("choices", [])
                 if not choices:
@@ -882,21 +904,26 @@ JSON 顶层字段：
                 return content.strip()
 
             except requests.exceptions.Timeout:
+                self._inc_stat("api_requests_failed")
                 last_error = "请求超时"
                 logger.warning(f"API 请求超时 (尝试 {attempt + 1}/{max_retries})")
             except requests.exceptions.ConnectionError:
+                self._inc_stat("api_requests_failed")
                 last_error = "网络连接失败"
                 logger.warning(f"网络连接失败 (尝试 {attempt + 1}/{max_retries})")
             except requests.exceptions.HTTPError as e:
+                self._inc_stat("api_requests_failed")
                 last_error = f"HTTP 错误: {e}"
                 logger.warning(f"HTTP 错误 (尝试 {attempt + 1}/{max_retries}): {e}")
             except (json.JSONDecodeError, KeyError, IndexError) as e:
+                self._inc_stat("api_requests_failed")
                 last_error = f"API 响应格式错误: {e}"
                 logger.error(f"API 响应格式错误: {e}")
                 break
             except FastFailError:
                 raise
             except Exception as e:
+                self._inc_stat("api_requests_failed")
                 last_error = f"未知错误: {e}"
                 logger.error(f"未知错误: {e}")
 
@@ -955,14 +982,17 @@ JSON 顶层字段：
                     timeout=self.API_TIMEOUT,
                 )
                 if resp.status_code == 429:
+                    self._inc_stat("api_requests_failed")
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     if self.cancel_event.wait(wait_time):
                         raise RuntimeError("翻译已取消")
                     continue
                 if resp.status_code == 502:
+                    self._inc_stat("api_requests_failed")
                     raise FastFailError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
                 resp.raise_for_status()
                 data = resp.json()
+                self._accumulate_usage_tokens(data)
                 # 验证响应格式
                 choices = data.get("choices", [])
                 if not choices:
@@ -1004,6 +1034,7 @@ JSON 顶层字段：
             except FastFailError:
                 raise
             except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
+                self._inc_stat("api_requests_failed")
                 logger.warning(f"批量翻译请求失败 (尝试 {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt + random.uniform(0, 1)

@@ -33,3 +33,8 @@ Thumbs.db
 
 # Codebuddy
 .codebuddy/
+
+#logo
+*.jpg
+logo.png
+logo.ico

@@ -211,6 +211,43 @@ export DOUBAO_API_KEY=your-api-key
 
 ## 版本记录
 
+### V3.1beta（2026-05-18）
+
+#### UI 字体适配优化（Qt UI）
+- 全局字体统一缩小一档：
+  - DPI 分档基准字号整体下调 1pt（`175%+/150%/125%/100%` 对应 `12/11/10/9pt`）
+  - 基础控件统一字号从 `base+1` 调整为 `base`
+- 在上述基础上，UI 字体再次统一缩小 20%：
+  - 新增 `_ui_font_pt = max(7, round(base_pt * 0.8))`
+  - 应用级字体与窗口字体统一使用 `_ui_font_pt`
+  - `QLabel/QLineEdit/QPlainTextEdit/QComboBox/QPushButton/QCheckBox/QRadioButton` 统一使用 `_ui_font_pt`
+- 保持布局不变：本次未调整任何控件间距/边距参数（spacing/margin 不变）
+- 编译检查：`python -m py_compile ui/qt_app.py` 通过
+
+### V3.1beta（2026-05-17）
+
+#### 重构与交互优化（Qt UI）
+- 左侧导航按钮补齐 `setCheckable(True)`，任务 / 接口配置 / 设置三按钮可正确进入选中态。
+- 接口配置页联动增强：
+  - 选择服务提供方后，`Base URL` 自动填充并锁定为不可编辑。
+  - 仅 `Custom` 提供方允许手动编辑 `Base URL`。
+  - 选择 `Sakura` 时，`API Key` 输入框自动置灰（离线本地模型无需手填 Key）。
+- 任务页“开始翻译”旁按钮文案修复：乱码 `??` 已修正为 `暂停`。
+
+#### 翻译流程与容错
+- 修复 `TranslateWorker._extract_text()` 签名问题，消除：
+  - `TypeError: TranslateWorker._extract_text() takes 1 positional argument but 2 were given`
+- 修复 `TranslateWorker.cancel()` 误改逻辑，恢复为线程取消事件控制（`cancel_event.set()`）。
+- 421/429 场景交互优化：
+  - 触发限流/路由错误时给出明确提示。
+  - 支持先暂停，再切换模型/提供方后继续翻译（基于现有缓存机制续跑）。
+
+#### 状态监控增强
+- 新增实时统计卡片：`Token 消耗`。
+- `translator.py` 新增 `tokens_total` 统计字段。
+- 在 API 响应中读取 `usage.total_tokens` 并累计，实时回传到状态页展示。
+- UI 统计信号 `stat_update` 扩展 token 参数并在状态卡片实时刷新。
+
 ### v2.0.1（2026-05-15）
 
 #### 新增功能
@@ -314,3 +351,41 @@ export DOUBAO_API_KEY=your-api-key
 ## License
 
 MIT License
+
+## Qt 重构入口（进行中）
+
+```bash
+python main_qt.py
+```
+
+说明：该入口为 PyQt5 + qfluentwidgets 的并行重构版本，原 `python app.py` 仍可继续使用。
+
+## Qt 版打包（PyInstaller）
+
+安装打包工具：
+
+```bash
+pip install pyinstaller
+```
+
+使用 spec 打包 Qt 入口：
+
+```bash
+pyinstaller main_qt.spec --noconfirm
+```
+
+输出文件：
+
+```text
+dist/EPUBTranslatorQt.exe
+```
+
+## Qt 回归清单（建议）
+
+1. 启动与导航：`python main_qt.py`，检查 4 页面切换正常。  
+2. 文件输入：按钮选择与拖拽 `.epub` 均可填充输入并生成输出路径。  
+3. 接口配置：切换 provider 后 URL/Model 自动更新，测试连接可按超时返回结果。  
+4. 翻译流程：开始后 UI 不冻结，进度条与统计卡片持续更新，取消可生效。  
+5. 状态监控：实时原文/译文、错误详情、清空统计按钮可用。  
+6. 术语功能：导入 JSON 增量合并成功，冲突与备份提示正确。  
+7. 诊断包：导出 ZIP，包含脱敏配置、日志文件、glossary（若存在）。  
