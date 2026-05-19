@@ -8,7 +8,7 @@ from unittest import mock
 from bs4 import BeautifulSoup
 
 from app import App
-from translator import FastFailError, JaZhTranslator
+from translator import FastFailError, JaZhTranslator, BatchJsonResult
 
 
 class DummyTranslator(JaZhTranslator):
@@ -16,6 +16,8 @@ class DummyTranslator(JaZhTranslator):
         self.provider = "deepseek"
         self.api_key = "x"
         self.enable_glossary = True
+        self.extract_glossary = False
+        self.enable_thinking = False
         self.glossary = {}
         self.cache = {}
         self._cache_dirty = False
@@ -27,8 +29,12 @@ class DummyTranslator(JaZhTranslator):
             "api_requests_total": 0,
             "batch_total": 0,
             "batch_json_success": 0,
+            "batch_json_partial_success": 0,
+            "batch_partial_retry": 0,
             "batch_fallback": 0,
             "batch_split_mismatch": 0,
+            "batch_json_parse_fail": 0,
+            "truncation_continuation": 0,
         }
         self.max_workers = 2
         self.batch_size = 4
@@ -70,7 +76,12 @@ class TranslatorTests(unittest.TestCase):
 
     def test_batch_json_path(self):
         t = DummyTranslator()
-        t._call_deepseek_batch_json = lambda batch, max_retries=2: [f"ZH:{x}" for x in batch]  # type: ignore
+        t._call_deepseek_batch_json = lambda batch, max_retries=2: BatchJsonResult(
+            translations=[f"ZH:{x}" for x in batch],
+            new_terms=[],
+            missing_indices=[],
+            finish_reason="stop",
+        )
         t._call_deepseek = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("should not be called"))  # type: ignore
         res = t.translate_batch(["A", "B"], batch_size=4)
         self.assertEqual(res["A"], "ZH:A")

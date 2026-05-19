@@ -9,10 +9,34 @@ import time
 import uuid
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
+
+
+# ---------------------------------------------------------------------------
+# 结果数据类：用于 _call_deepseek_single / _call_deepseek_batch_json 返回
+# ---------------------------------------------------------------------------
+@dataclass
+class SingleChunkResult:
+    """单条翻译 API 调用结果"""
+    content: str
+    finish_reason: Optional[str] = None   # "stop", "length", or None
+    is_truncated: bool = False
+
+
+@dataclass
+class BatchJsonResult:
+    """批量 JSON 翻译 API 调用结果（支持部分成功）"""
+    translations: Optional[List[Optional[str]]] = None  # None=全部失败; 有 None 槽=部分成功
+    new_terms: Optional[List[Dict[str, Any]]] = None
+    missing_indices: List[int] = field(default_factory=list)
+    finish_reason: Optional[str] = None
+    is_truncated: bool = False
+    raw_content: str = ""
+
 
 # YAML 模块延迟加载（可选依赖）
 _yaml_module = None
@@ -262,6 +286,7 @@ class JaZhTranslator:
     CACHE_SAVE_THRESHOLD = 20  # 缓存保存阈值，每 N 次更新后保存
     API_TIMEOUT = 120  # API 请求超时时间（秒）
     MAX_RETRIES = 3  # API 请求最大重试次数
+    MAX_CONTINUATIONS = 2  # finish_reason=length 时最大续取次数
 
     def __init__(
         self,
@@ -388,10 +413,13 @@ class JaZhTranslator:
             "tokens_total": 0,
             "batch_total": 0,
             "batch_json_success": 0,
+            "batch_json_partial_success": 0,
+            "batch_partial_retry": 0,
             "batch_delimiter_success": 0,
             "batch_fallback": 0,
             "batch_split_mismatch": 0,
             "batch_json_parse_fail": 0,
+            "truncation_continuation": 0,
             "glossary_new_terms_added": 0,
         }
         logger.info(
@@ -469,6 +497,68 @@ class JaZhTranslator:
             return
         if tokens > 0:
             self._inc_stat("tokens_total", tokens)
+
+    def _get_finish_reason(self, data: Dict[str, Any]) -> Optional[str]:
+        """从 OpenAI-compatible API 响应中提取 finish_reason"""
+        choices = data.get("choices", [])
+        if not choices or not isinstance(choices, list):
+            return None
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            return None
+        return choice.get("finish_reason")
+
+    def _send_continuation_request(
+        self,
+        messages: List[Dict[str, str]],
+        accumulated_content: str,
+        continuation_prompt: str,
+        headers: Dict[str, str],
+        base_payload: Dict[str, Any],
+    ) -> Tuple[str, Optional[str]]:
+        """
+        发送截断续取请求（finish_reason=length 时继续）
+
+        Args:
+            messages: 原始消息历史
+            accumulated_content: 已累积的内容
+            continuation_prompt: 续取提示词
+            headers: API headers
+            base_payload: 基础 payload（不含 messages）
+
+        Returns:
+            (additional_content, finish_reason) 或 ("", None) 失败时
+        """
+        continuation_messages = list(messages)
+        continuation_messages.append({"role": "assistant", "content": accumulated_content})
+        continuation_messages.append({"role": "user", "content": continuation_prompt})
+
+        payload = dict(base_payload)
+        payload["messages"] = continuation_messages
+
+        try:
+            self._inc_stat("api_requests_total")
+            resp = self.session.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                timeout=self.API_TIMEOUT,
+            )
+            if resp.status_code in (429, 502):
+                return "", None  # 优雅降级
+            resp.raise_for_status()
+            data = resp.json()
+            self._accumulate_usage_tokens(data)
+            choices = data.get("choices", [])
+            if not choices:
+                return "", None
+            message = choices[0].get("message", {})
+            additional = message.get("content", "")
+            finish_reason = self._get_finish_reason(data)
+            return (additional or "").strip(), finish_reason
+        except Exception as e:
+            logger.warning(f"截断续取请求失败: {e}")
+            return "", None
 
     def get_stats(self) -> Dict[str, int]:
         with self._stats_lock:
@@ -793,13 +883,18 @@ JSON 顶层字段：
 
         return base_prompt + "\n" + extraction_rules
 
-    def _call_deepseek(
+    def _call_deepseek_single(
         self,
         text: str,
-        max_retries: int = 3,  # 可通过 JaZhTranslator.MAX_RETRIES 调整默认值
+        max_retries: int = 3,
         text_separator: Optional[str] = None,
-    ) -> str:
-        """调用模型 API，支持重试机制"""
+    ) -> SingleChunkResult:
+        """
+        调用模型 API（单条），支持截断续取。
+
+        Returns:
+            SingleChunkResult: 包含 content、finish_reason、is_truncated
+        """
         sep = text_separator or DEFAULT_TEXT_SEPARATOR
         is_batch = sep in text
 
@@ -810,7 +905,7 @@ JSON 顶层字段：
 - 达：语言流畅自然，通顺易懂，让读者沉浸在故事中
 【日文特有表达处理】：
 1. 敬语体系：将敬语转换为符合中文语境的表达，不必过度保留敬称
-2. 姐さん/兄さん等称谓：根据角色关系，译为“姐姐/哥哥”或保留昵称风格
+2. 姐さん/兄さん等称谓：根据角色关系，译为"姐姐/哥哥"或保留昵称风格
 3. 委婉表达：日文的含蓄委婉可适当转化为更直接的中文表达，但要保留情感色彩
 4. 语气词：よ、ね、さ等语气词不必逐字翻译，用自然的中文语气表达即可
 5. 内心独白：保持第一人称叙述的连贯性，内心想法用括号或直接叙述
@@ -851,12 +946,13 @@ JSON 顶层字段：
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "messages": messages,
             "temperature": self.temperature,
         }
         self._apply_provider_payload_options(payload)
@@ -893,7 +989,7 @@ JSON 顶层字段：
                 resp.raise_for_status()
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
-                # 验证响应格式
+
                 choices = data.get("choices", [])
                 if not choices:
                     raise KeyError("API 响应缺少 choices 字段")
@@ -901,7 +997,50 @@ JSON 顶层字段：
                 content = message.get("content", "")
                 if not content:
                     raise KeyError("API 响应缺少 content 字段")
-                return content.strip()
+
+                content = content.strip()
+                finish_reason = self._get_finish_reason(data)
+                is_truncated = finish_reason == "length"
+
+                # P0-B: 截断续取逻辑
+                if is_truncated:
+                    accumulated = content
+                    continuations_used = 0
+                    continuation_prompt = "请继续完成翻译，从断点处继续输出。"
+
+                    while continuations_used < self.MAX_CONTINUATIONS and finish_reason == "length":
+                        if self.cancel_event.is_set():
+                            break
+
+                        additional, new_finish = self._send_continuation_request(
+                            messages=messages,
+                            accumulated_content=accumulated,
+                            continuation_prompt=continuation_prompt,
+                            headers=headers,
+                            base_payload={
+                                "model": self.model,
+                                "temperature": self.temperature,
+                                "top_p": self.top_p,
+                                "frequency_penalty": self.frequency_penalty,
+                            },
+                        )
+                        if not additional:
+                            break  # 优雅降级
+
+                        accumulated += additional
+                        finish_reason = new_finish
+                        continuations_used += 1
+                        self._inc_stat("truncation_continuation")
+                        logger.info(f"截断续取 {continuations_used}/{self.MAX_CONTINUATIONS}")
+
+                    content = accumulated
+                    is_truncated = finish_reason == "length"  # 可能仍然截断
+
+                return SingleChunkResult(
+                    content=content,
+                    finish_reason=finish_reason,
+                    is_truncated=is_truncated,
+                )
 
             except requests.exceptions.Timeout:
                 self._inc_stat("api_requests_failed")
@@ -934,10 +1073,20 @@ JSON 顶层字段：
 
         raise RuntimeError(f"翻译失败: {last_error}")
 
-    def _call_deepseek_batch_json(self, texts: List[str], max_retries: int = 2) -> Optional[Dict[str, object]]:
-        """批量翻译：结构化返回 translations + new_terms。失败时返回 None。"""
+    def _call_deepseek(
+        self,
+        text: str,
+        max_retries: int = 3,
+        text_separator: Optional[str] = None,
+    ) -> str:
+        """向后兼容的包装器，仅返回 content 字符串"""
+        result = self._call_deepseek_single(text, max_retries, text_separator)
+        return result.content
+
+    def _call_deepseek_batch_json(self, texts: List[str], max_retries: int = 2) -> BatchJsonResult:
+        """批量翻译：结构化返回 translations + new_terms。支持截断续取和部分成功。"""
         if not texts:
-            return {"translations": [], "new_terms": []}
+            return BatchJsonResult(translations=[], new_terms=[], missing_indices=[], finish_reason="stop")
 
         numbered = [{"idx": i, "text": t} for i, t in enumerate(texts)]
 
@@ -954,12 +1103,13 @@ JSON 顶层字段：
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "messages": messages,
             "temperature": 0.1 if self.provider == "deepseek" else self.temperature,
         }
         self._apply_provider_payload_options(payload)
@@ -993,44 +1143,113 @@ JSON 顶层字段：
                 resp.raise_for_status()
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
-                # 验证响应格式
+
                 choices = data.get("choices", [])
                 if not choices:
                     self._inc_stat("batch_json_parse_fail")
-                    return None
+                    return BatchJsonResult(
+                        translations=None, missing_indices=list(range(len(texts))),
+                        finish_reason=self._get_finish_reason(data),
+                    )
                 message = choices[0].get("message", {})
                 raw = message.get("content", "")
                 if not raw:
                     self._inc_stat("batch_json_parse_fail")
-                    return None
+                    return BatchJsonResult(
+                        translations=None, missing_indices=list(range(len(texts))),
+                        finish_reason=self._get_finish_reason(data),
+                    )
+
                 raw = raw.strip()
+                finish_reason = self._get_finish_reason(data)
+                is_truncated = finish_reason == "length"
+
+                # P0-B: 截断续取 — 拼接 JSON 字符串直到完整或达到上限
+                if is_truncated:
+                    accumulated_raw = raw
+                    continuations_used = 0
+                    continuation_prompt = "请从断点处继续输出 JSON，不要从头开始。"
+
+                    while continuations_used < self.MAX_CONTINUATIONS and finish_reason == "length":
+                        if self.cancel_event.is_set():
+                            break
+                        additional, new_finish = self._send_continuation_request(
+                            messages=messages,
+                            accumulated_content=accumulated_raw,
+                            continuation_prompt=continuation_prompt,
+                            headers=headers,
+                            base_payload={
+                                "model": self.model,
+                                "temperature": payload.get("temperature", self.temperature),
+                                "top_p": self.top_p,
+                                "frequency_penalty": self.frequency_penalty,
+                            },
+                        )
+                        if not additional:
+                            break
+                        accumulated_raw += additional
+                        finish_reason = new_finish
+                        continuations_used += 1
+                        self._inc_stat("truncation_continuation")
+                        logger.info(f"批量 JSON 截断续取 {continuations_used}/{self.MAX_CONTINUATIONS}")
+
+                    raw = accumulated_raw
+                    is_truncated = finish_reason == "length"
+
+                # P0-A: 部分成功校验（替代全有全无）
                 obj = self._extract_json_object(raw)
                 if not isinstance(obj, dict):
                     self._inc_stat("batch_json_parse_fail")
-                    return None
-                arr = obj.get("translations") or obj.get("items")
-                if not isinstance(arr, list) or len(arr) != len(texts):
-                    self._inc_stat("batch_json_parse_fail")
-                    return None
+                    return BatchJsonResult(
+                        translations=None, missing_indices=list(range(len(texts))),
+                        finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
+                    )
 
+                arr = obj.get("translations") or obj.get("items")
+                if not isinstance(arr, list):
+                    self._inc_stat("batch_json_parse_fail")
+                    return BatchJsonResult(
+                        translations=None, missing_indices=list(range(len(texts))),
+                        finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
+                    )
+
+                # 逐条校验 idx，跳过无效项（防幻觉），保留有效项
                 out = [None] * len(texts)
+                valid_indices = set()
+
                 for item in arr:
                     if not isinstance(item, dict):
-                        self._inc_stat("batch_json_parse_fail")
-                        return None
+                        continue  # 跳过非 dict 项
                     idx = item.get("idx")
                     zh = item.get("zh")
-                    if not isinstance(idx, int) or idx < 0 or idx >= len(texts) or not isinstance(zh, str):
-                        self._inc_stat("batch_json_parse_fail")
-                        return None
+                    if not isinstance(idx, int) or idx < 0 or idx >= len(texts):
+                        continue  # 跳过越界 idx（幻觉）
+                    if not isinstance(zh, str) or not zh.strip():
+                        continue  # 跳过空译文
                     out[idx] = zh.strip()
-                if any(v is None for v in out):
-                    self._inc_stat("batch_json_parse_fail")
-                    return None
+                    valid_indices.add(idx)
+
+                missing_indices = [i for i in range(len(texts)) if i not in valid_indices]
+
+                if valid_indices and missing_indices:
+                    self._inc_stat("batch_json_partial_success")
+                    logger.warning(
+                        f"批量 JSON 部分成功: {len(valid_indices)}/{len(texts)} 有效, "
+                        f"缺失索引: {missing_indices}"
+                    )
+
                 raw_terms = obj.get("new_terms", [])
                 if not isinstance(raw_terms, list):
                     raw_terms = []
-                return {"translations": out, "new_terms": raw_terms}
+
+                return BatchJsonResult(
+                    translations=out,
+                    new_terms=raw_terms,
+                    missing_indices=missing_indices,
+                    finish_reason=finish_reason,
+                    is_truncated=is_truncated,
+                    raw_content=raw,
+                )
             except FastFailError:
                 raise
             except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
@@ -1041,9 +1260,13 @@ JSON 顶层字段：
                     if self.cancel_event.wait(wait_time):
                         raise RuntimeError("翻译已取消")
                     continue
-                return None
+                return BatchJsonResult(
+                    translations=None, missing_indices=list(range(len(texts))),
+                )
 
-        return None
+        return BatchJsonResult(
+            translations=None, missing_indices=list(range(len(texts))),
+        )
 
     def replace_glossary(self, glossary: Dict[str, Any]) -> None:
         """线程安全替换术语表，并持久化到 glossary_path。"""
@@ -1434,6 +1657,55 @@ JSON 顶层字段：
         logger.info(f"合并为 {len(batches)} 个批次进行并发翻译")
         mismatch_count = 0
 
+        def is_suspicious_pair(src: str, dst: str) -> bool:
+            src = (src or "").strip()
+            dst = (dst or "").strip()
+            if not dst:
+                return True
+            if len(src) >= 20 and len(dst) <= 1:
+                return True
+            if len(dst) >= 8:
+                most_common = max(dst.count(ch) for ch in set(dst))
+                if most_common / max(1, len(dst)) >= 0.65:
+                    return True
+            if re.search(r"(.{2,10})\1{3,}", dst):
+                return True
+            return False
+
+        def repair_batch_quality(batch: List[str], pairs: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+            if len(pairs) <= 1:
+                return pairs
+
+            suspicious_idx = set()
+            outputs = [((dst or "").strip()) for _, dst in pairs]
+            dup_counter: Dict[str, int] = {}
+            for out in outputs:
+                dup_counter[out] = dup_counter.get(out, 0) + 1
+
+            for i, (src, dst) in enumerate(pairs):
+                clean_dst = (dst or "").strip()
+                if is_suspicious_pair(src, clean_dst):
+                    suspicious_idx.add(i)
+                    continue
+                if clean_dst and dup_counter.get(clean_dst, 0) >= 3 and len(set(batch)) >= 3:
+                    suspicious_idx.add(i)
+
+            if not suspicious_idx:
+                return pairs
+
+            logger.info(f"质检发现 {len(suspicious_idx)} 条可疑译文，准备单条重译: 索引={sorted(suspicious_idx)}")
+            repaired = list(pairs)
+            fixed_count = 0
+            for i in sorted(suspicious_idx):
+                src = batch[i]
+                try:
+                    repaired[i] = (src, self._translate_chunk(src))
+                    fixed_count += 1
+                except Exception as e:
+                    logger.warning(f"质检重译失败 [{i}]: {e}")
+            logger.info(f"质检重译完成，成功修复 {fixed_count}/{len(suspicious_idx)} 条")
+            return repaired
+
         def translate_one_batch(batch: List[str]) -> List[Tuple[str, str]]:
             nonlocal mismatch_count
             if self.cancel_event.is_set():
@@ -1446,25 +1718,38 @@ JSON 顶层字段：
 
             self._inc_stat("batch_total")
             # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
-            payload = self._call_deepseek_batch_json(batch)
-            if payload and isinstance(payload, dict):
-                json_parts = payload.get("translations", [])
+            result = self._call_deepseek_batch_json(batch)
+
+            # Case 1: 全部成功（所有 idx 都有有效译文）
+            if result.translations is not None and not result.missing_indices:
+                json_parts = result.translations
                 if isinstance(json_parts, list) and len(json_parts) == len(batch):
-                    if self.extract_glossary:
-                        raw_terms = payload.get("new_terms", [])
-                        cleaned_terms = self._clean_new_terms(raw_terms if isinstance(raw_terms, list) else [])
+                    if self.extract_glossary and result.new_terms:
+                        cleaned_terms = self._clean_new_terms(result.new_terms)
                         self._merge_new_terms_into_glossary(cleaned_terms)
                     self._inc_stat("batch_json_success")
-                    return list(zip(batch, json_parts))
+                    return repair_batch_quality(batch, list(zip(batch, json_parts)))
 
-            if payload and not isinstance(payload, dict):
-                json_parts = payload
-            else:
-                json_parts = None
-            if json_parts and len(json_parts) == len(batch):
+            # Case 2: 部分成功 — 有效条目直接用，缺失条目单条重试
+            if result.translations is not None and result.missing_indices:
+                if self.extract_glossary and result.new_terms:
+                    cleaned_terms = self._clean_new_terms(result.new_terms)
+                    self._merge_new_terms_into_glossary(cleaned_terms)
                 self._inc_stat("batch_json_success")
-                return list(zip(batch, json_parts))
+                self._inc_stat("batch_partial_retry")
 
+                final_parts = list(result.translations)  # 复制
+                for idx in result.missing_indices:
+                    logger.info(f"部分成功重试: 缺失索引 {idx} 走单条翻译")
+                    try:
+                        final_parts[idx] = self._translate_chunk(batch[idx])
+                    except Exception as e:
+                        logger.warning(f"单条重试失败 [idx={idx}]: {e}")
+                        final_parts[idx] = batch[idx]  # 兜底：回退原文
+
+                return repair_batch_quality(batch, list(zip(batch, final_parts)))
+
+            # Case 3: 全部失败 — 回退到分隔符批量
             separator = f"\n---SPLIT-{uuid.uuid4().hex}---\n"
             combined = separator.join(batch)
             combined_zh = self._call_deepseek(combined, text_separator=separator)
@@ -1478,7 +1763,7 @@ JSON 顶层字段：
                 return [(t, self._translate_chunk(t)) for t in batch]
 
             self._inc_stat("batch_delimiter_success")
-            return list(zip(batch, parts))
+            return repair_batch_quality(batch, list(zip(batch, parts)))
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {executor.submit(translate_one_batch, batch): batch for batch in batches}

@@ -1,3 +1,14 @@
+"""
+Tkinter UI (已冻结)
+
+此文件为旧版 Tk 界面，自 2026-05 起：
+- 不再新增功能，仅接受阻断性 bug 修复
+- 主入口已切换为 Qt UI (main_qt.py)
+- 新功能开发请修改 ui/qt_app.py
+
+启动方式（仅用于兼容测试）：
+    python app.py
+"""
 import logging
 import os
 import threading

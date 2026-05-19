@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿# EPUB 日译中翻译工具
+﻿﻿﻿﻿﻿﻿﻿# EPUB 日译中翻译工具
 
 一个基于大模型 API 的日文 EPUB 自动翻译工具，提供桌面 GUI，支持将日文 EPUB 翻译为简体中文，并尽量保留原书结构（目录、链接、章节）。
 
@@ -211,6 +211,32 @@ export DOUBAO_API_KEY=your-api-key
 
 ## 版本记录
 
+### V3.1beta版（2026-05-19）
+
+### Qt UI 与翻译参数（当日）
+
+- **主题切换修复**：
+  - 新增主题切换（`浅色 / 深色`）。
+  - 修复主题切换后局部控件样式未刷新问题。
+- **深度思考开关（Thinking Toggle）**：
+  - Qt 设置项已打通 `TranslateConfig -> TranslateWorker -> JaZhTranslator` 参数链路。
+  - 支持在 UI 中显式启用/禁用深度思考。
+  - 默认对 `deepseek / doubao / gemini / custom` 注入 `thinking: {"type": "disabled"}` 以控制 token 成本并提升速度。
+- **标题栏图标增强**：
+  - 启动时按顺序探测并加载图标资源：
+    1. `assets/logo.ico`
+    2. `assets/logo.png`
+    3. `logo.ico`
+    4. `logo.png`
+  - Windows 下补充任务栏图标 best-effort 设置（DWM API）。
+- **字体与可读性修复**：
+  - 优化 DPI 分档字体策略，避免高缩放下字体偏大。
+  - 修复深色模式下部分文本对比度不足问题。
+- **Qt 主线说明**：
+  - Qt 版本继续作为当前主线迭代。
+  - Tk 版本保持可用，但进入冻结维护（仅必要修复，不再扩展新特性）。
+
+
 ### V3.1beta（2026-05-18）
 
 #### UI 字体适配优化（Qt UI）
@@ -388,4 +414,5 @@ dist/EPUBTranslatorQt.exe
 4. 翻译流程：开始后 UI 不冻结，进度条与统计卡片持续更新，取消可生效。  
 5. 状态监控：实时原文/译文、错误详情、清空统计按钮可用。  
 6. 术语功能：导入 JSON 增量合并成功，冲突与备份提示正确。  
-7. 诊断包：导出 ZIP，包含脱敏配置、日志文件、glossary（若存在）。  
+7. 诊断包：导出 ZIP，包含脱敏配置、日志文件、glossary（若存在）。
+

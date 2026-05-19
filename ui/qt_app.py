@@ -247,6 +247,23 @@ class TranslateWorker(QObject):
 
             self.progress.emit(total_texts, total_texts, total_chars)
             emit_stat(total_texts, total_texts)
+
+            # 翻译完成时，将调试统计写入错误详情面板
+            if translator:
+                stats = translator.get_stats()
+                partial = int(stats.get("batch_json_partial_success", 0))
+                retry = int(stats.get("batch_partial_retry", 0))
+                trunc = int(stats.get("truncation_continuation", 0))
+                if partial or retry or trunc:
+                    lines = ["[P0 调试统计]"]
+                    if partial:
+                        lines.append(f"  批量部分成功: {partial} 次")
+                    if retry:
+                        lines.append(f"  缺失索引重试: {retry} 次")
+                    if trunc:
+                        lines.append(f"  截断续取: {trunc} 次")
+                    self.error_detail.emit("\n".join(lines))
+
             self.finished.emit(cfg.out)
         except Exception as e:
             # User-triggered cancel should end as a normal stop instead of an error.
@@ -700,11 +717,16 @@ class QtAppWindow(QWidget):
         layout.addWidget(cards_wrap)
 
         progress_card = self._make_card("翻译进度")
+        bar_row = QHBoxLayout()
         self.progress_bar = ProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_pct = BodyLabel("0%")
+        self.progress_pct.setFixedWidth(40)
+        bar_row.addWidget(self.progress_bar)
+        bar_row.addWidget(self.progress_pct)
+        progress_card.layout().addLayout(bar_row)
         self.stats_label = CaptionLabel("状态: 待开始")
-        progress_card.layout().addWidget(self.progress_bar)
         progress_card.layout().addWidget(self.stats_label)
         stat_actions = QHBoxLayout()
         self.clear_stats_btn = PushButton("清空统计")
@@ -1010,6 +1032,7 @@ class QtAppWindow(QWidget):
     def _on_progress(self, completed: int, total: int, total_chars: int):
         ratio = int((completed * 100 / total) if total else 0)
         self.progress_bar.setValue(ratio)
+        self.progress_pct.setText(f"{ratio}%")
         elapsed = self._format_elapsed(time.time() - self.translation_start_time)
         self.stats_label.setText(f"进度 {completed}/{total} | 字符 {total_chars} | 耗时 {elapsed}")
 
@@ -1024,6 +1047,7 @@ class QtAppWindow(QWidget):
 
     def _on_finished(self, out_path: str):
         self.progress_bar.setValue(100)
+        self.progress_pct.setText("100%")
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         if out_path == "已取消":
@@ -1050,6 +1074,7 @@ class QtAppWindow(QWidget):
     def _clear_runtime_stats(self):
         self._reset_stat_cards()
         self.progress_bar.setValue(0)
+        self.progress_pct.setText("0%")
         self.stats_label.setText("状态: 已清空")
         self.rt_src.setText("")
         self.rt_dst.setText("")
