@@ -14,6 +14,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
+from glossary_store import normalize_glossary_payload as gs_normalize_glossary_payload
+from glossary_store import merge_glossaries as gs_merge_glossaries
+from glossary_store import clean_new_terms as gs_clean_new_terms
+from glossary_store import select_glossary_entries as gs_select_glossary_entries
+from glossary_store import build_glossary_text as gs_build_glossary_text
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +75,8 @@ SAKURA_API_URL = "http://127.0.0.1:8080/v1/chat/completions"
 SAKURA_MODEL = "sakura-v1.0"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 GEMINI_MODEL = "gemini-2.5-flash"
+GLM_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+GLM_MODEL = "glm-4-flash"
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 
 
@@ -303,15 +310,17 @@ class JaZhTranslator:
         batch_size: int = 4,
         max_batch_length: int = 800,
         max_text_size_for_batch: int = 200,
+        api_timeout: int = 120,
         chunk_size: int = 1200,
         cancel_event: Optional[threading.Event] = None,
         extract_glossary: bool = False,
         enable_glossary: bool = True,
-        preset: Optional[str] = None,
+        preset: Optional[str] = None,  # 已弃用，保留签名以兼容 Tk UI
         enable_thinking: bool = False,
     ):
         self.provider = (provider or "deepseek").strip().lower()
-        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "custom"}:
+        # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
+        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "glm", "custom"}:
             raise ValueError(f"不支持的提供方: {provider}")
 
         self.api_key = api_key or ""
@@ -320,6 +329,8 @@ class JaZhTranslator:
                 self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
             elif self.provider == "doubao":
                 self.api_key = os.getenv("DOUBAO_API_KEY", "") or os.getenv("ARK_API_KEY", "")
+            elif self.provider == "glm":
+                self.api_key = os.getenv("GLM_API_KEY", "") or os.getenv("ZHIPU_API_KEY", "")
         if self.provider == "deepseek" and not self.api_key:
             raise ValueError("未找到 DeepSeek API Key，请在界面输入或设置环境变量 DEEPSEEK_API_KEY")
         if self.provider == "doubao" and not self.api_key:
@@ -343,6 +354,9 @@ class JaZhTranslator:
         elif self.provider == "gemini":
             default_url = GEMINI_API_URL
             default_model = GEMINI_MODEL
+        elif self.provider == "glm":
+            default_url = GLM_API_URL
+            default_model = GLM_MODEL
 
         raw_api_url = (api_url or default_url).strip()
         self.api_url = self._normalize_api_url(raw_api_url)
@@ -352,21 +366,16 @@ class JaZhTranslator:
         self.frequency_penalty = (
             frequency_penalty if frequency_penalty is not None else (0.1 if self.provider == "sakura" else None)
         )
+        if self.provider == "glm":
+            max_workers = min(max_workers, 2)
+            batch_size = min(batch_size, 2)
+            max_batch_length = min(max_batch_length, 500)
+            max_text_size_for_batch = min(max_text_size_for_batch, 150)
 
         data_dir = get_data_dir()
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
         self.cache_path = cache_path or str(data_dir / "cache.json")
         self.enable_glossary = bool(enable_glossary)
-
-        # 应用性能预设（如果指定）
-        if preset and preset in PERFORMANCE_PRESETS:
-            preset_config = PERFORMANCE_PRESETS[preset]
-            max_workers = preset_config["max_workers"]
-            batch_size = preset_config["batch_size"]
-            max_batch_length = preset_config["max_batch_length"]
-            max_text_size_for_batch = preset_config["max_text_size_for_batch"]
-            chunk_size = preset_config["chunk_size"]
-            logger.info(f"应用性能预设: {preset}")
 
         self.glossary = self._load_json(self.glossary_path, {}) if self.enable_glossary else {}
         self.cache = self._load_json(self.cache_path, {})
@@ -392,6 +401,7 @@ class JaZhTranslator:
         self.batch_size = batch_size
         self.max_batch_length = max_batch_length
         self.max_text_size_for_batch = max_text_size_for_batch
+        self.API_TIMEOUT = int(api_timeout)
         self.chunk_size = chunk_size
         self.cancel_event = cancel_event or threading.Event()
         self.session = requests.Session()
@@ -429,9 +439,22 @@ class JaZhTranslator:
 
     def _apply_provider_payload_options(self, payload: Dict[str, Any]) -> None:
         """为特定提供方追加请求参数。"""
-        if (not self.enable_thinking) and self.provider in {"deepseek", "doubao", "gemini", "custom"}:
+        if (not self.enable_thinking) and self.provider in {"deepseek", "doubao", "gemini", "glm", "custom"}:
             # 用户要求关闭深度思考。
             payload["thinking"] = {"type": "disabled"}
+
+    @classmethod
+    def _wait_global_rate_limit(cls, cancel_event: threading.Event) -> None:
+        with cls._global_rate_limit_lock:
+            wait_seconds = max(0.0, cls._global_rate_limit_until - time.time())
+        if wait_seconds > 0 and cancel_event.wait(wait_seconds):
+            raise RuntimeError("?????")
+
+    @classmethod
+    def _mark_global_rate_limit(cls, seconds: float) -> None:
+        until = time.time() + max(0.0, seconds)
+        with cls._global_rate_limit_lock:
+            cls._global_rate_limit_until = max(cls._global_rate_limit_until, until)
 
     @staticmethod
     def _normalize_api_url(url: str) -> str:
@@ -596,69 +619,8 @@ class JaZhTranslator:
 
     @classmethod
     def normalize_glossary_payload(cls, payload: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
-        """
-        归一化术语表为分类结构。
-        支持：
-        1) {src: dst}
-        2) {src: {"dst"/"translation", "info"}}
-        3) {Person:[{original,translation}], ...}
-        冲突策略：keep_old（同 original 出现多次时保留首次）。
-        """
-        normalized: Dict[str, List[Dict[str, str]]] = {c: [] for c in DEFAULT_GLOSSARY_CATEGORIES}
-        stats = {"accepted": 0, "skipped": 0, "conflicts": 0}
-        seen_by_original: Dict[str, str] = {}
+        return gs_normalize_glossary_payload(payload)
 
-        def _add_entry(src_raw: Any, dst_raw: Any, category: str = "Item", info_raw: Any = ""):
-            src = str(src_raw).strip()
-            dst = str(dst_raw).strip()
-            info = str(info_raw).strip()
-            if not src or not dst:
-                stats["skipped"] += 1
-                return
-            if category not in DEFAULT_GLOSSARY_CATEGORIES:
-                category = "Item"
-            prev = seen_by_original.get(src)
-            if prev is not None:
-                if prev != dst:
-                    stats["conflicts"] += 1
-                stats["skipped"] += 1
-                return
-            seen_by_original[src] = dst
-            entry = {"original": src, "translation": dst}
-            if info:
-                entry["info"] = info
-            normalized[category].append(entry)
-            stats["accepted"] += 1
-
-        if not isinstance(payload, dict):
-            return normalized, stats
-
-        has_category_key = any(k in payload and isinstance(payload.get(k), list) for k in DEFAULT_GLOSSARY_CATEGORIES)
-        if has_category_key:
-            for category in DEFAULT_GLOSSARY_CATEGORIES:
-                entries = payload.get(category, [])
-                if not isinstance(entries, list):
-                    continue
-                for item in entries:
-                    if not isinstance(item, dict):
-                        stats["skipped"] += 1
-                        continue
-                    src = item.get("original", item.get("src", ""))
-                    dst = item.get("translation", item.get("dst", ""))
-                    info = item.get("info", "")
-                    _add_entry(src, dst, category=category, info_raw=info)
-            return normalized, stats
-
-        for src, value in payload.items():
-            if isinstance(value, dict):
-                dst = value.get("dst", value.get("translation", ""))
-                info = value.get("info", "")
-            else:
-                dst = value
-                info = ""
-            _add_entry(src, dst, category="Item", info_raw=info)
-
-        return normalized, stats
 
     def _save_cache(self, force: bool = False):
         """保存缓存到文件，使用延迟写入策略"""
@@ -702,7 +664,7 @@ class JaZhTranslator:
             return len(self.glossary)
 
     def _select_glossary_entries(self, context_text: str, max_terms: Optional[int] = None) -> List[Dict[str, str]]:
-        """按上下文召回相关术语，仅返回命中项。"""
+        """??????????????????"""
         if not self.enable_glossary:
             return []
         with self._cache_lock:
@@ -710,111 +672,16 @@ class JaZhTranslator:
         if not glossary_snapshot:
             return []
 
-        selected: List[Dict[str, str]] = []
-        seen_original = set()
         limit = max_terms or self._glossary_prompt_max_terms
+        return gs_select_glossary_entries(context_text, glossary_snapshot, self.glossary_categories, limit)
 
-        # 新格式优先
-        is_categorized = any(
-            key in glossary_snapshot and isinstance(glossary_snapshot.get(key), list)
-            for key in self.glossary_categories
-        )
-        if is_categorized:
-            for category in self.glossary_categories:
-                entries = glossary_snapshot.get(category, [])
-                if not isinstance(entries, list):
-                    continue
-                for entry in entries:
-                    if not isinstance(entry, dict):
-                        continue
-                    original = str(entry.get("original", entry.get("src", ""))).strip()
-                    translation = str(entry.get("translation", entry.get("dst", ""))).strip()
-                    if not original or not translation:
-                        continue
-                    if original in seen_original:
-                        continue
-                    if original in context_text:
-                        selected.append({"original": original, "translation": translation})
-                        seen_original.add(original)
-                        if len(selected) >= limit:
-                            return selected
-            return selected
-
-        # 旧格式兜底
-        for k, v in glossary_snapshot.items():
-            original = str(k).strip()
-            if not original or original in seen_original:
-                continue
-            if isinstance(v, dict):
-                translation = str(v.get("dst", v.get("translation", ""))).strip()
-            else:
-                translation = str(v).strip()
-            if not translation:
-                continue
-            if original in context_text:
-                selected.append({"original": original, "translation": translation})
-                seen_original.add(original)
-                if len(selected) >= limit:
-                    return selected
-        return selected
 
     def _build_glossary_text(self, selected_entries: Optional[List[Dict[str, str]]] = None) -> str:
-        """构建术语表文本；传入 selected_entries 时仅输出命中术语。"""
-        if selected_entries is not None:
-            if not selected_entries:
-                return "无术语表。"
-            lines = []
-            for item in selected_entries:
-                original = str(item.get("original", "")).strip()
-                translation = str(item.get("translation", "")).strip()
-                if original and translation:
-                    lines.append(f"{original}->{translation}")
-            return "\n".join(lines) if lines else "无术语表。"
-
-        """构建术语表文本，兼容新旧两种格式"""
+        """?????????? selected_entries ?????????"""
         with self._cache_lock:
             glossary_snapshot = dict(self.glossary)
+        return gs_build_glossary_text(glossary_snapshot, self.glossary_categories, selected_entries)
 
-        if not glossary_snapshot:
-            return "无术语表。"
-
-        lines = []
-
-        # 检测是否为新格式（分类结构）
-        is_categorized = any(
-            key in glossary_snapshot and isinstance(glossary_snapshot.get(key), list)
-            for key in self.glossary_categories
-        )
-
-        if is_categorized:
-            # 新格式：按分类输出
-            for category in self.glossary_categories:
-                entries = glossary_snapshot.get(category, [])
-                if not isinstance(entries, list) or not entries:
-                    continue
-                for entry in entries:
-                    if not isinstance(entry, dict):
-                        continue
-                    original = entry.get("original", entry.get("src", ""))
-                    translation = entry.get("translation", entry.get("dst", ""))
-                    if original and translation:
-                        lines.append(f"{original}->{translation}")
-        else:
-            # 旧格式：扁平结构
-            for k, v in glossary_snapshot.items():
-                if isinstance(v, dict):
-                    dst = str(v.get("dst", "")).strip()
-                    info = str(v.get("info", "")).strip()
-                    if dst and info:
-                        lines.append(f"{k}->{dst} #{info}")
-                    elif dst:
-                        lines.append(f"{k}->{dst}")
-                    else:
-                        lines.append(f"{k} => {json.dumps(v, ensure_ascii=False)}")
-                else:
-                    lines.append(f"{k} => {v}")
-
-        return "\n".join(lines) if lines else "无术语表。"
 
     def _build_batch_system_prompt(self) -> str:
         """
@@ -1281,136 +1148,13 @@ JSON 顶层字段：
         existing: Dict[str, List[Dict[str, str]]],
         incoming: Dict[str, List[Dict[str, str]]],
     ) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
-        """
-        将 incoming 术语增量合并到 existing 中（keep_old 冲突策略）。
+        return gs_merge_glossaries(existing, incoming)
 
-        Args:
-            existing: 已有术语表（分类结构）
-            incoming: 新导入的术语表（分类结构，已归一化）
-
-        Returns:
-            (merged, stats)  merged 为合并后的术语表，stats 含 added/skipped/conflicts
-        """
-        merged = {c: list(existing.get(c, [])) for c in DEFAULT_GLOSSARY_CATEGORIES}
-        stats = {"added": 0, "skipped": 0, "conflicts": 0}
-        seen: Dict[str, str] = {}
-        for cat in DEFAULT_GLOSSARY_CATEGORIES:
-            for entry in merged[cat]:
-                original = str(entry.get("original", "")).strip()
-                translation = str(entry.get("translation", "")).strip()
-                if original and original not in seen:
-                    seen[original] = translation
-
-        for cat in DEFAULT_GLOSSARY_CATEGORIES:
-            for entry in incoming.get(cat, []):
-                src = str(entry.get("original", entry.get("src", ""))).strip()
-                dst = str(entry.get("translation", entry.get("dst", ""))).strip()
-                if not src or not dst:
-                    stats["skipped"] += 1
-                    continue
-                prev = seen.get(src)
-                if prev is not None:
-                    if prev != dst:
-                        stats["conflicts"] += 1
-                    stats["skipped"] += 1
-                    continue
-                new_entry = {"original": src, "translation": dst}
-                for k in ("info", "source"):
-                    if k in entry and entry[k]:
-                        new_entry[k] = entry[k]
-                merged[cat].append(new_entry)
-                seen[src] = dst
-                stats["added"] += 1
-
-        return merged, stats
 
     @staticmethod
     def _clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
-        """
-        清洗术语：最短长度、排除通用词、去重，保留分类信息。
+        return gs_clean_new_terms(raw_terms)
 
-        Returns:
-            清洗后的术语列表，每个元素包含
-            {"src": ..., "dst": ..., "category": ..., "info"?: ..., "source": ...}
-        """
-        if not raw_terms:
-            return []
-
-        # 通用词停用表（不提取）
-        stop_words = {
-            "我们", "你们", "他们", "这个", "那个", "这里", "那里", "然后", "但是", "因为", "所以",
-            "可以", "不会", "已经", "正在", "没有", "非常", "真的", "老师", "学校", "城市", "国家",
-            "魔法", "剑", "勇者", "魔王", "世界", "时间", "地方", "事情", "东西", "样子",
-            "之后", "之前", "起来", "下去", "出来", "进去", "回来", "过来",
-        }
-
-        # 分类映射（处理各种变体）
-        category_map = {
-            "person": "Person",
-            "角色": "Person",
-            "人物": "Person",
-            "location": "Location",
-            "地点": "Location",
-            "场所": "Location",
-            "org": "Org",
-            "organization": "Org",
-            "组织": "Org",
-            "团体": "Org",
-            "item": "Item",
-            "物品": "Item",
-            "装备": "Item",
-            "道具": "Item",
-            "skill": "Skill",
-            "技能": "Skill",
-            "招式": "Skill",
-            "魔法": "Skill",
-            "creature": "Creature",
-            "生物": "Creature",
-            "怪物": "Creature",
-            "宠物": "Creature",
-        }
-
-        cleaned: List[Dict[str, Any]] = []
-        seen = set()
-
-        for item in raw_terms:
-            if not isinstance(item, dict):
-                continue
-
-            # 兼容多种字段名
-            src = str(item.get("src", item.get("original", ""))).strip()
-            dst = str(item.get("dst", item.get("translation", ""))).strip()
-            raw_category = item.get("category", item.get("cat", ""))
-            info = str(item.get("info", "")).strip()
-            source = str(item.get("source", "auto")).strip() or "auto"
-
-            if not src or not dst:
-                continue
-            if len(src) < 2 or len(dst) < 2:
-                continue
-            if src in stop_words or dst in stop_words:
-                continue
-
-            # 标准化分类
-            category = "Item"  # 默认分类
-            if raw_category:
-                normalized = str(raw_category).lower().strip()
-                category = category_map.get(normalized, raw_category if raw_category in DEFAULT_GLOSSARY_CATEGORIES else "Item")
-
-            key = (src, dst)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            cleaned.append({
-                "src": src,
-                "dst": dst,
-                "category": category,
-                "info": info,
-                "source": source,
-            })
-
-        return cleaned
 
     def _merge_new_terms_into_glossary(self, terms: List[Dict[str, Any]]) -> int:
         """
@@ -1435,16 +1179,7 @@ JSON 顶层字段：
             normalized_existing, _ = self.normalize_glossary_payload(self.glossary or {})
             self.glossary = normalized_existing
 
-            existing_by_original: Dict[str, str] = {}
-            for cat in self.glossary_categories:
-                for entry in self.glossary.get(cat, []):
-                    if not isinstance(entry, dict):
-                        continue
-                    original = str(entry.get("original", entry.get("src", ""))).strip()
-                    translation = str(entry.get("translation", entry.get("dst", ""))).strip()
-                    if original and translation and original not in existing_by_original:
-                        existing_by_original[original] = translation
-
+            incoming_by_category = {cat: [] for cat in self.glossary_categories}
             for term in terms:
                 src = str(term.get("src", "")).strip()
                 dst = str(term.get("dst", "")).strip()
@@ -1456,25 +1191,18 @@ JSON 顶层字段：
                     continue
                 if category not in self.glossary_categories:
                     category = "Item"
-
-                prev = existing_by_original.get(src)
-                if prev is not None:
-                    if prev != dst:
-                        conflicts += 1
-                    skipped += 1
-                    continue
-
-                new_entry: Dict[str, str] = {
-                    "original": src,
-                    "translation": dst,
-                }
+                entry: Dict[str, str] = {"original": src, "translation": dst}
                 if info:
-                    new_entry["info"] = info
+                    entry["info"] = info
                 if source:
-                    new_entry["source"] = source
-                self.glossary[category].append(new_entry)
-                existing_by_original[src] = dst
-                added += 1
+                    entry["source"] = source
+                incoming_by_category[category].append(entry)
+
+            merged, merge_stats = gs_merge_glossaries(self.glossary, incoming_by_category)
+            self.glossary = merged
+            added += int(merge_stats.get("added", 0))
+            skipped += int(merge_stats.get("skipped", 0))
+            conflicts += int(merge_stats.get("conflicts", 0))
 
             if added > 0:
                 try:

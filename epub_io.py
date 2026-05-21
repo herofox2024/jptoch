@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Generator, Tuple, Any
+from typing import Generator, Tuple, Any, Optional
 from urllib.parse import unquote
 
 from bs4 import BeautifulSoup
@@ -224,6 +224,10 @@ def repair_epub(path: str) -> str:
     except Exception as e:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise RuntimeError(f"EPUB 修复失败: {e}")
+    finally:
+        # success path cleanup is delegated to save_book via _repaired_temp_path
+        pass
+
 
 
 def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
@@ -246,9 +250,14 @@ def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
         logger.warning(f"EPUB 加载失败，尝试自动修复: {e}")
 
         repaired_path = repair_epub(path)
-        book = epub.read_epub(repaired_path)
+        try:
+            book = epub.read_epub(repaired_path)
+        except Exception:
+            # repaired temp should not leak when read still fails
+            repaired_dir = os.path.dirname(repaired_path)
+            shutil.rmtree(repaired_dir, ignore_errors=True)
+            raise
         book._repaired_temp_path = repaired_path
-
         return book
 
 
@@ -326,11 +335,41 @@ def _fix_toc_uids(toc, counter=None):
     return fixed
 
 
-def save_book(path: str, book: epub.EpubBook) -> None:
+def _apply_reading_direction_to_book(book: epub.EpubBook, chinese_mode: bool) -> None:
+    """Apply page direction and language metadata before write."""
+    if chinese_mode:
+        page_direction = "ltr"
+        writing_mode = "horizontal-lr"
+        language = "zh"
+    else:
+        page_direction = "rtl"
+        writing_mode = "vertical-rl"
+        language = "ja"
+
+    try:
+        book.set_direction(page_direction)
+    except Exception:
+        pass
+    try:
+        book.set_language(language)
+    except Exception:
+        pass
+
+    metadata_list = book.metadata.setdefault("http://www.idpf.org/2007/opf", {})
+    metadata_list["meta"] = [
+        entry for entry in metadata_list.get("meta", [])
+        if not (len(entry) >= 2 and isinstance(entry[1], dict) and entry[1].get("name") == "primary-writing-mode")
+    ]
+    metadata_list.setdefault("meta", []).append((None, {"name": "primary-writing-mode", "content": writing_mode}))
+
+
+def save_book(path: str, book: epub.EpubBook, chinese_mode: Optional[bool] = None) -> None:
     """保存 EPUB 文件。"""
     # 修复 uid=None 的 toc 项目
     if hasattr(book, 'toc') and book.toc:
         book.toc = _fix_toc_uids(book.toc)
+    if chinese_mode is not None:
+        _apply_reading_direction_to_book(book, chinese_mode)
 
     epub.write_epub(path, book, {})
 

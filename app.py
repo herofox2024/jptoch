@@ -32,9 +32,9 @@ from epub_io import (
     iter_text_nodes,
     load_book,
     save_book,
-    set_reading_direction,
 )
 from translator import JaZhTranslator, get_data_dir, PERFORMANCE_PRESETS
+from text_utils import is_translatable
 
 logger = logging.getLogger(__name__)
 
@@ -477,7 +477,7 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
     #  事件处理
     # ════════════════════════════════════════════════════════
     # 下拉框显示文本 -> 内部值映射
-    _PROVIDER_MAP = {"DeepSeek": "deepseek", "Doubao": "doubao", "Sakura": "sakura", "Gemini": "gemini", "自定义": "custom"}
+    _PROVIDER_MAP = {"DeepSeek": "deepseek", "Doubao": "doubao", "Sakura": "sakura", "Gemini": "gemini", "GLM(Zhipu)": "glm", "自定义": "custom"}
 
     def _on_provider_combo_change(self, event=None):
         display = self.provider_combo.get()
@@ -495,6 +495,9 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
         elif provider == "gemini":
             self.api_url_var.set("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
             self.model_var.set("gemini-2.5-flash")
+        elif provider == "glm":
+            self.api_url_var.set("https://open.bigmodel.cn/api/paas/v4/chat/completions")
+            self.model_var.set("glm-4-flash")
         elif provider == "custom":
             self.api_url_var.set("")
             self.model_var.set("")
@@ -548,7 +551,7 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
                 "messages": [{"role": "user", "content": "Hi"}],
                 "max_tokens": 1,
             }
-            if provider in {"deepseek", "doubao"}:
+            if provider in {"deepseek", "doubao", "glm"}:
                 payload["thinking"] = {"type": "disabled"}
 
             try:
@@ -597,20 +600,7 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
 
     @staticmethod
     def _is_translatable(text: str) -> bool:
-        text = text.replace("\ufffc", "").strip()
-        if not text:
-            return False
-        has_japanese_kana = any("\u3040" <= c <= "\u30ff" for c in text)
-        has_cjk = any("\u4e00" <= c <= "\u9fff" for c in text)
-        has_latin = any(("a" <= c.lower() <= "z") for c in text)
-        has_digit = any(c.isdigit() for c in text)
-        if has_japanese_kana:
-            return True
-        if has_cjk and not has_latin:
-            return True
-        if has_cjk and has_digit and not has_latin:
-            return True
-        return False
+        return is_translatable(text)
 
     def pick_input(self):
         path = filedialog.askopenfilename(
@@ -819,13 +809,15 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
         if not out:
             messagebox.showerror("错误", "请填写输出文件名")
             return
-        if provider in {"deepseek", "doubao", "gemini", "custom"} and not api_key:
+        if provider in {"deepseek", "doubao", "gemini", "glm", "custom"} and not api_key:
             if provider == "deepseek":
                 provider_name = "DeepSeek"
             elif provider == "doubao":
                 provider_name = "Doubao"
             elif provider == "gemini":
                 provider_name = "Gemini"
+            elif provider == "glm":
+                provider_name = "GLM"
             else:
                 provider_name = "自定义"
             messagebox.showerror("错误", f"请填写 {provider_name} API Key")
@@ -1032,10 +1024,8 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
                 apply_toc_translations(book, toc_translations)
 
             self._set_status("写入 EPUB 中...")
-            save_book(out, book)
-
             chinese_mode = self.direction_var.get() == "zh"
-            set_reading_direction(out, chinese_mode)
+            save_book(out, book, chinese_mode=chinese_mode)
 
             self.translator.flush_cache()
 

@@ -76,13 +76,17 @@ pip install -r requirements.txt
 
 ## 使用方法
 
-### 启动 GUI
+### 启动 GUI（Qt 主线）
+
+```bash
+python main_qt.py
+```
+
+Tk 兼容入口（冻结维护，仅用于兼容测试）：
 
 ```bash
 python app.py
 ```
-
-或直接运行打包后的 `EPUB日译中V2.0.exe`
 
 ### V2.0 界面布局
 
@@ -198,9 +202,13 @@ export DOUBAO_API_KEY=your-api-key
 
 ## 项目结构
 
-- `app.py`：GUI 主程序
+- `main_qt.py`：Qt 主入口（当前主线）
+- `ui/qt_app.py`：Qt 界面与工作线程逻辑
+- `app.py`：Tk 兼容入口（FROZEN/legacy，仅必要修复）
 - `translator.py`：翻译核心逻辑（API 调用、批处理、缓存、术语处理）
 - `epub_io.py`：EPUB 读写、目录与翻页设置
+- `cache_store.py`：缓存/JSON 读写（原子写入）
+- `text_utils.py`：文本可翻译性判断等公共工具
 - `requirements.txt`：依赖清单
 
 ## 注意事项
@@ -210,6 +218,57 @@ export DOUBAO_API_KEY=your-api-key
 - 若使用自建/代理网关，请确认接口兼容 `chat/completions`
 
 ## 版本记录
+
+### V3.2beta（2026-05-21）
+
+#### 翻译核心增强（P0 级）
+
+- **ID 强校验 + 部分重试（P0-A）**：
+  - 批量 JSON 翻译结果校验从"全有全无"改为"部分成功保留 + 缺失索引重试"。
+  - 模型返回部分有效 idx 时，有效条目直接使用，仅缺失条目走单条 `_translate_chunk` 兜底。
+  - 越界/幻觉 idx 自动跳过，不再导致整批失败。
+  - 新增统计项：`batch_json_partial_success`、`batch_partial_retry`。
+
+- **finish_reason=length 截断续取（P0-B）**：
+  - 新增 `MAX_CONTINUATIONS = 2`，当 API 返回 `finish_reason="length"` 时自动续取拼接。
+  - 单条翻译（`_call_deepseek_single`）和批量 JSON 均支持截断续取。
+  - 新增统计项：`truncation_continuation`。
+  - 续取失败时优雅降级，返回已累积内容，不中断全书流程。
+
+- **结果数据类重构**：
+  - 新增 `SingleChunkResult` / `BatchJsonResult` 数据类，携带 `finish_reason`、`is_truncated` 等元信息。
+  - 保留 `_call_deepseek()` 包装器向后兼容，返回字符串。
+
+#### 质量增强
+
+- **批量结果轻量质检**：
+  - 新增 `repair_batch_quality()`，对可疑译文（空译文、过短译文、重复刷屏）单条重译。
+  - 正常样本保持原批量结果，吞吐基本不受影响。
+  - 质检触发时打印日志：`质检发现 N 条可疑译文，准备单条重译`。
+
+#### Qt UI 改进
+
+- **性能参数界面简化**：
+  - 移除"性能预设"下拉框，改为直接展示滑块参数。
+  - 参数标签中文化：`并发数`、`批量大小`、`批量字符上限`、`单条字符上限`、`超时(秒)`。
+  - 默认值使用 balanced 预设（`max_workers=12, batch_size=10`）。
+
+- **状态监控增强**：
+  - 进度条右侧新增百分比文字显示（`0%` → `87%` → `100%`）。
+  - 翻译完成时，若 P0 调试统计有数据，自动追加到"错误详情"面板展示。
+
+- **导入修复**：
+  - 补充 `Slider` 控件导入，修复启动报 `NameError`。
+
+#### 项目结构整理
+
+- **Tk UI 冻结标记**：
+  - `app.py` 文件头部添加冻结说明（不再新增功能，仅接受阻断性 bug 修复）。
+  - 主入口固定为 Qt UI（`main_qt.py`）。
+
+- **旧版 spec 文件归档**：
+  - 9 个 Tk 时代的 `.spec` 文件移入 `archived/` 目录。
+  - 根目录仅保留 `main_qt.spec`。
 
 ### V3.1beta版（2026-05-19）
 
@@ -235,6 +294,15 @@ export DOUBAO_API_KEY=your-api-key
 - **Qt 主线说明**：
   - Qt 版本继续作为当前主线迭代。
   - Tk 版本保持可用，但进入冻结维护（仅必要修复，不再扩展新特性）。
+- **缓存与稳定性优化**：
+  - 缓存文件写入改为原子写入，降低中断导致缓存损坏风险。
+  - 引入缓存元信息（版本/Provider/Model），模型变更时自动失效旧缓存，避免质量回退。
+- **续译引导文案增强**：
+  - 421/429 场景提示补充“可直接重新开始，已翻译内容会命中缓存”。
+- **EPUB 临时目录清理补强**：
+  - 修复自动修复 EPUB 后再次读取失败时的临时目录泄漏。
+- **文本切分优化（日文）**：
+  - `_smart_split_text` 增加 `、` 作为可选切分点。
 
 
 ### V3.1beta（2026-05-18）
@@ -378,13 +446,13 @@ export DOUBAO_API_KEY=your-api-key
 
 MIT License
 
-## Qt 重构入口（进行中）
+## 启动入口（当前）
 
 ```bash
 python main_qt.py
 ```
 
-说明：该入口为 PyQt5 + qfluentwidgets 的并行重构版本，原 `python app.py` 仍可继续使用。
+说明：`main_qt.py` 为当前主线入口。`python app.py` 为冻结维护的兼容入口。
 
 ## Qt 版打包（PyInstaller）
 

@@ -38,6 +38,7 @@ from qfluentwidgets import (
     PushButton,
     ScrollArea,
     SegmentedWidget,
+    Slider,
     StrongBodyLabel,
     Theme,
     setTheme,
@@ -49,9 +50,9 @@ from epub_io import (
     iter_text_nodes,
     load_book,
     save_book,
-    set_reading_direction,
 )
 from translator import JaZhTranslator, PERFORMANCE_PRESETS, get_data_dir
+from text_utils import is_translatable
 
 try:
     import ctypes
@@ -69,7 +70,11 @@ class TranslateConfig:
     model: str
     extract_glossary: bool
     enable_glossary: bool
-    preset: str
+    max_workers: int
+    batch_size: int
+    max_batch_length: int
+    max_text_size_for_batch: int
+    api_timeout: int
     direction: str
     enable_thinking: bool
 
@@ -98,20 +103,7 @@ class TranslateWorker(QObject):
 
     @staticmethod
     def _is_translatable(text: str) -> bool:
-        text = text.replace("\ufffc", "").strip()
-        if not text:
-            return False
-        has_japanese_kana = any("\u3040" <= c <= "\u30ff" for c in text)
-        has_cjk = any("\u4e00" <= c <= "\u9fff" for c in text)
-        has_latin = any(("a" <= c.lower() <= "z") for c in text)
-        has_digit = any(c.isdigit() for c in text)
-        if has_japanese_kana:
-            return True
-        if has_cjk and not has_latin:
-            return True
-        if has_cjk and has_digit and not has_latin:
-            return True
-        return False
+        return is_translatable(text)
 
     @Slot()
     def run(self):
@@ -123,10 +115,14 @@ class TranslateWorker(QObject):
                 provider=cfg.provider,
                 api_url=cfg.api_url,
                 model=cfg.model,
+                max_workers=cfg.max_workers,
+                batch_size=cfg.batch_size,
+                max_batch_length=cfg.max_batch_length,
+                max_text_size_for_batch=cfg.max_text_size_for_batch,
+                api_timeout=cfg.api_timeout,
                 cancel_event=self.cancel_event,
                 extract_glossary=cfg.extract_glossary,
                 enable_glossary=cfg.enable_glossary,
-                preset=cfg.preset,
                 enable_thinking=cfg.enable_thinking,
             )
 
@@ -241,8 +237,7 @@ class TranslateWorker(QObject):
             if toc_translations:
                 apply_toc_translations(book, toc_translations)
 
-            save_book(cfg.out, book)
-            set_reading_direction(cfg.out, cfg.direction == "zh")
+            save_book(cfg.out, book, chinese_mode=(cfg.direction == "zh"))
             translator.flush_cache()
 
             self.progress.emit(total_texts, total_texts, total_chars)
@@ -317,6 +312,7 @@ class QtAppWindow(QWidget):
         ("Doubao", "doubao"),
         ("Sakura", "sakura"),
         ("Gemini", "gemini"),
+        ("GLM(Zhipu)", "glm"),
         ("Custom", "custom"),
     ]
 
@@ -338,7 +334,7 @@ class QtAppWindow(QWidget):
         self._build_ui()
         self._apply_adaptive_font()
         self._on_provider_change()
-        self._on_preset_change()
+        self._update_perf_slider_labels()
         self._setup_styles(Theme.LIGHT)
 
     def _setup_window_icon(self):
@@ -621,17 +617,55 @@ class QtAppWindow(QWidget):
         page = self._make_page_container()
         layout = page.layout()
 
-        preset_card = self._make_card("性能预设")
-        row1_l = QHBoxLayout()
-        self.preset_combo = ComboBox()
-        self.preset_combo.addItems(["default", "balanced", "extreme"])
-        self.preset_combo.currentTextChanged.connect(self._on_preset_change)
-        self.preset_desc = CaptionLabel("-")
-        row1_l.addWidget(BodyLabel("预设"))
-        row1_l.addWidget(self.preset_combo)
-        row1_l.addWidget(self.preset_desc, 1)
-        preset_card.layout().addLayout(row1_l)
-        layout.addWidget(preset_card)
+        perf_card = self._make_card("性能参数")
+        self.slider_max_workers = Slider(Qt.Horizontal)
+        self.slider_max_workers.setRange(1, 20)
+        self.slider_batch_size = Slider(Qt.Horizontal)
+        self.slider_batch_size.setRange(1, 800)
+        self.slider_max_batch_length = Slider(Qt.Horizontal)
+        self.slider_max_batch_length.setRange(1, 8000)
+        self.slider_max_text_size_for_batch = Slider(Qt.Horizontal)
+        self.slider_max_text_size_for_batch.setRange(1, 200)
+        self.slider_api_timeout = Slider(Qt.Horizontal)
+        self.slider_api_timeout.setRange(1, 300)
+
+        # 使用 balanced 预设作为默认值
+        default_cfg = PERFORMANCE_PRESETS["balanced"]
+        self.slider_max_workers.setValue(default_cfg["max_workers"])
+        self.slider_batch_size.setValue(default_cfg["batch_size"])
+        self.slider_max_batch_length.setValue(default_cfg["max_batch_length"])
+        self.slider_max_text_size_for_batch.setValue(default_cfg["max_text_size_for_batch"])
+        self.slider_api_timeout.setValue(120)
+
+        self.lbl_max_workers = BodyLabel("")
+        self.lbl_batch_size = BodyLabel("")
+        self.lbl_max_batch_length = BodyLabel("")
+        self.lbl_max_text_size_for_batch = BodyLabel("")
+        self.lbl_api_timeout = BodyLabel("")
+
+        for slider in [
+            self.slider_max_workers,
+            self.slider_batch_size,
+            self.slider_max_batch_length,
+            self.slider_max_text_size_for_batch,
+            self.slider_api_timeout,
+        ]:
+            slider.valueChanged.connect(self._update_perf_slider_labels)
+
+        for title, slider, label in [
+            ("并发数", self.slider_max_workers, self.lbl_max_workers),
+            ("批量大小", self.slider_batch_size, self.lbl_batch_size),
+            ("批量字符上限", self.slider_max_batch_length, self.lbl_max_batch_length),
+            ("单条字符上限", self.slider_max_text_size_for_batch, self.lbl_max_text_size_for_batch),
+            ("超时(秒)", self.slider_api_timeout, self.lbl_api_timeout),
+        ]:
+            row = QHBoxLayout()
+            row.addWidget(BodyLabel(title))
+            row.addWidget(slider, 1)
+            row.addWidget(label)
+            perf_card.layout().addLayout(row)
+
+        layout.addWidget(perf_card)
 
         direction_card = self._make_card("翻页方向")
         row2_l = QHBoxLayout()
@@ -677,6 +711,7 @@ class QtAppWindow(QWidget):
         layout.addWidget(ui_card)
 
         layout.addStretch(1)
+        self._update_perf_slider_labels()
         return page
 
     def _build_status_page(self) -> QWidget:
@@ -804,6 +839,9 @@ class QtAppWindow(QWidget):
         elif provider == "gemini":
             self.api_url_edit.setText("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
             self.model_edit.setText("gemini-2.5-flash")
+        elif provider == "glm":
+            self.api_url_edit.setText("https://open.bigmodel.cn/api/paas/v4/chat/completions")
+            self.model_edit.setText("glm-4-flash")
         elif provider == "custom":
             self.api_url_edit.setText("")
             self.model_edit.setText("")
@@ -815,10 +853,12 @@ class QtAppWindow(QWidget):
         self.api_url_edit.setEnabled(is_custom)
         self.api_key_edit.setEnabled(provider != "sakura")
 
-    def _on_preset_change(self):
-        preset = self.preset_combo.currentText() or "default"
-        cfg = PERFORMANCE_PRESETS.get(preset, PERFORMANCE_PRESETS["default"])
-        self.preset_desc.setText(cfg["description"])
+    def _update_perf_slider_labels(self):
+        self.lbl_max_workers.setText(str(self.slider_max_workers.value()))
+        self.lbl_batch_size.setText(str(self.slider_batch_size.value()))
+        self.lbl_max_batch_length.setText(str(self.slider_max_batch_length.value()))
+        self.lbl_max_text_size_for_batch.setText(str(self.slider_max_text_size_for_batch.value()))
+        self.lbl_api_timeout.setText(str(self.slider_api_timeout.value()))
 
     def _on_theme_changed(self):
         if self.theme_combo.currentIndex() == 1:
@@ -904,7 +944,7 @@ class QtAppWindow(QWidget):
                 "messages": [{"role": "user", "content": "Hi"}],
                 "max_tokens": 1,
             }
-            if (not self.enable_thinking_cb.isChecked()) and provider in {"deepseek", "doubao", "gemini", "custom"}:
+            if (not self.enable_thinking_cb.isChecked()) and provider in {"deepseek", "doubao", "gemini", "glm", "custom"}:
                 payload["thinking"] = {"type": "disabled"}
 
             try:
@@ -952,7 +992,11 @@ class QtAppWindow(QWidget):
             model=self.model_edit.text().strip(),
             extract_glossary=self.extract_glossary_cb.isChecked(),
             enable_glossary=self.enable_glossary_cb.isChecked(),
-            preset=self.preset_combo.currentText() or "default",
+            max_workers=self.slider_max_workers.value(),
+            batch_size=self.slider_batch_size.value(),
+            max_batch_length=self.slider_max_batch_length.value(),
+            max_text_size_for_batch=self.slider_max_text_size_for_batch.value(),
+            api_timeout=self.slider_api_timeout.value(),
             direction="zh" if self.dir_zh.isChecked() else "ja",
             enable_thinking=self.enable_thinking_cb.isChecked(),
         )
@@ -962,7 +1006,7 @@ class QtAppWindow(QWidget):
         if not cfg.out:
             QMessageBox.critical(self, "错误", "请填写输出文件")
             return None
-        if cfg.provider in {"deepseek", "doubao", "gemini", "custom"} and not cfg.api_key:
+        if cfg.provider in {"deepseek", "doubao", "gemini", "glm", "custom"} and not cfg.api_key:
             QMessageBox.critical(self, "错误", "该提供方需要 API Key")
             return None
         if not cfg.api_url or not cfg.model:
@@ -1061,12 +1105,12 @@ class QtAppWindow(QWidget):
         if "HTTP 421" in detail or "HTTP 429" in detail:
             QMessageBox.warning(
                 self,
-                "请求受限",
-                "翻译遇到 421/429 限流或路由错误。\n你可以暂停后切换到其他模型，再继续翻译。",
+                "????",
+                "???? 421/429 ????????\n????????????????????????????????????????",
             )
-            self._on_status("已受限：建议暂停并切换模型后继续")
+            self._on_status("???????????????????????????")
             return
-        QMessageBox.critical(self, "错误", f"翻译失败\n{detail}")
+        QMessageBox.critical(self, "??", f"????\n{detail}")
 
     def _on_error_detail(self, detail: str):
         self.last_error_text.setPlainText(detail[:20000] if detail else "")
@@ -1094,7 +1138,11 @@ class QtAppWindow(QWidget):
             "api_url": self.api_url_edit.text().strip(),
             "model": self.model_edit.text().strip(),
             "api_key_masked": masked_key,
-            "preset": self.preset_combo.currentText(),
+            "max_workers": self.slider_max_workers.value(),
+            "batch_size": self.slider_batch_size.value(),
+            "max_batch_length": self.slider_max_batch_length.value(),
+            "max_text_size_for_batch": self.slider_max_text_size_for_batch.value(),
+            "api_timeout": self.slider_api_timeout.value(),
             "direction": "zh" if self.dir_zh.isChecked() else "ja",
             "enable_glossary": self.enable_glossary_cb.isChecked(),
             "extract_glossary": self.extract_glossary_cb.isChecked(),

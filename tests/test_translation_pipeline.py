@@ -7,7 +7,7 @@ from unittest import mock
 
 from bs4 import BeautifulSoup
 
-from app import App
+from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult
 
 
@@ -18,6 +18,8 @@ class DummyTranslator(JaZhTranslator):
         self.enable_glossary = True
         self.extract_glossary = False
         self.enable_thinking = False
+        self.glossary_categories = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
+        self._glossary_index = {}
         self.glossary = {}
         self.cache = {}
         self._cache_dirty = False
@@ -227,9 +229,9 @@ class TranslatorTests(unittest.TestCase):
 
 class AppLogicTests(unittest.TestCase):
     def test_is_translatable_prefers_japanese(self):
-        self.assertTrue(App._is_translatable("こんにちは"))
-        self.assertTrue(App._is_translatable("漢字だけ"))
-        self.assertFalse(App._is_translatable("Hello world"))
+        self.assertTrue(is_translatable("こんにちは"))
+        self.assertTrue(is_translatable("漢字だけ"))
+        self.assertFalse(is_translatable("Hello world"))
 
     def test_multi_anchor_node_replacement(self):
         html = '<p>前文 <a href="a">链接A</a> 中间 <a href="b">链接B</a> 后文</p>'
