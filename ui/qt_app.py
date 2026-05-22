@@ -54,6 +54,8 @@ from epub_io import (
 from translator import JaZhTranslator, PERFORMANCE_PRESETS, get_data_dir
 from text_utils import is_translatable
 
+CANCELLED_RESULT = "__CANCELLED__"
+
 try:
     import ctypes
 except Exception:
@@ -198,7 +200,7 @@ class TranslateWorker(QObject):
             results = translator.translate_batch(all_texts, progress_callback=on_progress, item_callback=on_item)
 
             if self.cancel_event.is_set():
-                self.finished.emit("已取消")
+                self.finished.emit(CANCELLED_RESULT)
                 return
 
             for record in text_tag_map:
@@ -265,7 +267,7 @@ class TranslateWorker(QObject):
         except Exception as e:
             # User-triggered cancel should end as a normal stop instead of an error.
             if self.cancel_event.is_set() and "翻译已取消" in str(e):
-                self.finished.emit("已取消")
+                self.finished.emit(CANCELLED_RESULT)
                 return
             self.error_detail.emit(traceback.format_exc())
             self.failed.emit(f"{e}\n{traceback.format_exc()}")
@@ -1120,15 +1122,23 @@ class QtAppWindow(QWidget):
     def _on_status(self, text: str):
         self.stats_label.setText(text)
 
+
     def _on_finished(self, out_path: str):
-        self.progress_bar.setValue(100)
-        self.progress_pct.setText("100%")
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        if out_path == "已取消":
-            QMessageBox.information(self, "已暂停", "翻译已暂停。可切换模型后继续开始。")
-        else:
-            QMessageBox.information(self, "完成", f"翻译完成\n输出文件: {out_path}")
+
+        if out_path == CANCELLED_RESULT:
+            self.is_paused = True
+            self.resume_btn.setEnabled(True)
+            self._on_status("已暂停，可切换模型后点击恢复继续；已翻译内容将命中缓存")
+            QMessageBox.information(self, "已暂停", "翻译已暂停。可切换模型后点击恢复继续，已翻译内容会保留。")
+            return
+
+        self.is_paused = False
+        self.resume_btn.setEnabled(False)
+        self.progress_bar.setValue(100)
+        self.progress_pct.setText("100%")
+        QMessageBox.information(self, "完成", f"翻译完成\n输出文件: {out_path}")
 
     def _on_failed(self, detail: str):
         self.start_btn.setEnabled(True)
