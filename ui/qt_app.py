@@ -171,7 +171,9 @@ class TranslateWorker(QObject):
                 terms = int(stats.get("glossary_new_terms_added", 0))
                 success_rate = (batch_ok * 100.0 / batch_total) if batch_total else 100.0
                 speed = int(completed / elapsed) if elapsed > 0 else 0
-                char_speed = int(total_chars / elapsed) if elapsed > 0 else 0
+                # 平均速度：已完成文本块占比 * 总字数 / 已耗时
+                translated_chars = int((completed / total) * total_chars) if total > 0 else 0
+                char_speed = int(translated_chars / elapsed) if elapsed > 0 else 0
                 token_total = int(stats.get("tokens_total", 0))
                 self.stat_update.emit(
                     completed,
@@ -182,7 +184,7 @@ class TranslateWorker(QObject):
                     success_rate,
                     speed,
                     char_speed,
-                    total_chars,
+                    translated_chars,
                     token_total,
                 )
 
@@ -328,6 +330,8 @@ class QtAppWindow(QWidget):
         self.translation_start_time = 0.0
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[TranslateWorker] = None
+        self.is_paused = False
+        self.last_task_cfg: Optional[TranslateConfig] = None
         self._api_test_signal = _ApiTestSignal()
         self._api_test_signal.result.connect(self._show_api_test_result)
 
@@ -559,8 +563,12 @@ class QtAppWindow(QWidget):
         self.cancel_btn = PushButton("暂停")
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self.cancel)
+        self.resume_btn = PushButton("恢复")
+        self.resume_btn.setEnabled(False)
+        self.resume_btn.clicked.connect(self.resume)
         act_l.addWidget(self.start_btn)
         act_l.addWidget(self.cancel_btn)
+        act_l.addWidget(self.resume_btn)
         act_l.addStretch(1)
         action_card.layout().addLayout(act_l)
         layout.addWidget(action_card)
@@ -1014,17 +1022,17 @@ class QtAppWindow(QWidget):
             return None
         return cfg
 
-    def start(self):
-        cfg = self._build_config()
-        if not cfg:
-            return
 
+    def _launch_worker(self, cfg: TranslateConfig, resumed: bool = False):
         self._switch_page("status")
-        self._reset_stat_cards()
-        self.rt_src.setText("")
-        self.rt_dst.setText("")
+        if not resumed:
+            self._reset_stat_cards()
+            self.rt_src.setText("")
+            self.rt_dst.setText("")
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
+        self.resume_btn.setEnabled(False)
+        self.is_paused = False
         self.translation_start_time = time.time()
 
         self.worker_thread = QThread(self)
@@ -1047,10 +1055,32 @@ class QtAppWindow(QWidget):
 
         self.worker_thread.start()
 
+    def start(self):
+        cfg = self._build_config()
+        if not cfg:
+            return
+        self.last_task_cfg = cfg
+        self._launch_worker(cfg, resumed=False)
+
+    def resume(self):
+        if not self.is_paused:
+            QMessageBox.information(self, "提示", "当前没有可恢复的暂停任务")
+            return
+        cfg = self._build_config()
+        if not cfg:
+            return
+        if self.last_task_cfg and (cfg.inp != self.last_task_cfg.inp or cfg.out != self.last_task_cfg.out):
+            QMessageBox.warning(self, "提示", "恢复时请保持输入/输出文件不变")
+            return
+        self.last_task_cfg = cfg
+        self._on_status("正在恢复翻译（断点续译）...")
+        self._launch_worker(cfg, resumed=True)
+
     def cancel(self):
         if self.worker:
             self.worker.cancel()
-        self._on_status("正在暂停，当前请求结束后可切换模型继续...")
+            self.cancel_btn.setEnabled(False)
+        self._on_status("正在暂停，当前请求结束后停止；可切换模型后点击恢复继续")
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:
@@ -1078,7 +1108,8 @@ class QtAppWindow(QWidget):
         self.progress_bar.setValue(ratio)
         self.progress_pct.setText(f"{ratio}%")
         elapsed = self._format_elapsed(time.time() - self.translation_start_time)
-        self.stats_label.setText(f"进度 {completed}/{total} | 字符 {total_chars} | 耗时 {elapsed}")
+        translated_chars = int((completed / total) * total_chars) if total > 0 else 0
+        self.stats_label.setText(f"实时翻译字数 {translated_chars}/{total_chars} | 耗时 {elapsed}")
 
     def _on_item(self, src: str, dst: str):
         self.rt_src.setText(src)
@@ -1102,15 +1133,17 @@ class QtAppWindow(QWidget):
     def _on_failed(self, detail: str):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        self.resume_btn.setEnabled(False)
+        self.is_paused = False
         if "HTTP 421" in detail or "HTTP 429" in detail:
             QMessageBox.warning(
                 self,
-                "????",
-                "???? 421/429 ????????\n????????????????????????????????????????",
+                "警告",
+                "遇到 421/429 限流或配额问题。\n可直接再次开始或点恢复继续，已翻译内容会命中缓存。",
             )
-            self._on_status("???????????????????????????")
+            self._on_status("接口限流或配额不足，任务已停止；可调整模型/参数后继续")
             return
-        QMessageBox.critical(self, "??", f"????\n{detail}")
+        QMessageBox.critical(self, "错误", f"翻译失败\n{detail}")
 
     def _on_error_detail(self, detail: str):
         self.last_error_text.setPlainText(detail[:20000] if detail else "")
