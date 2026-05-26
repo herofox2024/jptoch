@@ -1,14 +1,14 @@
-import json
+﻿import json
 import logging
 import os
 import random
 import re
+import hashlib
 import sys
 import threading
 import time
 import uuid
-import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -61,10 +61,6 @@ def _get_yaml():
             logging.warning("PyYAML not installed. YAML prompt templates will not be supported. Install with: pip install pyyaml")
     return _yaml_module if _yaml_available else None
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
@@ -439,7 +435,7 @@ class JaZhTranslator:
 
     def _apply_provider_payload_options(self, payload: Dict[str, Any]) -> None:
         """为特定提供方追加请求参数。"""
-        if (not self.enable_thinking) and self.provider in {"deepseek", "doubao", "gemini", "glm", "custom"}:
+        if (not self.enable_thinking) and self.provider in {"deepseek", "doubao", "glm", "custom"}:
             # 用户要求关闭深度思考。
             payload["thinking"] = {"type": "disabled"}
 
@@ -604,9 +600,9 @@ class JaZhTranslator:
         """原子写入 JSON，避免异常中断导致文件损坏。"""
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=str(target.parent))
+        tmp_name = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            with open(tmp_name, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             os.replace(tmp_name, str(target))
         except Exception:
@@ -621,6 +617,11 @@ class JaZhTranslator:
     def normalize_glossary_payload(cls, payload: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
         return gs_normalize_glossary_payload(payload)
 
+    def _cache_key(self, text: str) -> str:
+        """Include provider/model in cache keys so switching models re-translates."""
+        provider_model = f"{self.provider}:{self.model}".lower()
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return f"v2:{provider_model}:{digest}"
 
     def _save_cache(self, force: bool = False):
         """保存缓存到文件，使用延迟写入策略"""
@@ -630,8 +631,7 @@ class JaZhTranslator:
 
             if force or self._save_counter >= self.CACHE_SAVE_THRESHOLD:
                 try:
-                    with open(self.cache_path, "w", encoding="utf-8") as f:
-                        json.dump(self.cache, f, ensure_ascii=False, indent=2)
+                    self._atomic_write_json(self.cache_path, self.cache)
                     self._cache_dirty = False
                     self._save_counter = 0
                 except IOError as e:
@@ -1228,14 +1228,15 @@ JSON 顶层字段：
         if self.cancel_event.is_set():
             raise RuntimeError("翻译已取消")
 
+        cache_key = self._cache_key(text)
         with self._cache_lock:
-            if text in self.cache:
-                return self.cache[text]
+            if cache_key in self.cache:
+                return self.cache[cache_key]
 
         zh = self._call_deepseek(text)
 
         with self._cache_lock:
-            self.cache[text] = zh
+            self.cache[cache_key] = zh
 
         self._save_cache()
         return zh
@@ -1302,9 +1303,10 @@ JSON 顶层字段：
         # 使用实例配置，允许传入覆盖
         effective_chunk_size = chunk_size if chunk_size is not None else self.chunk_size
 
+        cache_key = self._cache_key(text)
         with self._cache_lock:
-            if text in self.cache:
-                return self.cache[text]
+            if cache_key in self.cache:
+                return self.cache[cache_key]
 
         if len(text) <= effective_chunk_size:
             zh = self._call_deepseek(text)
@@ -1320,7 +1322,7 @@ JSON 顶层字段：
             zh = "\n".join(results).strip()
 
         with self._cache_lock:
-            self.cache[text] = zh
+            self.cache[cache_key] = zh
         self._save_cache()
         return zh
 
@@ -1344,8 +1346,9 @@ JSON 顶层字段：
 
         with self._cache_lock:
             for text in texts:
-                if text in self.cache:
-                    results[text] = self.cache[text]
+                cache_key = self._cache_key(text)
+                if cache_key in self.cache:
+                    results[text] = self.cache[cache_key]
                     completed += 1
                 elif text not in seen_uncached:
                     uncached_unique.append(text)
@@ -1493,43 +1496,61 @@ JSON 顶层字段：
             self._inc_stat("batch_delimiter_success")
             return repair_batch_quality(batch, list(zip(batch, parts)))
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(translate_one_batch, batch): batch for batch in batches}
-
-            for future in as_completed(futures):
+        executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        futures = {}
+        try:
+            for batch in batches:
                 if self.cancel_event.is_set():
-                    for f in futures:
+                    raise RuntimeError("翻译已取消")
+                futures[executor.submit(translate_one_batch, batch)] = batch
+
+            pending = set(futures)
+            while pending:
+                if self.cancel_event.is_set():
+                    for f in pending:
                         f.cancel()
+                    self._save_cache(force=True)
                     raise RuntimeError("翻译已取消")
 
-                try:
-                    batch_results = future.result()
-                    for original, translated in batch_results:
-                        results[original] = translated
-                        completed += 1
-                        if item_callback:
-                            item_callback(original, translated)
-                        if progress_callback:
-                            progress_callback(completed, total)
-                except Exception as e:
-                    logger.error(f"批次翻译失败: {e}")
-                    if "502" in str(e):
-                        raise
-                    batch = futures[future]
-                    for text in batch:
-                        if self.cancel_event.is_set():
-                            raise RuntimeError("翻译已取消")
-                        try:
-                            zh = self._translate_chunk(text)
-                            results[text] = zh
-                        except Exception as e2:
-                            logger.error(f"翻译失败: {e2}")
-                            results[text] = text
-                        completed += 1
-                        if item_callback:
-                            item_callback(text, results[text])
-                        if progress_callback:
-                            progress_callback(completed, total)
+                done, pending = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
+                if not done:
+                    continue
+
+                for future in done:
+                    try:
+                        batch_results = future.result()
+                        for original, translated in batch_results:
+                            with self._cache_lock:
+                                self.cache[self._cache_key(original)] = translated
+                            results[original] = translated
+                            completed += 1
+                            if item_callback:
+                                item_callback(original, translated)
+                            if progress_callback:
+                                progress_callback(completed, total)
+                        self._save_cache()
+                    except Exception as e:
+                        logger.error(f"批次翻译失败: {e}")
+                        if "502" in str(e):
+                            raise
+                        batch = futures[future]
+                        for text in batch:
+                            if self.cancel_event.is_set():
+                                self._save_cache(force=True)
+                                raise RuntimeError("翻译已取消")
+                            try:
+                                zh = self._translate_chunk(text)
+                                results[text] = zh
+                            except Exception as e2:
+                                logger.error(f"翻译失败: {e2}")
+                                results[text] = text
+                            completed += 1
+                            if item_callback:
+                                item_callback(text, results[text])
+                            if progress_callback:
+                                progress_callback(completed, total)
+        finally:
+            executor.shutdown(wait=not self.cancel_event.is_set(), cancel_futures=True)
 
         self._save_cache(force=True)
         if mismatch_count:
@@ -1538,7 +1559,7 @@ JSON 顶层字段：
         for text in texts:
             if text not in results:
                 with self._cache_lock:
-                    cached = self.cache.get(text)
+                    cached = self.cache.get(self._cache_key(text))
                 if cached is not None:
                     results[text] = cached
 

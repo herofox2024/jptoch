@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Union
 
@@ -25,9 +25,9 @@ def atomic_write_json(path: Union[str, Path], payload: Dict[str, Any]) -> None:
     """Atomically write JSON to avoid file corruption on interruption."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=str(target.parent))
+    tmp_name = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with open(tmp_name, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         os.replace(tmp_name, str(target))
     except Exception:

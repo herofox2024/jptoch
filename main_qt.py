@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QApplication
 
-from app import setup_logging
+from logging_config import setup_logging
 from translator import get_dict_dir
 from ui.qt_app import QtAppWindow
 

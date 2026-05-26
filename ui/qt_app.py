@@ -95,9 +95,17 @@ class TranslateWorker(QObject):
         self.config = config
         self.cancel_event = threading.Event()
         self.start_ts = 0.0
+        self.translator: Optional[JaZhTranslator] = None
 
     def cancel(self):
         self.cancel_event.set()
+        translator = self.translator
+        if translator is not None:
+            try:
+                translator.flush_cache()
+                translator.session.close()
+            except Exception:
+                pass
 
     @staticmethod
     def _extract_text(tag) -> str:
@@ -127,6 +135,7 @@ class TranslateWorker(QObject):
                 enable_glossary=cfg.enable_glossary,
                 enable_thinking=cfg.enable_thinking,
             )
+            self.translator = translator
 
             book = load_book(cfg.inp)
             docs = list(iter_text_nodes(book))
@@ -323,17 +332,21 @@ class QtAppWindow(QWidget):
     def __init__(self):
         super().__init__()
         setTheme(Theme.LIGHT)
-        self.setWindowTitle("EPUB 日译中 V3.1beta版")
+        self.setWindowTitle("EPUB 日译中 V3.2beta版")
         self._setup_window_icon()
         self.resize(1140, 780)
         self.setMinimumSize(960, 680)
 
         self.default_dir = os.getcwd()
+        self._base_font_pt = 9
+        self._ui_font_pt = 9
         self.translation_start_time = 0.0
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[TranslateWorker] = None
         self.is_paused = False
         self.last_task_cfg: Optional[TranslateConfig] = None
+        self._glm_perf_limited = False
+        self._perf_values_before_glm: Optional[dict] = None
         self._api_test_signal = _ApiTestSignal()
         self._api_test_signal.result.connect(self._show_api_test_result)
 
@@ -372,9 +385,9 @@ class QtAppWindow(QWidget):
         else:                # 100%
             base_pt = 9
 
-        # Apply an additional 20% downscale for denser UI text.
+        # Keep text readable on 100% desktop scaling while staying compact on high-DPI screens.
         self._base_font_pt = base_pt
-        self._ui_font_pt = max(7, int(round(base_pt * 0.7)))
+        self._ui_font_pt = max(9, int(round(base_pt * 0.9)))
         font = QFont(self.font())
         font.setPointSize(self._ui_font_pt)
         self.setFont(font)
@@ -394,9 +407,9 @@ class QtAppWindow(QWidget):
         nav_layout.setContentsMargins(14, 18, 14, 14)
         nav_layout.setSpacing(10)
 
-        title = StrongBodyLabel("EPUB 日译中 V3.1beta版")
+        title = StrongBodyLabel("EPUB 日译中 V3.2beta版")
         nav_layout.addWidget(title)
-        nav_layout.addWidget(CaptionLabel("重构阶段 - Fluent UI"))
+        nav_layout.addWidget(CaptionLabel("Qt Fluent UI"))
 
         self.nav_task_btn = PushButton("任务")
         self.nav_task_btn.setIcon(FluentIcon.DOCUMENT.icon())
@@ -472,6 +485,9 @@ class QtAppWindow(QWidget):
             QLabel, QLineEdit, QPlainTextEdit, QComboBox, QPushButton, QCheckBox, QRadioButton {{
                 font-size: {self._ui_font_pt}pt;
             }}
+            QComboBox QAbstractItemView {{
+                font-size: {self._ui_font_pt}pt;
+            }}
             QRadioButton {{ color: {radio_color}; }}
             DropLineEdit[dragging="true"] {{ border: 2px solid {drag_border}; background: {drag_bg}; }}
             """
@@ -521,6 +537,15 @@ class QtAppWindow(QWidget):
         lay.setSpacing(10)
         lay.addWidget(StrongBodyLabel(title))
         return card
+
+    def _sync_combo_font(self, combo: ComboBox):
+        font = QFont(combo.font())
+        font.setPointSize(self._ui_font_pt)
+        combo.setFont(font)
+        view_getter = getattr(combo, "view", None)
+        view = view_getter() if callable(view_getter) else None
+        if view is not None:
+            view.setFont(font)
 
     def _build_task_page(self) -> QWidget:
         page = self._make_page_container()
@@ -589,6 +614,7 @@ class QtAppWindow(QWidget):
         grid.setVerticalSpacing(10)
 
         self.provider_combo = ComboBox()
+        self._sync_combo_font(self.provider_combo)
         for label, _ in self.PROVIDERS:
             self.provider_combo.addItem(label)
         self.provider_combo.currentTextChanged.connect(self._on_provider_change)
@@ -629,13 +655,13 @@ class QtAppWindow(QWidget):
 
         perf_card = self._make_card("性能参数")
         self.slider_max_workers = Slider(Qt.Horizontal)
-        self.slider_max_workers.setRange(1, 20)
+        self.slider_max_workers.setRange(1, 25)
         self.slider_batch_size = Slider(Qt.Horizontal)
-        self.slider_batch_size.setRange(1, 800)
+        self.slider_batch_size.setRange(1, 15)
         self.slider_max_batch_length = Slider(Qt.Horizontal)
         self.slider_max_batch_length.setRange(1, 8000)
         self.slider_max_text_size_for_batch = Slider(Qt.Horizontal)
-        self.slider_max_text_size_for_batch.setRange(1, 200)
+        self.slider_max_text_size_for_batch.setRange(1, 1000)
         self.slider_api_timeout = Slider(Qt.Horizontal)
         self.slider_api_timeout.setRange(1, 300)
 
@@ -675,6 +701,8 @@ class QtAppWindow(QWidget):
             row.addWidget(label)
             perf_card.layout().addLayout(row)
 
+        self.perf_limit_hint = CaptionLabel("")
+        perf_card.layout().addWidget(self.perf_limit_hint)
         layout.addWidget(perf_card)
 
         direction_card = self._make_card("翻页方向")
@@ -706,6 +734,7 @@ class QtAppWindow(QWidget):
         ui_card = self._make_card("界面与推理设置")
         row4_l = QHBoxLayout()
         self.theme_combo = ComboBox()
+        self._sync_combo_font(self.theme_combo)
         self.theme_combo.addItems(["浅色主题", "深色主题"])
         self.theme_combo.currentTextChanged.connect(self._on_theme_changed)
         self.enable_thinking_cb = CheckBox("开启深度思考")
@@ -738,7 +767,7 @@ class QtAppWindow(QWidget):
             ("completed", "已完成"),
             ("total", "总文本块"),
             ("terms", "新增术语"),
-            ("elapsed", "耗时"),
+            ("elapsed", "预计剩余"),
             ("speed", "速度(块/秒)"),
             ("char_speed", "速度(字/秒)"),
             ("api", "API 请求"),
@@ -815,7 +844,7 @@ class QtAppWindow(QWidget):
         self.stat_value_labels["completed"].setText("0")
         self.stat_value_labels["total"].setText("0")
         self.stat_value_labels["terms"].setText("0")
-        self.stat_value_labels["elapsed"].setText("00:00")
+        self.stat_value_labels["elapsed"].setText("-")
         self.stat_value_labels["speed"].setText("-")
         self.stat_value_labels["char_speed"].setText("-")
         self.stat_value_labels["api"].setText("0")
@@ -862,6 +891,47 @@ class QtAppWindow(QWidget):
         is_custom = provider == "custom"
         self.api_url_edit.setEnabled(is_custom)
         self.api_key_edit.setEnabled(provider != "sakura")
+        self._apply_provider_perf_limits(provider)
+
+    def _apply_provider_perf_limits(self, provider: str):
+        if not hasattr(self, "slider_batch_size"):
+            return
+
+        if provider == "glm":
+            if not self._glm_perf_limited:
+                self._perf_values_before_glm = {
+                    "max_workers": self.slider_max_workers.value(),
+                    "batch_size": self.slider_batch_size.value(),
+                    "max_batch_length": self.slider_max_batch_length.value(),
+                    "max_text_size_for_batch": self.slider_max_text_size_for_batch.value(),
+                }
+
+            self.slider_max_workers.setRange(1, 2)
+            self.slider_batch_size.setRange(1, 2)
+            self.slider_max_batch_length.setRange(1, 500)
+            self.slider_max_text_size_for_batch.setRange(1, 150)
+
+            self.slider_max_workers.setValue(min(self.slider_max_workers.value(), 2))
+            self.slider_batch_size.setValue(min(self.slider_batch_size.value(), 2))
+            self.slider_max_batch_length.setValue(min(self.slider_max_batch_length.value(), 500))
+            self.slider_max_text_size_for_batch.setValue(min(self.slider_max_text_size_for_batch.value(), 150))
+            self.perf_limit_hint.setText("GLM 已启用限流保护：并发≤2、批量≤2、批量字符≤500、单条字符≤150。")
+            self._glm_perf_limited = True
+        else:
+            self.slider_max_workers.setRange(1, 25)
+            self.slider_batch_size.setRange(1, 15)
+            self.slider_max_batch_length.setRange(1, 8000)
+            self.slider_max_text_size_for_batch.setRange(1, 1000)
+
+            if self._glm_perf_limited and self._perf_values_before_glm:
+                self.slider_max_workers.setValue(self._perf_values_before_glm["max_workers"])
+                self.slider_batch_size.setValue(self._perf_values_before_glm["batch_size"])
+                self.slider_max_batch_length.setValue(self._perf_values_before_glm["max_batch_length"])
+                self.slider_max_text_size_for_batch.setValue(self._perf_values_before_glm["max_text_size_for_batch"])
+            self._glm_perf_limited = False
+            self.perf_limit_hint.setText("")
+
+        self._update_perf_slider_labels()
 
     def _update_perf_slider_labels(self):
         self.lbl_max_workers.setText(str(self.slider_max_workers.value()))
@@ -954,7 +1024,7 @@ class QtAppWindow(QWidget):
                 "messages": [{"role": "user", "content": "Hi"}],
                 "max_tokens": 1,
             }
-            if (not self.enable_thinking_cb.isChecked()) and provider in {"deepseek", "doubao", "gemini", "glm", "custom"}:
+            if (not self.enable_thinking_cb.isChecked()) and provider in {"deepseek", "doubao", "glm", "custom"}:
                 payload["thinking"] = {"type": "disabled"}
 
             try:
@@ -1097,7 +1167,14 @@ class QtAppWindow(QWidget):
         self.stat_value_labels["completed"].setText(str(completed))
         self.stat_value_labels["total"].setText(str(total))
         self.stat_value_labels["terms"].setText(str(terms))
-        self.stat_value_labels["elapsed"].setText(self._format_elapsed(time.time() - self.translation_start_time))
+        elapsed_seconds = max(0.0, time.time() - self.translation_start_time)
+        if completed >= total and total > 0:
+            remaining = 0
+        elif completed > 0 and total > 0:
+            remaining = max(0, int((elapsed_seconds / completed) * (total - completed)))
+        else:
+            remaining = -1
+        self.stat_value_labels["elapsed"].setText(self._format_elapsed(remaining) if remaining >= 0 else "-")
         self.stat_value_labels["speed"].setText(str(speed))
         self.stat_value_labels["char_speed"].setText(str(char_speed))
         self.stat_value_labels["api"].setText(str(api_total))

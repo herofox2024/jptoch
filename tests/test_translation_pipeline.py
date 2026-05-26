@@ -1,8 +1,11 @@
 import json
 import os
-import tempfile
+import shutil
 import threading
 import unittest
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
 from unittest import mock
 
 from bs4 import BeautifulSoup
@@ -11,9 +14,22 @@ from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult
 
 
+@contextmanager
+def temp_test_dir():
+    root = Path(__file__).resolve().parent / "_tmp"
+    root.mkdir(exist_ok=True)
+    path = root / uuid.uuid4().hex
+    path.mkdir()
+    try:
+        yield str(path)
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 class DummyTranslator(JaZhTranslator):
     def __init__(self):
         self.provider = "deepseek"
+        self.model = "deepseek-v4-flash"
         self.api_key = "x"
         self.enable_glossary = True
         self.extract_glossary = False
@@ -88,6 +104,25 @@ class TranslatorTests(unittest.TestCase):
         res = t.translate_batch(["A", "B"], batch_size=4)
         self.assertEqual(res["A"], "ZH:A")
         self.assertEqual(res["B"], "ZH:B")
+        self.assertEqual(t.cache[t._cache_key("A")], "ZH:A")
+        self.assertEqual(t.cache[t._cache_key("B")], "ZH:B")
+
+    def test_cache_key_is_model_scoped(self):
+        t = DummyTranslator()
+        calls = {"n": 0}
+
+        def fake_call(text, max_retries=3, text_separator=None):
+            calls["n"] += 1
+            return f"{t.model}:{text}"
+
+        t._call_deepseek = fake_call  # type: ignore
+        self.assertEqual(t.translate("A"), "deepseek-v4-flash:A")
+        self.assertEqual(t.translate("A"), "deepseek-v4-flash:A")
+        self.assertEqual(calls["n"], 1)
+
+        t.model = "other-model"
+        self.assertEqual(t.translate("A"), "other-model:A")
+        self.assertEqual(calls["n"], 2)
 
     def test_fast_fail_502_not_swallowed(self):
         t = DummyTranslator()
@@ -108,9 +143,25 @@ class TranslatorTests(unittest.TestCase):
         with self.assertRaises(FastFailError):
             t._call_deepseek("abc")
 
+    def test_gemini_payload_does_not_include_thinking(self):
+        t = DummyTranslator()
+        t.provider = "gemini"
+        t.enable_thinking = False
+        payload = {}
+        t._apply_provider_payload_options(payload)
+        self.assertNotIn("thinking", payload)
+
+    def test_deepseek_payload_can_disable_thinking(self):
+        t = DummyTranslator()
+        t.provider = "deepseek"
+        t.enable_thinking = False
+        payload = {}
+        t._apply_provider_payload_options(payload)
+        self.assertEqual(payload.get("thinking"), {"type": "disabled"})
+
     def test_replace_glossary_thread_safe(self):
         t = DummyTranslator()
-        with tempfile.TemporaryDirectory() as d:
+        with temp_test_dir() as d:
             t.glossary_path = os.path.join(d, "glossary.json")
             t.replace_glossary({"A": "甲"})
             self.assertIn("Item", t.glossary)
@@ -142,7 +193,7 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(normalized["Person"][0]["translation"], "爱丽丝")
 
     def test_atomic_write_json(self):
-        with tempfile.TemporaryDirectory() as d:
+        with temp_test_dir() as d:
             path = os.path.join(d, "glossary.json")
             JaZhTranslator._atomic_write_json(path, {"Item": [{"original": "A", "translation": "甲"}]})
             with open(path, "r", encoding="utf-8") as f:
@@ -197,7 +248,7 @@ class TranslatorTests(unittest.TestCase):
             "Skill": [],
             "Creature": [],
         }
-        with tempfile.TemporaryDirectory() as d:
+        with temp_test_dir() as d:
             t.glossary_path = os.path.join(d, "glossary.json")
             added = t._merge_new_terms_into_glossary(
                 [
@@ -215,7 +266,7 @@ class TranslatorTests(unittest.TestCase):
         t = DummyTranslator()
         t.glossary_categories = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
         t.glossary = {"王都": "王都"}
-        with tempfile.TemporaryDirectory() as d:
+        with temp_test_dir() as d:
             t.glossary_path = os.path.join(d, "glossary.json")
             added = t._merge_new_terms_into_glossary(
                 [{"src": "ギルド", "dst": "公会", "category": "Org", "source": "auto"}]
