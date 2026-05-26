@@ -252,7 +252,7 @@ export DOUBAO_API_KEY=your-api-key
 #### 打包与验证
 
 - **重新打包 Qt 主线程序**：
-  - 输出文件：`dist\EPUB日译中V3.2beta.exe`。
+  - 输出文件：`dist\EPUB日译中V3.2betaV1.exe`。
   - 本轮修复后已验证 Qt 主窗口可正常实例化。
 - **回归验证**：
   - 翻译流水线测试覆盖模型隔离缓存与 Gemini `thinking` 字段回归。

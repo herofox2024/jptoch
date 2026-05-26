@@ -43,6 +43,7 @@ from qfluentwidgets import (
     Theme,
     setTheme,
 )
+from qfluentwidgets.components.widgets.combo_box import ComboBoxMenu
 
 from epub_io import (
     apply_toc_translations,
@@ -60,6 +61,47 @@ try:
     import ctypes
 except Exception:
     ctypes = None
+
+
+class ScaledComboBoxMenu(ComboBoxMenu):
+    def __init__(self, parent=None, font_pt: int = 9):
+        super().__init__(parent=parent)
+        self._font_pt = max(9, int(font_pt))
+        self._font = QFont(parent.font() if parent is not None else self.font())
+        self._font.setPointSize(self._font_pt)
+        self._apply_font()
+
+    def _apply_font(self):
+        font = self._font
+        self.setFont(font)
+        self.view.setFont(font)
+        self.view.viewport().setFont(font)
+        self.view.setStyleSheet(f"MenuActionListWidget{{ font-size: {self._font_pt}pt; }}")
+        self.setItemHeight(max(33, int(round(self._font_pt * 3.4))))
+
+    def _createActionItem(self, action, before=None):
+        item = super()._createActionItem(action, before)
+        item.setFont(self._font)
+        self._adjustItemText(item, action)
+        return item
+
+
+class ScaledComboBox(ComboBox):
+    """ComboBox popup font needs explicit scaling in qfluentwidgets."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self._popup_font_pt = 9
+
+    def set_scaled_font(self, point_size: int):
+        font_pt = max(9, int(point_size))
+        font = QFont(self.font())
+        font.setPointSize(font_pt)
+        self._popup_font_pt = font_pt
+        self.setFont(font)
+
+    def _createComboMenu(self):
+        return ScaledComboBoxMenu(self, self._popup_font_pt)
 
 
 @dataclass
@@ -332,7 +374,7 @@ class QtAppWindow(QWidget):
     def __init__(self):
         super().__init__()
         setTheme(Theme.LIGHT)
-        self.setWindowTitle("EPUB 日译中 V3.2beta版")
+        self.setWindowTitle("EPUB 日译中 V3.2betaV1版")
         self._setup_window_icon()
         self.resize(1140, 780)
         self.setMinimumSize(960, 680)
@@ -352,6 +394,7 @@ class QtAppWindow(QWidget):
 
         self._build_ui()
         self._apply_adaptive_font()
+        self._sync_all_combo_fonts()
         self._on_provider_change()
         self._update_perf_slider_labels()
         self._setup_styles(Theme.LIGHT)
@@ -407,7 +450,7 @@ class QtAppWindow(QWidget):
         nav_layout.setContentsMargins(14, 18, 14, 14)
         nav_layout.setSpacing(10)
 
-        title = StrongBodyLabel("EPUB 日译中 V3.2beta版")
+        title = StrongBodyLabel("EPUB 日译中 V3.2betaV1版")
         nav_layout.addWidget(title)
         nav_layout.addWidget(CaptionLabel("Qt Fluent UI"))
 
@@ -539,13 +582,22 @@ class QtAppWindow(QWidget):
         return card
 
     def _sync_combo_font(self, combo: ComboBox):
-        font = QFont(combo.font())
-        font.setPointSize(self._ui_font_pt)
-        combo.setFont(font)
+        if hasattr(combo, "set_scaled_font"):
+            combo.set_scaled_font(self._ui_font_pt)
+        else:
+            font = QFont(combo.font())
+            font.setPointSize(self._ui_font_pt)
+            combo.setFont(font)
         view_getter = getattr(combo, "view", None)
         view = view_getter() if callable(view_getter) else None
         if view is not None:
-            view.setFont(font)
+            view.setFont(combo.font())
+
+    def _sync_all_combo_fonts(self):
+        for name in ("provider_combo", "theme_combo"):
+            combo = getattr(self, name, None)
+            if combo is not None:
+                self._sync_combo_font(combo)
 
     def _build_task_page(self) -> QWidget:
         page = self._make_page_container()
@@ -613,7 +665,7 @@ class QtAppWindow(QWidget):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
 
-        self.provider_combo = ComboBox()
+        self.provider_combo = ScaledComboBox()
         self._sync_combo_font(self.provider_combo)
         for label, _ in self.PROVIDERS:
             self.provider_combo.addItem(label)
@@ -733,7 +785,7 @@ class QtAppWindow(QWidget):
 
         ui_card = self._make_card("界面与推理设置")
         row4_l = QHBoxLayout()
-        self.theme_combo = ComboBox()
+        self.theme_combo = ScaledComboBox()
         self._sync_combo_font(self.theme_combo)
         self.theme_combo.addItems(["浅色主题", "深色主题"])
         self.theme_combo.currentTextChanged.connect(self._on_theme_changed)
