@@ -977,7 +977,7 @@ JSON 顶层字段：
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.1 if self.provider == "deepseek" else self.temperature,
+            "temperature": 0.1,
         }
         self._apply_provider_payload_options(payload)
         if self.top_p is not None:

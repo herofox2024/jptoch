@@ -1,4 +1,5 @@
 import os
+import subprocess
 import threading
 import time
 import traceback
@@ -11,7 +12,7 @@ from pathlib import Path
 
 import requests
 from bs4 import NavigableString
-from PyQt5.QtCore import QObject, QThread, Qt, pyqtSignal as Signal, pyqtSlot as Slot
+from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal as Signal, pyqtSlot as Slot
 from PyQt5.QtGui import QFont, QGuiApplication, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
@@ -21,7 +22,11 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
     QRadioButton,
+    QAbstractItemView,
+    QHeaderView,
     QPlainTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -61,6 +66,30 @@ try:
     import ctypes
 except Exception:
     ctypes = None
+
+
+GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
+
+
+def load_glossary_rows(glossary_path: Path):
+    if not glossary_path.exists():
+        return []
+
+    payload = JaZhTranslator._load_json(str(glossary_path), {})
+    normalized, _ = JaZhTranslator.normalize_glossary_payload(payload if isinstance(payload, dict) else {})
+    rows = []
+    for category in GLOSSARY_CATEGORIES:
+        for entry in normalized.get(category, []):
+            original = str(entry.get("original", "")).strip()
+            translation = str(entry.get("translation", "")).strip()
+            info_parts = []
+            if entry.get("info"):
+                info_parts.append(str(entry.get("info")).strip())
+            if entry.get("source"):
+                info_parts.append(f"source={entry.get('source')}")
+            if original and translation:
+                rows.append((category, original, translation, "；".join(info_parts)))
+    return rows
 
 
 class ScaledComboBoxMenu(ComboBoxMenu):
@@ -123,6 +152,70 @@ class TranslateConfig:
     enable_thinking: bool
 
 
+class GlossaryImportWorker(QObject):
+    finished = Signal(int, int, int, str, str)
+    failed = Signal(str)
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+
+    @Slot()
+    def run(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if not isinstance(payload, dict):
+                raise ValueError("术语表 JSON 顶层必须是对象")
+
+            normalized_glossary, import_stats = JaZhTranslator.normalize_glossary_payload(payload)
+            data_dir = get_data_dir()
+            glossary_path = data_dir / "glossary.json"
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            backup_path = data_dir / f"glossary.backup.before_import.{timestamp}.json"
+
+            existing = JaZhTranslator._load_json(str(glossary_path), {}) if glossary_path.exists() else {}
+            if existing:
+                existing_normalized, _ = JaZhTranslator.normalize_glossary_payload(existing)
+                merged, merge_stats = JaZhTranslator.merge_glossaries(existing_normalized, normalized_glossary)
+            else:
+                merged = normalized_glossary
+                merge_stats = {
+                    "added": import_stats.get("accepted", 0),
+                    "skipped": import_stats.get("skipped", 0),
+                    "conflicts": import_stats.get("conflicts", 0),
+                }
+
+            has_existing = glossary_path.exists()
+            if has_existing:
+                shutil.copy2(glossary_path, backup_path)
+            JaZhTranslator._atomic_write_json(glossary_path, merged)
+
+            self.finished.emit(
+                int(merge_stats.get("added", 0)),
+                int(merge_stats.get("skipped", 0)),
+                int(merge_stats.get("conflicts", 0)),
+                str(glossary_path),
+                str(backup_path if has_existing else "N/A"),
+            )
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class GlossaryLoadWorker(QObject):
+    finished = Signal(object, str)
+    failed = Signal(str)
+
+    @Slot()
+    def run(self):
+        try:
+            glossary_path = get_data_dir() / "glossary.json"
+            rows = load_glossary_rows(glossary_path)
+            self.finished.emit(rows, str(glossary_path))
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class TranslateWorker(QObject):
     progress = Signal(int, int, int)
     item = Signal(str, str)
@@ -156,6 +249,81 @@ class TranslateWorker(QObject):
     @staticmethod
     def _is_translatable(text: str) -> bool:
         return is_translatable(text)
+
+    @staticmethod
+    def _sanitize_filename(name: str) -> str:
+        invalid = '<>:"/\\|?*'
+        cleaned = "".join("_" if c in invalid or ord(c) < 32 else c for c in name)
+        cleaned = " ".join(cleaned.split()).strip(" ._")
+        if cleaned.lower().endswith(".epub"):
+            cleaned = cleaned[:-5].strip(" ._")
+        cleaned = cleaned[:120].strip(" ._")
+        if not cleaned:
+            return ""
+
+        reserved_names = {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "CONIN$",
+            "CONOUT$",
+            *(f"COM{i}" for i in range(1, 10)),
+            *(f"LPT{i}" for i in range(1, 10)),
+        }
+        if cleaned.split(".", 1)[0].upper() in reserved_names:
+            cleaned = f"{cleaned}_"
+        return cleaned
+
+    @staticmethod
+    def _unique_epub_path(path: Path) -> Path:
+        if not path.exists():
+            return path
+        for index in range(2, 1000):
+            candidate = path.with_name(f"{path.stem}_{index}{path.suffix}")
+            if not candidate.exists():
+                return candidate
+        return path.with_name(f"{path.stem}_{int(time.time())}{path.suffix}")
+
+    def _translated_output_path(
+        self,
+        cfg: TranslateConfig,
+        translator: JaZhTranslator,
+        toc_titles: list,
+        results: dict,
+    ) -> str:
+        source_path = Path(cfg.out)
+        source_base = Path(cfg.inp).stem
+        candidates = []
+
+        if source_base in results and results[source_base]:
+            candidates.append(str(results[source_base]))
+
+        if self._is_translatable(source_base):
+            try:
+                name_results = translator.translate_batch([source_base])
+                translated_name = name_results.get(source_base)
+                if translated_name:
+                    candidates.append(str(translated_name))
+            except Exception:
+                pass
+
+        for title in toc_titles:
+            translated_title = results.get(title)
+            if translated_title:
+                candidates.append(str(translated_title))
+                break
+
+        for candidate in candidates:
+            safe_name = self._sanitize_filename(candidate)
+            if not safe_name:
+                continue
+            target = source_path.with_name(f"{safe_name}.epub")
+            if os.path.normcase(os.path.abspath(str(target))) == os.path.normcase(os.path.abspath(str(source_path))):
+                return str(source_path)
+            return str(self._unique_epub_path(target))
+
+        return str(source_path)
 
     @Slot()
     def run(self):
@@ -293,6 +461,14 @@ class TranslateWorker(QObject):
                 apply_toc_translations(book, toc_translations)
 
             save_book(cfg.out, book, chinese_mode=(cfg.direction == "zh"))
+            final_out = cfg.out
+            try:
+                translated_out = self._translated_output_path(cfg, translator, toc_titles, results)
+                if translated_out != cfg.out:
+                    Path(cfg.out).rename(translated_out)
+                    final_out = translated_out
+            except Exception as rename_error:
+                self.status.emit(f"文件名翻译失败，已保留原输出文件: {rename_error}")
             translator.flush_cache()
 
             self.progress.emit(total_texts, total_texts, total_chars)
@@ -314,7 +490,7 @@ class TranslateWorker(QObject):
                         lines.append(f"  截断续取: {trunc} 次")
                     self.error_detail.emit("\n".join(lines))
 
-            self.finished.emit(cfg.out)
+            self.finished.emit(final_out)
         except Exception as e:
             # User-triggered cancel should end as a normal stop instead of an error.
             if self.cancel_event.is_set() and "翻译已取消" in str(e):
@@ -385,6 +561,14 @@ class QtAppWindow(QWidget):
         self.translation_start_time = 0.0
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[TranslateWorker] = None
+        self.glossary_import_thread: Optional[QThread] = None
+        self.glossary_import_worker: Optional[GlossaryImportWorker] = None
+        self.glossary_load_thread: Optional[QThread] = None
+        self.glossary_load_worker: Optional[GlossaryLoadWorker] = None
+        self._glossary_pending_rows = []
+        self._glossary_populate_index = 0
+        self._glossary_table_dirty = False
+        self._glossary_table_loading = False
         self.is_paused = False
         self.last_task_cfg: Optional[TranslateConfig] = None
         self._glm_perf_limited = False
@@ -466,6 +650,12 @@ class QtAppWindow(QWidget):
         self.nav_api_btn.clicked.connect(lambda: self._switch_page("api"))
         nav_layout.addWidget(self.nav_api_btn)
 
+        self.nav_glossary_btn = PushButton("术语表")
+        self.nav_glossary_btn.setIcon(FluentIcon.LIBRARY.icon())
+        self.nav_glossary_btn.setCheckable(True)
+        self.nav_glossary_btn.clicked.connect(lambda: self._switch_page("glossary"))
+        nav_layout.addWidget(self.nav_glossary_btn)
+
         self.nav_status_btn = PushButton("状态监控")
         self.nav_status_btn.setIcon(FluentIcon.HISTORY.icon())
         self.nav_status_btn.setCheckable(True)
@@ -489,6 +679,7 @@ class QtAppWindow(QWidget):
         self.pages = {
             "task": self._build_task_page(),
             "api": self._build_api_page(),
+            "glossary": self._build_glossary_page(),
             "option": self._build_option_page(),
             "status": self._build_status_page(),
         }
@@ -599,6 +790,28 @@ class QtAppWindow(QWidget):
             if combo is not None:
                 self._sync_combo_font(combo)
 
+    def _on_glossary_enabled_changed(self):
+        enabled = self.enable_glossary_cb.isChecked()
+        self.extract_glossary_cb.setEnabled(enabled)
+        if not enabled:
+            self.extract_glossary_cb.setChecked(False)
+        self._set_glossary_table_editable(enabled)
+
+    def _set_glossary_table_editable(self, enabled: bool):
+        table = getattr(self, "glossary_table", None)
+        if table is not None:
+            if enabled:
+                table.setEditTriggers(
+                    QAbstractItemView.DoubleClicked
+                    | QAbstractItemView.SelectedClicked
+                    | QAbstractItemView.EditKeyPressed
+                )
+            else:
+                table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        save_btn = getattr(self, "glossary_save_btn", None)
+        if save_btn is not None:
+            save_btn.setEnabled(enabled and self._glossary_table_dirty)
+
     def _build_task_page(self) -> QWidget:
         page = self._make_page_container()
         layout = page.layout()
@@ -701,6 +914,62 @@ class QtAppWindow(QWidget):
         layout.addStretch(1)
         return page
 
+    def _build_glossary_page(self) -> QWidget:
+        page = self._make_page_container()
+        layout = page.layout()
+
+        card = self._make_card("术语表")
+        toolbar = QHBoxLayout()
+        self.glossary_summary_label = BodyLabel("")
+        self.glossary_refresh_btn = PushButton("刷新")
+        self.glossary_refresh_btn.clicked.connect(self._refresh_glossary_table)
+        self.glossary_save_btn = PushButton("保存修改")
+        self.glossary_save_btn.setEnabled(False)
+        self.glossary_save_btn.clicked.connect(self._save_glossary_table_edits)
+        self.glossary_import_page_btn = PushButton("增量导入 JSON")
+        self.glossary_import_page_btn.clicked.connect(self.import_glossary_json)
+
+        settings_row = QHBoxLayout()
+        self.enable_glossary_cb = CheckBox("启用术语表")
+        self.enable_glossary_cb.setChecked(False)
+        self.enable_glossary_cb.stateChanged.connect(self._on_glossary_enabled_changed)
+        self.extract_glossary_cb = CheckBox("自动提取术语（实验）")
+        self.extract_glossary_cb.setChecked(False)
+        self.extract_glossary_cb.setEnabled(False)
+        settings_row.addWidget(self.enable_glossary_cb)
+        settings_row.addWidget(self.extract_glossary_cb)
+        settings_row.addStretch(1)
+
+        card.layout().addLayout(settings_row)
+        card.layout().addWidget(CaptionLabel("术语表默认不启用；勾选“启用术语表”后，本次翻译才会使用术语表。"))
+        toolbar.addWidget(self.glossary_summary_label)
+        toolbar.addStretch(1)
+        toolbar.addWidget(self.glossary_refresh_btn)
+        toolbar.addWidget(self.glossary_save_btn)
+        toolbar.addWidget(self.glossary_import_page_btn)
+
+        self.glossary_table = QTableWidget(0, 4)
+        self.glossary_table.setHorizontalHeaderLabels(["分类", "原文", "译文", "备注/来源"])
+        self.glossary_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.glossary_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.glossary_table.setAlternatingRowColors(True)
+        self.glossary_table.setMinimumHeight(420)
+        self.glossary_table.verticalHeader().setVisible(False)
+        self.glossary_table.verticalHeader().setDefaultSectionSize(30)
+        self.glossary_table.itemChanged.connect(self._on_glossary_table_item_changed)
+        header = self.glossary_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+
+        card.layout().addLayout(toolbar)
+        card.layout().addWidget(self.glossary_table)
+        layout.addWidget(card)
+        layout.addWidget(CaptionLabel(f"术语表路径: {self._glossary_path()}"))
+        layout.addStretch(1)
+        return page
+
     def _build_option_page(self) -> QWidget:
         page = self._make_page_container()
         layout = page.layout()
@@ -767,21 +1036,6 @@ class QtAppWindow(QWidget):
         row2_l.addStretch(1)
         direction_card.layout().addLayout(row2_l)
         layout.addWidget(direction_card)
-
-        glossary_card = self._make_card("术语设置")
-        row3_l = QHBoxLayout()
-        self.extract_glossary_cb = CheckBox("自动提取术语（实验）")
-        self.enable_glossary_cb = CheckBox("启用术语表")
-        self.import_glossary_btn = PushButton("导入术语表 JSON")
-        self.import_glossary_btn.clicked.connect(self.import_glossary_json)
-        self.enable_glossary_cb.setChecked(True)
-        row3_l.addWidget(self.import_glossary_btn)
-        row3_l.addWidget(self.extract_glossary_cb)
-        row3_l.addWidget(self.enable_glossary_cb)
-        row3_l.addStretch(1)
-        glossary_card.layout().addLayout(row3_l)
-        glossary_card.layout().addWidget(CaptionLabel(f"默认术语表路径: {get_data_dir() / 'glossary.json'}"))
-        layout.addWidget(glossary_card)
 
         ui_card = self._make_card("界面与推理设置")
         row4_l = QHBoxLayout()
@@ -909,8 +1163,11 @@ class QtAppWindow(QWidget):
         self.page_area.setWidget(self.pages[key])
         self.nav_task_btn.setChecked(key == "task")
         self.nav_api_btn.setChecked(key == "api")
+        self.nav_glossary_btn.setChecked(key == "glossary")
         self.nav_status_btn.setChecked(key == "status")
         self.nav_settings_btn.setChecked(key == "option")
+        if key == "glossary":
+            self._refresh_glossary_table()
 
     def _current_provider_key(self) -> str:
         selected = self.provider_combo.currentText()
@@ -1251,6 +1508,38 @@ class QtAppWindow(QWidget):
     def _on_status(self, text: str):
         self.stats_label.setText(text)
 
+    def _play_completion_voice(self):
+        message = "\u4f60\u597d\uff0c\u5df2\u5b8c\u6210"
+        if os.name != "nt":
+            QApplication.beep()
+            return
+
+        try:
+            escaped_message = message.replace("'", "''")
+            ps_command = (
+                "Add-Type -AssemblyName System.Speech;"
+                "$speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+                "$speaker.Rate = 0;"
+                f"$speaker.Speak('{escaped_message}');"
+            )
+            subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    ps_command,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            QApplication.beep()
+
 
     def _on_finished(self, out_path: str):
         self.start_btn.setEnabled(True)
@@ -1267,6 +1556,8 @@ class QtAppWindow(QWidget):
         self.resume_btn.setEnabled(False)
         self.progress_bar.setValue(100)
         self.progress_pct.setText("100%")
+        self.output_edit.setText(out_path)
+        self._play_completion_voice()
         QMessageBox.information(self, "完成", f"翻译完成\n输出文件: {out_path}")
 
     def _on_failed(self, detail: str):
@@ -1351,54 +1642,213 @@ class QtAppWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"导出诊断包失败:\n{e}")
 
+    def _glossary_path(self) -> Path:
+        return get_data_dir() / "glossary.json"
+
+    def _load_glossary_rows(self):
+        glossary_path = self._glossary_path()
+        return load_glossary_rows(glossary_path), glossary_path
+
+    def _refresh_glossary_table(self):
+        table = getattr(self, "glossary_table", None)
+        label = getattr(self, "glossary_summary_label", None)
+        if table is None or label is None:
+            return
+
+        if self.glossary_load_thread is not None:
+            return
+
+        self._glossary_pending_rows = []
+        self._glossary_populate_index = 0
+        table.clearContents()
+        table.setRowCount(0)
+        label.setText("正在加载术语表...")
+
+        thread = QThread(self)
+        worker = GlossaryLoadWorker()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_glossary_load_finished)
+        worker.failed.connect(self._on_glossary_load_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_glossary_load_worker)
+
+        self.glossary_load_thread = thread
+        self.glossary_load_worker = worker
+        thread.start()
+
+    def _clear_glossary_load_worker(self):
+        self.glossary_load_thread = None
+        self.glossary_load_worker = None
+
+    def _on_glossary_load_failed(self, detail: str):
+        table = getattr(self, "glossary_table", None)
+        label = getattr(self, "glossary_summary_label", None)
+        if table is not None:
+            table.setRowCount(0)
+        if label is not None:
+            label.setText(f"术语表读取失败: {detail}")
+
+    def _on_glossary_load_finished(self, rows, glossary_path: str):
+        table = getattr(self, "glossary_table", None)
+        label = getattr(self, "glossary_summary_label", None)
+        if table is None or label is None:
+            return
+
+        self._glossary_pending_rows = list(rows)
+        self._glossary_populate_index = 0
+        self._glossary_table_dirty = False
+        self._glossary_table_loading = True
+        table.clearContents()
+        table.setRowCount(0)
+        label.setText(f"共 {len(self._glossary_pending_rows)} 条术语，正在显示...")
+        self._set_glossary_table_editable(self.enable_glossary_cb.isChecked())
+        QTimer.singleShot(0, self._populate_glossary_table_chunk)
+
+    def _populate_glossary_table_chunk(self):
+        table = getattr(self, "glossary_table", None)
+        label = getattr(self, "glossary_summary_label", None)
+        if table is None or label is None:
+            return
+
+        rows = self._glossary_pending_rows
+        start = self._glossary_populate_index
+        if start >= len(rows):
+            label.setText(f"共 {len(rows)} 条术语")
+            self._glossary_table_loading = False
+            self._set_glossary_table_editable(self.enable_glossary_cb.isChecked())
+            return
+
+        end = min(start + 300, len(rows))
+        table.setUpdatesEnabled(False)
+        try:
+            table.setRowCount(end)
+            for row_idx in range(start, end):
+                for col_idx, value in enumerate(rows[row_idx]):
+                    item = QTableWidgetItem(value)
+                    item.setToolTip(value)
+                    table.setItem(row_idx, col_idx, item)
+        finally:
+            table.setUpdatesEnabled(True)
+
+        self._glossary_populate_index = end
+        label.setText(f"正在显示术语 {end}/{len(rows)}")
+        if end < len(rows):
+            QTimer.singleShot(0, self._populate_glossary_table_chunk)
+        else:
+            self._glossary_table_loading = False
+            self._glossary_table_dirty = False
+            self._set_glossary_table_editable(self.enable_glossary_cb.isChecked())
+            label.setText(f"共 {len(rows)} 条术语")
+
+    def _on_glossary_table_item_changed(self, item):
+        if self._glossary_table_loading:
+            return
+        if not self.enable_glossary_cb.isChecked():
+            return
+        self._glossary_table_dirty = True
+        save_btn = getattr(self, "glossary_save_btn", None)
+        if save_btn is not None:
+            save_btn.setEnabled(True)
+
+    def _save_glossary_table_edits(self):
+        if not self.enable_glossary_cb.isChecked():
+            QMessageBox.information(self, "提示", "请先勾选“启用术语表”，再编辑和保存术语。")
+            return
+
+        table = getattr(self, "glossary_table", None)
+        if table is None:
+            return
+
+        payload = {category: [] for category in GLOSSARY_CATEGORIES}
+        for row in range(table.rowCount()):
+            category = self._table_text(table, row, 0)
+            original = self._table_text(table, row, 1)
+            translation = self._table_text(table, row, 2)
+            info = self._table_text(table, row, 3)
+            if not original or not translation:
+                continue
+            if category not in GLOSSARY_CATEGORIES:
+                category = "Item"
+            entry = {"original": original, "translation": translation}
+            if info:
+                entry["info"] = info
+            payload[category].append(entry)
+
+        normalized, stats = JaZhTranslator.normalize_glossary_payload(payload)
+        JaZhTranslator._atomic_write_json(self._glossary_path(), normalized)
+        self._glossary_table_dirty = False
+        self._set_glossary_table_editable(True)
+        self._refresh_glossary_table()
+        QMessageBox.information(
+            self,
+            "完成",
+            f"术语表已保存\n有效术语: {stats.get('accepted', 0)}\n跳过重复/无效: {stats.get('skipped', 0)}\n冲突: {stats.get('conflicts', 0)}",
+        )
+
+    @staticmethod
+    def _table_text(table: QTableWidget, row: int, col: int) -> str:
+        item = table.item(row, col)
+        return item.text().strip() if item is not None else ""
+
+    def _set_glossary_importing(self, importing: bool):
+        default_texts = {
+            "glossary_import_page_btn": "增量导入 JSON",
+        }
+        for name, default_text in default_texts.items():
+            btn = getattr(self, name, None)
+            if btn is not None:
+                btn.setEnabled(not importing)
+                btn.setText("正在导入..." if importing else default_text)
+
+    def _clear_glossary_import_worker(self):
+        self.glossary_import_thread = None
+        self.glossary_import_worker = None
+        self._set_glossary_importing(False)
+
+    def _on_glossary_import_finished(self, added: int, skipped: int, conflicts: int, glossary_path: str, backup_path: str):
+        self._refresh_glossary_table()
+        QMessageBox.information(
+            self,
+            "完成",
+            f"术语表增量导入完成\n新增: {added}\n跳过(已存在): {skipped}\n冲突: {conflicts}\n目标: {glossary_path}\n备份: {backup_path}",
+        )
+
+    def _on_glossary_import_failed(self, detail: str):
+        QMessageBox.critical(self, "错误", f"术语表导入失败:\n{detail}")
+
     def import_glossary_json(self):
         path, _ = QFileDialog.getOpenFileName(self, "导入术语表 JSON", self.default_dir, "JSON files (*.json);;All files (*.*)")
         if not path:
             return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"读取 JSON 失败:\n{e}")
-            return
-        if not isinstance(payload, dict):
-            QMessageBox.critical(self, "错误", "术语表 JSON 顶层必须是对象")
+
+        if self.glossary_import_thread is not None:
+            QMessageBox.information(self, "正在导入", "术语表正在导入中，请等待当前任务完成。")
             return
 
-        normalized_glossary, import_stats = JaZhTranslator.normalize_glossary_payload(payload)
-        data_dir = get_data_dir()
-        glossary_path = data_dir / "glossary.json"
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        backup_path = data_dir / f"glossary.backup.before_import.{timestamp}.json"
+        self._set_glossary_importing(True)
+        self._on_status("正在后台导入术语表...")
+        thread = QThread(self)
+        worker = GlossaryImportWorker(path)
+        worker.moveToThread(thread)
 
-        try:
-            existing = JaZhTranslator._load_json(str(glossary_path), {}) if glossary_path.exists() else {}
-            if existing:
-                existing_normalized, _ = JaZhTranslator.normalize_glossary_payload(existing)
-                merged, merge_stats = JaZhTranslator.merge_glossaries(existing_normalized, normalized_glossary)
-            else:
-                merged = normalized_glossary
-                merge_stats = {
-                    "added": import_stats.get("accepted", 0),
-                    "skipped": import_stats.get("skipped", 0),
-                    "conflicts": import_stats.get("conflicts", 0),
-                }
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_glossary_import_finished)
+        worker.failed.connect(self._on_glossary_import_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_glossary_import_worker)
 
-            has_existing = glossary_path.exists()
-            if has_existing:
-                shutil.copy2(glossary_path, backup_path)
-            JaZhTranslator._atomic_write_json(glossary_path, merged)
-
-            added = merge_stats.get("added", 0)
-            skipped = merge_stats.get("skipped", 0)
-            conflicts = merge_stats.get("conflicts", 0)
-            QMessageBox.information(
-                self,
-                "完成",
-                f"术语表增量导入完成\n新增: {added}\n跳过(已存在): {skipped}\n冲突: {conflicts}\n目标: {glossary_path}\n备份: {backup_path if has_existing else 'N/A'}",
-            )
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"术语表导入失败:\n{e}")
+        self.glossary_import_thread = thread
+        self.glossary_import_worker = worker
+        thread.start()
 
     def _show_api_test_result(self, level: str, title: str, message: str):
         if level == "reset":
