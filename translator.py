@@ -313,6 +313,7 @@ class JaZhTranslator:
         enable_glossary: bool = True,
         preset: Optional[str] = None,  # 已弃用，保留签名以兼容 Tk UI
         enable_thinking: bool = False,
+        enable_proofread: bool = False,
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -407,6 +408,7 @@ class JaZhTranslator:
         self.session.mount("http://", adapter)
         self.extract_glossary = bool(extract_glossary)
         self.enable_thinking = bool(enable_thinking)
+        self.enable_proofread = bool(enable_proofread)
 
         # 加载提示词模板
         dict_dir = get_dict_dir()
@@ -427,6 +429,8 @@ class JaZhTranslator:
             "batch_json_parse_fail": 0,
             "truncation_continuation": 0,
             "glossary_new_terms_added": 0,
+            "proofread_suspicious": 0,
+            "proofread_fixed": 0,
         }
         logger.info(
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
@@ -526,6 +530,100 @@ class JaZhTranslator:
         if not isinstance(choice, dict):
             return None
         return choice.get("finish_reason")
+
+    @staticmethod
+    def _has_japanese_residue(text: str) -> bool:
+        """Detect kana residue in Chinese drafts. Han characters alone are not reliable."""
+        return bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", text or ""))
+
+    def _find_proofread_issues(self, src: str, dst: str) -> List[str]:
+        issues: List[str] = []
+        src = (src or "").strip()
+        dst = (dst or "").strip()
+        if not src or not dst:
+            return issues
+
+        if self._has_japanese_residue(dst):
+            issues.append("译文中疑似残留日文假名")
+
+        if self.enable_glossary:
+            for entry in self._select_glossary_entries(src, max_terms=30):
+                original = str(entry.get("original", "")).strip()
+                translation = str(entry.get("translation", "")).strip()
+                if original and translation and original in src and translation not in dst:
+                    issues.append(f"术语未按术语表翻译: {original} -> {translation}")
+        return issues
+
+    def _proofread_translation(self, src: str, draft: str, issues: List[str]) -> str:
+        """Ask the model to fix only detected translation/proper-noun issues."""
+        if not bool(getattr(self, "enable_proofread", False)) or not issues:
+            return draft
+
+        selected_entries = self._select_glossary_entries(src, max_terms=30)
+        glossary_text = self._build_glossary_text(selected_entries)
+        system_prompt = """你是日译中轻小说校对编辑。
+你的任务是修正中文初译中的明显问题，不做自由润色。
+必须遵守：
+1. 不新增剧情、不删除信息、不改变原意。
+2. 修正日文残留、漏译、明显错译。
+3. 专有名词必须按术语表翻译。
+4. 保持原段落结构，不输出解释。
+5. 只输出修正后的中文译文。"""
+        user_prompt = (
+            "【发现的问题】\n"
+            + "\n".join(f"- {issue}" for issue in issues)
+            + f"\n\n【术语表】\n{glossary_text}\n\n"
+            + f"【日文原文】\n{src}\n\n"
+            + f"【中文初译】\n{draft}\n"
+        )
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.1,
+        }
+        self._apply_provider_payload_options(payload)
+
+        for attempt in range(2):
+            if self.cancel_event.is_set():
+                raise RuntimeError("翻译已取消")
+            try:
+                self._inc_stat("api_requests_total")
+                resp = self.session.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.API_TIMEOUT,
+                )
+                if resp.status_code == 429:
+                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    if self.cancel_event.wait(wait_time):
+                        raise RuntimeError("翻译已取消")
+                    continue
+                if resp.status_code == 502:
+                    logger.warning("校对请求遇到 502，保留初译")
+                    return draft
+                resp.raise_for_status()
+                data = resp.json()
+                self._accumulate_usage_tokens(data)
+                choices = data.get("choices", [])
+                if not choices:
+                    return draft
+                message = choices[0].get("message", {})
+                revised = (message.get("content", "") or "").strip()
+                return revised or draft
+            except Exception as e:
+                logger.warning(f"译后校对失败: {e}")
+                if attempt == 1:
+                    return draft
+        return draft
 
     def _send_continuation_request(
         self,
@@ -1404,10 +1502,12 @@ JSON 顶层字段：
             return False
 
         def repair_batch_quality(batch: List[str], pairs: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
-            if len(pairs) <= 1:
+            enable_proofread = bool(getattr(self, "enable_proofread", False))
+            if len(pairs) <= 1 and not enable_proofread:
                 return pairs
 
             suspicious_idx = set()
+            proofread_issues: Dict[int, List[str]] = {}
             outputs = [((dst or "").strip()) for _, dst in pairs]
             dup_counter: Dict[str, int] = {}
             for out in outputs:
@@ -1420,21 +1520,41 @@ JSON 顶层字段：
                     continue
                 if clean_dst and dup_counter.get(clean_dst, 0) >= 3 and len(set(batch)) >= 3:
                     suspicious_idx.add(i)
+                    continue
+                if enable_proofread:
+                    issues = self._find_proofread_issues(src, clean_dst)
+                    if issues:
+                        proofread_issues[i] = issues
 
-            if not suspicious_idx:
+            if proofread_issues:
+                self._inc_stat("proofread_suspicious", len(proofread_issues))
+
+            all_repair_idx = suspicious_idx | set(proofread_issues)
+            if not all_repair_idx:
                 return pairs
 
-            logger.info(f"质检发现 {len(suspicious_idx)} 条可疑译文，准备单条重译: 索引={sorted(suspicious_idx)}")
+            logger.info(
+                f"质检发现 {len(all_repair_idx)} 条可疑译文，"
+                f"重译={sorted(suspicious_idx)}，校对={sorted(proofread_issues)}"
+            )
             repaired = list(pairs)
             fixed_count = 0
-            for i in sorted(suspicious_idx):
+            proofread_fixed = 0
+            for i in sorted(all_repair_idx):
                 src = batch[i]
                 try:
-                    repaired[i] = (src, self._translate_chunk(src))
+                    if enable_proofread and i in proofread_issues and i not in suspicious_idx:
+                        revised = self._proofread_translation(src, repaired[i][1], proofread_issues[i])
+                        repaired[i] = (src, revised)
+                        proofread_fixed += 1
+                    else:
+                        repaired[i] = (src, self._translate_chunk(src))
                     fixed_count += 1
                 except Exception as e:
                     logger.warning(f"质检重译失败 [{i}]: {e}")
-            logger.info(f"质检重译完成，成功修复 {fixed_count}/{len(suspicious_idx)} 条")
+            if proofread_fixed:
+                self._inc_stat("proofread_fixed", proofread_fixed)
+            logger.info(f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条")
             return repaired
 
         def translate_one_batch(batch: List[str]) -> List[Tuple[str, str]]:
@@ -1445,7 +1565,7 @@ JSON 顶层字段：
             if len(batch) == 1:
                 text = batch[0]
                 zh = self._translate_chunk(text)
-                return [(text, zh)]
+                return repair_batch_quality(batch, [(text, zh)])
 
             self._inc_stat("batch_total")
             # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。

@@ -34,6 +34,7 @@ class DummyTranslator(JaZhTranslator):
         self.enable_glossary = True
         self.extract_glossary = False
         self.enable_thinking = False
+        self.enable_proofread = False
         self.glossary_categories = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
         self._glossary_index = {}
         self.glossary = {}
@@ -53,6 +54,8 @@ class DummyTranslator(JaZhTranslator):
             "batch_split_mismatch": 0,
             "batch_json_parse_fail": 0,
             "truncation_continuation": 0,
+            "proofread_suspicious": 0,
+            "proofread_fixed": 0,
         }
         self.max_workers = 2
         self.batch_size = 4
@@ -123,6 +126,49 @@ class TranslatorTests(unittest.TestCase):
         t.model = "other-model"
         self.assertEqual(t.translate("A"), "other-model:A")
         self.assertEqual(calls["n"], 2)
+
+    def test_proofread_detects_japanese_residue(self):
+        t = DummyTranslator()
+        issues = t._find_proofread_issues("彼女は笑った。", "她は笑った。")
+        self.assertTrue(any("日文" in issue for issue in issues))
+
+    def test_proofread_detects_glossary_mismatch(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Person": [{"original": "アリス", "translation": "爱丽丝"}],
+            "Location": [],
+            "Org": [],
+            "Item": [],
+            "Skill": [],
+            "Creature": [],
+        }
+        issues = t._find_proofread_issues("アリスは王都へ行った。", "阿丽丝去了王都。")
+        self.assertTrue(any("アリス -> 爱丽丝" in issue for issue in issues))
+
+    def test_proofread_repairs_only_suspicious_translation(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.max_workers = 1
+        t.batch_size = 2
+        t.max_batch_length = 100
+        t.max_text_size_for_batch = 100
+        t._call_deepseek_batch_json = lambda batch, max_retries=2: BatchJsonResult(
+            translations=["她は笑った。", "她笑了。"],
+            new_terms=[],
+            missing_indices=[],
+            finish_reason="stop",
+        )
+        calls = {"n": 0}
+
+        def fake_proofread(src, draft, issues):
+            calls["n"] += 1
+            return "她笑了。"
+
+        t._proofread_translation = fake_proofread  # type: ignore
+        res = t.translate_batch(["彼女は笑った。", "彼女は笑った。二"], batch_size=2)
+        self.assertEqual(res["彼女は笑った。"], "她笑了。")
+        self.assertEqual(res["彼女は笑った。二"], "她笑了。")
+        self.assertEqual(calls["n"], 1)
 
     def test_fast_fail_502_not_swallowed(self):
         t = DummyTranslator()

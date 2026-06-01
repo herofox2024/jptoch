@@ -150,6 +150,7 @@ class TranslateConfig:
     api_timeout: int
     direction: str
     enable_thinking: bool
+    enable_proofread: bool
 
 
 class GlossaryImportWorker(QObject):
@@ -344,6 +345,7 @@ class TranslateWorker(QObject):
                 extract_glossary=cfg.extract_glossary,
                 enable_glossary=cfg.enable_glossary,
                 enable_thinking=cfg.enable_thinking,
+                enable_proofread=cfg.enable_proofread,
             )
             self.translator = translator
 
@@ -441,6 +443,9 @@ class TranslateWorker(QObject):
                 if mode == "single_anchor":
                     anchor = tag.find("a")
                     if anchor:
+                        for child in list(tag.contents):
+                            if child is not anchor:
+                                child.extract()
                         anchor.clear()
                         anchor.append(NavigableString(translated))
                         continue
@@ -1046,13 +1051,16 @@ class QtAppWindow(QWidget):
         self.enable_thinking_cb = CheckBox("开启深度思考")
         self.enable_thinking_cb.setChecked(False)
         self.enable_thinking_cb.stateChanged.connect(self._on_thinking_toggle_changed)
+        self.enable_proofread_cb = CheckBox("启用译后校对")
+        self.enable_proofread_cb.setChecked(False)
         row4_l.addWidget(BodyLabel("主题"))
         row4_l.addWidget(self.theme_combo)
         row4_l.addSpacing(16)
         row4_l.addWidget(self.enable_thinking_cb)
+        row4_l.addWidget(self.enable_proofread_cb)
         row4_l.addStretch(1)
         ui_card.layout().addLayout(row4_l)
-        ui_card.layout().addWidget(CaptionLabel("默认关闭深度思考；开启后可能更慢、成本更高。"))
+        ui_card.layout().addWidget(CaptionLabel("默认关闭深度思考和译后校对；译后校对只修正疑似日文残留、术语不一致等问题，会额外消耗 token。"))
         layout.addWidget(ui_card)
 
         layout.addStretch(1)
@@ -1388,6 +1396,7 @@ class QtAppWindow(QWidget):
             api_timeout=self.slider_api_timeout.value(),
             direction="zh" if self.dir_zh.isChecked() else "ja",
             enable_thinking=self.enable_thinking_cb.isChecked(),
+            enable_proofread=self.enable_proofread_cb.isChecked(),
         )
         if not cfg.inp or not os.path.exists(cfg.inp):
             QMessageBox.critical(self, "错误", "请选择有效的输入 EPUB")
@@ -1609,6 +1618,7 @@ class QtAppWindow(QWidget):
             "direction": "zh" if self.dir_zh.isChecked() else "ja",
             "enable_glossary": self.enable_glossary_cb.isChecked(),
             "extract_glossary": self.extract_glossary_cb.isChecked(),
+            "enable_proofread": self.enable_proofread_cb.isChecked(),
             "api_test_timeout_seconds": self.api_timeout_edit.text().strip(),
             "input_file": self.input_edit.text().strip(),
             "output_file": self.output_edit.text().strip(),
