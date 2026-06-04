@@ -637,7 +637,7 @@ class QtAppWindow(QWidget):
     def __init__(self):
         super().__init__()
         setTheme(Theme.LIGHT)
-        self.setWindowTitle("EPUB 日译中 V3.2betaV1版")
+        self.setWindowTitle("EPUB 日译中 V3.2.1版")
         self._setup_window_icon()
         self.resize(1140, 780)
         self.setMinimumSize(960, 680)
@@ -733,7 +733,7 @@ class QtAppWindow(QWidget):
         nav_layout.setContentsMargins(14, 18, 14, 14)
         nav_layout.setSpacing(10)
 
-        title = StrongBodyLabel("EPUB 日译中 V3.2betaV1版")
+        title = StrongBodyLabel("EPUB 日译中 V3.2.1版")
         nav_layout.addWidget(title)
         nav_layout.addWidget(CaptionLabel("Qt Fluent UI"))
 
