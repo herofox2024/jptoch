@@ -10,10 +10,11 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
     stats = {"accepted": 0, "skipped": 0, "conflicts": 0}
     seen_by_original: Dict[str, str] = {}
 
-    def _add_entry(src_raw: Any, dst_raw: Any, category: str = "Item", info_raw: Any = ""):
+    def _add_entry(src_raw: Any, dst_raw: Any, category: str = "Item", info_raw: Any = "", source_raw: Any = ""):
         src = str(src_raw).strip()
         dst = str(dst_raw).strip()
         info = str(info_raw).strip()
+        source = str(source_raw).strip()
         if not src or not dst:
             stats["skipped"] += 1
             return
@@ -29,6 +30,8 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
         entry = {"original": src, "translation": dst}
         if info:
             entry["info"] = info
+        if source:
+            entry["source"] = source
         normalized[category].append(entry)
         stats["accepted"] += 1
 
@@ -48,17 +51,20 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
                 src = item.get("original", item.get("src", ""))
                 dst = item.get("translation", item.get("dst", ""))
                 info = item.get("info", "")
-                _add_entry(src, dst, category=category, info_raw=info)
+                source = item.get("source", "")
+                _add_entry(src, dst, category=category, info_raw=info, source_raw=source)
         return normalized, stats
 
     for src, value in payload.items():
         if isinstance(value, dict):
             dst = value.get("dst", value.get("translation", ""))
             info = value.get("info", "")
+            source = value.get("source", "")
         else:
             dst = value
             info = ""
-        _add_entry(src, dst, category="Item", info_raw=info)
+            source = ""
+        _add_entry(src, dst, category="Item", info_raw=info, source_raw=source)
 
     return normalized, stats
 

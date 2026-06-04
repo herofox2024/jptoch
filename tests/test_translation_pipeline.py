@@ -165,10 +165,16 @@ class TranslatorTests(unittest.TestCase):
             return "她笑了。"
 
         t._proofread_translation = fake_proofread  # type: ignore
-        res = t.translate_batch(["彼女は笑った。", "彼女は笑った。二"], batch_size=2)
+        details = []
+        res = t.translate_batch(["彼女は笑った。", "彼女は笑った。二"], batch_size=2, proofread_callback=details.append)
         self.assertEqual(res["彼女は笑った。"], "她笑了。")
         self.assertEqual(res["彼女は笑った。二"], "她笑了。")
         self.assertEqual(calls["n"], 1)
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]["original"], "彼女は笑った。")
+        self.assertEqual(details[0]["draft"], "她は笑った。")
+        self.assertEqual(details[0]["revised"], "她笑了。")
+        self.assertTrue(details[0]["japanese_residue"])
 
     def test_fast_fail_502_not_swallowed(self):
         t = DummyTranslator()
@@ -217,17 +223,18 @@ class TranslatorTests(unittest.TestCase):
     def test_normalize_glossary_payload_flat_and_object(self):
         payload = {
             "勇者": "Hero",
-            "王都": {"dst": "Royal Capital", "info": "地名"},
+            "王都": {"dst": "Royal Capital", "info": "地名", "source": "manual"},
         }
         normalized, stats = JaZhTranslator.normalize_glossary_payload(payload)
         self.assertEqual(stats["accepted"], 2)
         self.assertEqual(stats["conflicts"], 0)
         self.assertEqual(len(normalized["Item"]), 2)
+        self.assertEqual(normalized["Item"][1]["source"], "manual")
 
     def test_normalize_glossary_payload_categorized_and_conflict_keep_old(self):
         payload = {
             "Person": [
-                {"original": "アリス", "translation": "爱丽丝"},
+                {"original": "アリス", "translation": "爱丽丝", "source": "auto"},
                 {"original": "アリス", "translation": "艾莉丝"},
             ],
             "Location": [{"src": "王都", "dst": "王都"}],
@@ -237,6 +244,7 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(stats["conflicts"], 1)
         self.assertEqual(stats["skipped"], 1)
         self.assertEqual(normalized["Person"][0]["translation"], "爱丽丝")
+        self.assertEqual(normalized["Person"][0]["source"], "auto")
 
     def test_atomic_write_json(self):
         with temp_test_dir() as d:

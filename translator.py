@@ -1429,6 +1429,7 @@ JSON 顶层字段：
         texts: List[str],
         progress_callback: Optional[Callable[[int, int], None]] = None,
         item_callback: Optional[Callable[[str, str], None]] = None,
+        proofread_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         batch_size: Optional[int] = None,
     ) -> Dict[str, str]:
         """并发批量翻译多个文本"""
@@ -1544,9 +1545,24 @@ JSON 顶层字段：
                 src = batch[i]
                 try:
                     if enable_proofread and i in proofread_issues and i not in suspicious_idx:
-                        revised = self._proofread_translation(src, repaired[i][1], proofread_issues[i])
+                        draft = repaired[i][1]
+                        issues = proofread_issues[i]
+                        revised = self._proofread_translation(src, draft, issues)
                         repaired[i] = (src, revised)
                         proofread_fixed += 1
+                        if proofread_callback:
+                            detail = {
+                                "original": src,
+                                "draft": draft,
+                                "revised": revised,
+                                "issues": issues,
+                                "japanese_residue": any("日文" in issue or "假名" in issue for issue in issues),
+                                "glossary_mismatch": any("术语" in issue for issue in issues),
+                            }
+                            try:
+                                proofread_callback(detail)
+                            except Exception as callback_error:
+                                logger.warning(f"译后校对详情回调失败: {callback_error}")
                     else:
                         repaired[i] = (src, self._translate_chunk(src))
                     fixed_count += 1
