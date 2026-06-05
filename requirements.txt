@@ -5,4 +5,4 @@ requests
 tkinterdnd2
 PyQt5
 PyQt-Fluent-Widgets
-
+PyYAML>=6.0

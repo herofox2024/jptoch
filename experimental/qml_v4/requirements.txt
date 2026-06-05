@@ -1,0 +1,6 @@
+﻿ebooklib
+beautifulsoup4
+lxml
+requests
+PySide6>=6.5
+PyYAML>=6.0

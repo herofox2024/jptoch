@@ -210,6 +210,7 @@ export DOUBAO_API_KEY=your-api-key
 - `cache_store.py`：缓存/JSON 读写（原子写入）
 - `text_utils.py`：文本可翻译性判断等公共工具
 - `requirements.txt`：依赖清单
+- `experimental/qml_v4/`：PySide6 + QML V4 实验版目录，当前不作为稳定发布入口
 
 ## 注意事项
 
@@ -240,6 +241,21 @@ export DOUBAO_API_KEY=your-api-key
   - 修复术语表在深色主题下一行黑一行白的问题。
   - 为表格补充深色/浅色主题下的背景色、交替行、文字、选中行、网格线和表头样式。
   - 修复 API Key 测试结果弹窗在深色主题下只部分应用深色样式的问题，弹窗背景、文字、按钮和 Windows 标题栏会尽量跟随深色主题。
+- **QML/V4 实验版隔离**：
+  - 将 PySide6 + QML V4 原型移动到 `experimental/qml_v4/`。
+  - `main_qt.py` + `ui/qt_app.py` 继续作为 V3.2.1 稳定主线。
+  - 主线依赖 `requirements.txt` 恢复为 PyQt5/qfluentwidgets 方向。
+  - QML/V4 实验版使用独立依赖文件 `experimental/qml_v4/requirements.txt`。
+  - 修复实验版 `main.py` 初始化顺序，先创建 `QApplication` 再创建 QML bridge。
+  - 修复术语页 `gbridge` 传参，避免页面切换后访问不到术语桥接器。
+  - 修复译后校对字段映射，兼容 `draft/revised` 与旧的 `before/after` 字段名。
+  - 修复术语表保存/导出丢失 `info/source` 字段的问题，并清理实验版 bridge 文件 BOM。
+  - 调整实验版左侧导航顺序为：任务、状态、API、术语表、设置，并为当前页面按钮绑定激活状态。
+  - 调整实验版“翻译设置”页面为可滚动布局，预设按钮和底部“界面与推理”选项支持换行，避免小窗口下底部设置被裁切。
+  - 修复实验版术语表无法稳定选中单条术语的问题，新增“选择”列并改为新数组刷新选中状态，避免整行点击遮挡单元格编辑。
+  - 接入实验版 `assets/logo.png`，用于 QML/V4 窗口图标，并在实验版 PyInstaller spec 中包含 assets 目录。
+  - 修复实验版 PyInstaller spec 中 `__file__` 不可用的问题，使用 `SPECPATH` 定位实验目录，并打包生成 `dist/EPUB日译中V4.0.exe`。
+  - 实验版入口和 spec 已改为子目录自洽，但仍需交互验证和补充 QML 测试覆盖后才能作为正式主线。
 
 #### 术语表增强
 
