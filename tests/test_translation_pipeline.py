@@ -77,17 +77,21 @@ class TranslatorTests(unittest.TestCase):
 
     def test_translate_batch_dedup(self):
         t = DummyTranslator()
+        t.max_workers = 1
         calls = {"n": 0}
+        progress = []
 
         def fake_call(text, max_retries=3, text_separator=None):
             calls["n"] += 1
             return f"ZH:{text}"
 
         t._call_deepseek = fake_call  # type: ignore
-        res = t.translate_batch(["A", "A", "B"], batch_size=1)
+        res = t.translate_batch(["A", "A", "B"], batch_size=1, progress_callback=lambda done, total: progress.append((done, total)))
         self.assertEqual(res["A"], "ZH:A")
         self.assertEqual(res["B"], "ZH:B")
         self.assertEqual(calls["n"], 2)
+        self.assertIn((2, 3), progress)
+        self.assertEqual(progress[-1], (3, 3))
 
     def test_cancel_event(self):
         t = DummyTranslator()
@@ -145,6 +149,22 @@ class TranslatorTests(unittest.TestCase):
         issues = t._find_proofread_issues("アリスは王都へ行った。", "阿丽丝去了王都。")
         self.assertTrue(any("アリス -> 爱丽丝" in issue for issue in issues))
 
+    def test_proofread_ignores_punctuation_only_glossary_terms(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Person": [],
+            "Location": [],
+            "Org": [],
+            "Item": [
+                {"original": "「", "translation": "「"},
+                {"original": "」", "translation": "」"},
+            ],
+            "Skill": [],
+            "Creature": [],
+        }
+        issues = t._find_proofread_issues("「待ってくれ。」", "等等。")
+        self.assertEqual(issues, [])
+
     def test_proofread_repairs_only_suspicious_translation(self):
         t = DummyTranslator()
         t.enable_proofread = True
@@ -175,6 +195,31 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(details[0]["draft"], "她は笑った。")
         self.assertEqual(details[0]["revised"], "她笑了。")
         self.assertTrue(details[0]["japanese_residue"])
+
+    def test_proofread_falls_back_to_single_retranslate_when_japanese_remains(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.max_workers = 1
+        t.batch_size = 2
+        t.max_batch_length = 100
+        t.max_text_size_for_batch = 100
+        t._call_deepseek_batch_json = lambda batch, max_retries=2: BatchJsonResult(
+            translations=["彼女は笑った。", "她点头。"],
+            new_terms=[],
+            missing_indices=[],
+            finish_reason="stop",
+        )
+        t._proofread_translation = lambda src, draft, issues: draft  # type: ignore
+        t._translate_chunk = lambda src: "她笑了。"  # type: ignore
+        details = []
+
+        res = t.translate_batch(["彼女は笑った。", "彼女は頷いた。"], batch_size=2, proofread_callback=details.append)
+
+        self.assertEqual(res["彼女は笑った。"], "她笑了。")
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]["draft"], "彼女は笑った。")
+        self.assertEqual(details[0]["revised"], "她笑了。")
+        self.assertTrue(any("单条重译" in issue for issue in details[0]["issues"]))
 
     def test_fast_fail_502_not_swallowed(self):
         t = DummyTranslator()

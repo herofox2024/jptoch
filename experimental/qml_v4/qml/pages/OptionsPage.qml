@@ -2,14 +2,17 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import ".."
 
 Page {
     id: page
     padding: 0
+    background: Item {}
     property var cfg: null
 
     property string activePreset: "custom"
     property bool applyingPreset: false
+    readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     Flickable {
         id: settingsScroll
@@ -30,7 +33,9 @@ Page {
 
             Label {
                 text: "翻译设置"
-                font.pixelSize: 24
+                color: AppPalette.textColor
+                font.family: page.titleFont
+                font.pixelSize: 28
                 font.weight: Font.DemiBold
             }
 
@@ -238,7 +243,7 @@ Page {
                         id: presetHint
                         text: "点击上方预设应用推荐参数"
                         font.pixelSize: 12
-                        color: Material.theme === Material.Dark ? "#999999" : "#666666"
+                        color: AppPalette.mutedText
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -273,10 +278,10 @@ Page {
 
                     Label { text: "主题:" }
                     ComboBox {
-                        model: ["浅色", "深色"]
-                        currentIndex: (cfg && cfg.theme === "dark") ? 1 : 0
-                        onCurrentIndexChanged: {
-                            if (cfg) cfg.theme = currentIndex === 1 ? "dark" : "light"
+                        model: ["浅色纸感", "深色墨色", "iOS26 玻璃"]
+                        currentIndex: page.themeIndex(cfg ? cfg.theme : "light")
+                        onActivated: function(index) {
+                            if (cfg) cfg.theme = page.themeFromIndex(index)
                         }
                     }
                     CheckBox {
@@ -324,5 +329,17 @@ Page {
     function markCustom() {
         page.activePreset = "custom"
         presetHint.text = "参数已手动修改，当前为自定义性能参数"
+    }
+
+    function themeIndex(theme) {
+        if (theme === "dark") return 1
+        if (theme === "glass") return 2
+        return 0
+    }
+
+    function themeFromIndex(index) {
+        if (index === 1) return "dark"
+        if (index === 2) return "glass"
+        return "light"
     }
 }

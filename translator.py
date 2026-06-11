@@ -536,6 +536,22 @@ class JaZhTranslator:
         """Detect kana residue in Chinese drafts. Han characters alone are not reliable."""
         return bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", text or ""))
 
+    @staticmethod
+    def _is_meaningful_glossary_term(original: str, translation: str) -> bool:
+        """Ignore punctuation-only glossary entries in proofreading checks."""
+        semantic_pattern = r"[A-Za-z0-9\u3040-\u30ff\u31f0-\u31ff\u3400-\u9fff]"
+        return bool(re.search(semantic_pattern, original or "")) and bool(re.search(semantic_pattern, translation or ""))
+
+    def _select_proofread_glossary_entries(self, src: str, max_terms: int = 30) -> List[Dict[str, str]]:
+        entries = self._select_glossary_entries(src, max_terms=max_terms)
+        filtered = []
+        for entry in entries:
+            original = str(entry.get("original", "")).strip()
+            translation = str(entry.get("translation", "")).strip()
+            if self._is_meaningful_glossary_term(original, translation):
+                filtered.append(entry)
+        return filtered
+
     def _find_proofread_issues(self, src: str, dst: str) -> List[str]:
         issues: List[str] = []
         src = (src or "").strip()
@@ -547,7 +563,7 @@ class JaZhTranslator:
             issues.append("译文中疑似残留日文假名")
 
         if self.enable_glossary:
-            for entry in self._select_glossary_entries(src, max_terms=30):
+            for entry in self._select_proofread_glossary_entries(src, max_terms=30):
                 original = str(entry.get("original", "")).strip()
                 translation = str(entry.get("translation", "")).strip()
                 if original and translation and original in src and translation not in dst:
@@ -559,7 +575,7 @@ class JaZhTranslator:
         if not bool(getattr(self, "enable_proofread", False)) or not issues:
             return draft
 
-        selected_entries = self._select_glossary_entries(src, max_terms=30)
+        selected_entries = self._select_proofread_glossary_entries(src, max_terms=30)
         glossary_text = self._build_glossary_text(selected_entries)
         system_prompt = """你是日译中轻小说校对编辑。
 你的任务是修正中文初译中的明显问题，不做自由润色。
@@ -1441,6 +1457,7 @@ JSON 顶层字段：
         effective_batch_size = batch_size if batch_size is not None else self.batch_size
 
         uncached_unique: List[str] = []
+        pending_counts: Dict[str, int] = {}
         seen_uncached = set()
 
         with self._cache_lock:
@@ -1449,9 +1466,11 @@ JSON 顶层字段：
                 if cache_key in self.cache:
                     results[text] = self.cache[cache_key]
                     completed += 1
-                elif text not in seen_uncached:
-                    uncached_unique.append(text)
-                    seen_uncached.add(text)
+                else:
+                    pending_counts[text] = pending_counts.get(text, 0) + 1
+                    if text not in seen_uncached:
+                        uncached_unique.append(text)
+                        seen_uncached.add(text)
 
         logger.info(f"批量翻译: {total} 条，缓存命中 {completed} 条，待翻译去重后 {len(uncached_unique)} 条")
 
@@ -1546,8 +1565,16 @@ JSON 顶层字段：
                 try:
                     if enable_proofread and i in proofread_issues and i not in suspicious_idx:
                         draft = repaired[i][1]
-                        issues = proofread_issues[i]
+                        issues = list(proofread_issues[i])
                         revised = self._proofread_translation(src, draft, issues)
+                        if any("日文" in issue or "假名" in issue for issue in issues) and self._has_japanese_residue(revised):
+                            try:
+                                fallback_revised = self._translate_chunk(src)
+                                if fallback_revised:
+                                    revised = fallback_revised
+                                issues.append("校对后仍残留日文，已回退单条重译")
+                            except Exception as fallback_error:
+                                logger.warning(f"校对后单条重译失败 [{i}]: {fallback_error}")
                         repaired[i] = (src, revised)
                         proofread_fixed += 1
                         if proofread_callback:
@@ -1659,7 +1686,7 @@ JSON 顶层字段：
                             with self._cache_lock:
                                 self.cache[self._cache_key(original)] = translated
                             results[original] = translated
-                            completed += 1
+                            completed += pending_counts.get(original, 1)
                             if item_callback:
                                 item_callback(original, translated)
                             if progress_callback:
@@ -1680,7 +1707,7 @@ JSON 顶层字段：
                             except Exception as e2:
                                 logger.error(f"翻译失败: {e2}")
                                 results[text] = text
-                            completed += 1
+                            completed += pending_counts.get(text, 1)
                             if item_callback:
                                 item_callback(text, results[text])
                             if progress_callback:
@@ -1698,6 +1725,9 @@ JSON 顶层字段：
                     cached = self.cache.get(self._cache_key(text))
                 if cached is not None:
                     results[text] = cached
+
+        if progress_callback and completed < total:
+            progress_callback(total, total)
 
         return results
 

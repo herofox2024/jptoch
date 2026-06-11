@@ -13,7 +13,7 @@ if str(EXPERIMENT_DIR) not in sys.path:
     sys.path.insert(0, str(EXPERIMENT_DIR))
 
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
@@ -36,6 +36,14 @@ def _find_logo_path():
     return None
 
 
+def _choose_font_family(candidates, fallback="Microsoft YaHei UI"):
+    available = set(QFontDatabase.families())
+    for family in candidates:
+        if family in available:
+            return family
+    return fallback
+
+
 def main():
     setup_logging()
     get_dict_dir()
@@ -44,6 +52,29 @@ def main():
     app.setApplicationName("EPUB 日译中")
     app.setApplicationDisplayName("EPUB 日译中 V4.0")
     app.setOrganizationName("epub-translator")
+
+    sans_font = _choose_font_family(
+        [
+            "HarmonyOS Sans SC",
+            "Microsoft YaHei UI",
+            "Microsoft YaHei",
+            "Noto Sans SC",
+            "Noto Sans CJK SC",
+            "LXGW WenKai Screen",
+            "霞鹜文楷屏幕阅读版",
+        ]
+    )
+    title_font = _choose_font_family(
+        [
+            "HarmonyOS Sans SC",
+            "Microsoft YaHei UI",
+            "Microsoft YaHei",
+            "Noto Sans SC",
+            "Noto Sans CJK SC",
+        ],
+        fallback=sans_font,
+    )
+    app.setFont(QFont(sans_font, 10))
 
     config_bridge = ConfigBridge()
     translate_bridge = TranslateBridge()
@@ -63,6 +94,10 @@ def main():
     ctx.setContextProperty("TranslateBridge", translate_bridge)
     ctx.setContextProperty("GlossaryBridge", glossary_bridge)
     ctx.setContextProperty("AppDir", str(EXPERIMENT_DIR))
+    ctx.setContextProperty("AppFontSans", sans_font)
+    ctx.setContextProperty("AppFontTitle", title_font)
+    # Keep the old QML property name for compatibility; this is now a stable title font.
+    ctx.setContextProperty("AppFontSerif", title_font)
 
     qml_dir = EXPERIMENT_DIR / "qml"
     qml_file = qml_dir / "main.qml"

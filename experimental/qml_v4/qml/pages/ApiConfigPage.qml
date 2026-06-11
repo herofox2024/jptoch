@@ -1,10 +1,14 @@
-﻿import QtQuick
+import QtQuick
+import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import ".."
 
 Page {
     id: page
     padding: 24
+    background: Item {}
+
     property var cfg: null
 
     property var providerKeys: ["deepseek", "doubao", "sakura", "gemini", "glm", "custom"]
@@ -22,6 +26,7 @@ Page {
     property bool isCustom: currentProvider === "custom"
     property bool needsKey: currentProvider !== "sakura"
     property bool testing: false
+    readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     Connections {
         target: TranslateBridge
@@ -33,93 +38,157 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 16
+        spacing: 18
 
-        Label { text: "API 接口配置"; font.pixelSize: 24; font.weight: Font.DemiBold }
-
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            Label { text: "供应商:"; Layout.preferredWidth: 80 }
-            ComboBox {
-                id: providerCombo; Layout.fillWidth: true
-                model: providerLabels
-                currentIndex: providerKeys.indexOf(page.currentProvider)
-                onCurrentIndexChanged: {
-                    var key = providerKeys[currentIndex]
-                    if (cfg) cfg.setProvider(key)
-                    page.currentProvider = key
-                    page.isCustom = (key === "custom")
-                    page.needsKey = (key !== "sakura")
-                    page.connectionResult = ""
+            spacing: 2
+            Label {
+                text: "API 接口配置"
+                color: AppPalette.textColor
+                font.family: page.titleFont
+                font.pixelSize: 28
+                font.weight: Font.DemiBold
+            }
+            Label {
+                text: "选择翻译模型供应商，并测试当前 API 配置是否可用。"
+                color: AppPalette.mutedText
+                font.pixelSize: 13
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: apiFormGrid.implicitHeight + 44
+            Layout.minimumHeight: apiFormGrid.implicitHeight + 44
+            radius: AppPalette.radiusLarge
+            color: AppPalette.surfaceRaised
+            border.color: AppPalette.borderColor
+
+            GridLayout {
+                id: apiFormGrid
+                anchors.fill: parent
+                anchors.margins: 22
+                columns: 2
+                rowSpacing: 14
+                columnSpacing: 16
+
+                FieldLabel { text: "供应商" }
+                ComboBox {
+                    id: providerCombo
+                    Layout.fillWidth: true
+                    model: providerLabels
+                    currentIndex: Math.max(0, providerKeys.indexOf(page.currentProvider))
+                    onCurrentIndexChanged: {
+                        if (currentIndex < 0) return
+                        var key = providerKeys[currentIndex]
+                        if (cfg) cfg.setProvider(key)
+                        page.currentProvider = key
+                        page.isCustom = (key === "custom")
+                        page.needsKey = (key !== "sakura")
+                        page.connectionResult = ""
+                    }
+                }
+
+                FieldLabel { text: "API Key" }
+                TextField {
+                    id: apiKeyField
+                    Layout.fillWidth: true
+                    echoMode: TextInput.Password
+                    placeholderText: page.needsKey ? "请输入 API Key" : "本地模型无需 API Key"
+                    text: cfg ? cfg.apiKey : ""
+                    enabled: page.needsKey
+                    selectByMouse: true
+                    onTextChanged: { if (cfg) cfg.apiKey = text }
+                }
+
+                FieldLabel { text: "API URL" }
+                TextField {
+                    id: urlField
+                    Layout.fillWidth: true
+                    placeholderText: "https://api.xxx.com/chat/completions"
+                    text: cfg ? cfg.apiUrl : ""
+                    enabled: page.isCustom
+                    selectByMouse: true
+                    onTextChanged: { if (cfg && page.isCustom) cfg.apiUrl = text }
+                }
+
+                FieldLabel { text: "Model" }
+                TextField {
+                    id: modelField
+                    Layout.fillWidth: true
+                    placeholderText: "model-name"
+                    text: cfg ? cfg.model : ""
+                    selectByMouse: true
+                    onTextChanged: { if (cfg) cfg.model = text }
+                }
+
+                FieldLabel { text: "超时(秒)" }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    SpinBox {
+                        id: testTimeout
+                        from: 1
+                        to: 300
+                        value: 15
+                        editable: true
+                    }
+                    Button {
+                        text: page.testing ? "测试中..." : "测试连接"
+                        highlighted: true
+                        enabled: !page.testing
+                        onClicked: {
+                            if (!cfg) return
+                            page.connectionResult = "测试中..."
+                            page.testing = true
+                            TranslateBridge.testConnection(cfg.apiKey, cfg.apiUrl, cfg.model, testTimeout.value)
+                        }
+                    }
                 }
             }
         }
 
-        RowLayout {
+        Rectangle {
             Layout.fillWidth: true
-            Label { text: "API Key:"; Layout.preferredWidth: 80 }
-            TextField {
-                id: apiKeyField
-                Layout.fillWidth: true; echoMode: TextInput.Password
-                placeholderText: page.needsKey ? "请输入 API Key" : "本地模型无需 API Key"
-                text: cfg ? cfg.apiKey : ""
-                enabled: page.needsKey
-                onTextChanged: { if (cfg) cfg.apiKey = text }
-            }
-        }
+            Layout.preferredHeight: page.connectionResult !== "" ? 104 : 74
+            radius: AppPalette.radiusLarge
+            color: AppPalette.cardBg
+            border.color: AppPalette.borderColor
 
-        RowLayout {
-            Layout.fillWidth: true
-            Label { text: "API URL:"; Layout.preferredWidth: 80 }
-            TextField {
-                id: urlField
-                Layout.fillWidth: true; placeholderText: "https://api.xxx.com/chat/completions"
-                text: cfg ? cfg.apiUrl : ""
-                enabled: page.isCustom
-                onTextChanged: { if (cfg && page.isCustom) cfg.apiUrl = text }
-            }
-        }
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 8
 
-        RowLayout {
-            Layout.fillWidth: true
-            Label { text: "Model:"; Layout.preferredWidth: 80 }
-            TextField {
-                id: modelField
-                Layout.fillWidth: true; placeholderText: "model-name"
-                text: cfg ? cfg.model : ""
-                onTextChanged: { if (cfg) cfg.model = text }
-            }
-        }
+                Label {
+                    Layout.fillWidth: true
+                    text: page.providerHints[page.currentProvider] || ""
+                    color: AppPalette.mutedText
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 12
+                }
 
-        RowLayout {
-            spacing: 12
-            Label { text: "超时(秒):"; Layout.preferredWidth: 80 }
-            SpinBox { id: testTimeout; from: 1; to: 300; value: 15 }
-            Button {
-                text: page.testing ? "测试中..." : "测试连接"
-                highlighted: true; enabled: !page.testing
-                onClicked: {
-                    if (!cfg) return
-                    page.connectionResult = "测试中..."
-                    page.testing = true
-                    TranslateBridge.testConnection(cfg.apiKey, cfg.apiUrl, cfg.model, testTimeout.value)
+                Label {
+                    Layout.fillWidth: true
+                    text: page.connectionResult
+                    visible: page.connectionResult !== ""
+                    color: page.connectionResult.includes("成功") ? AppPalette.successColor : AppPalette.errorColor
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
                 }
             }
-        }
-
-        Label {
-            text: page.connectionResult
-            visible: page.connectionResult !== ""
-            font.pixelSize: 13
-            color: page.connectionResult.includes("成功") ? "#4caf50" : "#e53935"
-            wrapMode: Text.WordWrap; Layout.fillWidth: true
-        }
-
-        Label {
-            text: page.providerHints[page.currentProvider] || ""
-            font.pixelSize: 12; color: (Material.theme === Material.Dark ? "#999999" : "#666666"); wrapMode: Text.WordWrap; Layout.fillWidth: true
         }
 
         Item { Layout.fillHeight: true }
+    }
+
+    component FieldLabel: Label {
+        Layout.preferredWidth: 90
+        color: AppPalette.textColor
+        font.pixelSize: 13
+        font.weight: Font.DemiBold
+        verticalAlignment: Text.AlignVCenter
     }
 }

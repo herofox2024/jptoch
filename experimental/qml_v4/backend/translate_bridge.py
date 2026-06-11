@@ -4,6 +4,7 @@
 """
 
 import os
+import math
 import threading
 import time
 import traceback
@@ -48,13 +49,49 @@ def _unique_epub_path(path):
     return p.with_name(f'{p.stem}_{int(time.time())}{p.suffix}')
 
 
+def _format_duration(seconds):
+    seconds = max(0, int(math.ceil(seconds)))
+    if seconds < 60:
+        return "不足 1 分钟" if seconds < 30 else f"约 {seconds} 秒"
+    minutes = int(math.ceil(seconds / 60))
+    if minutes < 60:
+        return f"约 {minutes} 分钟"
+    hours = minutes // 60
+    remain_minutes = minutes % 60
+    if remain_minutes:
+        return f"约 {hours} 小时 {remain_minutes} 分钟"
+    return f"约 {hours} 小时"
+
+
+def _estimate_translation_duration(total_chars, total_texts, cfg):
+    provider = str(cfg.get("provider", "") or "").lower()
+    provider_profile = {
+        "deepseek": {"batch_seconds": 2.0, "chars_per_second": 120.0},
+        "doubao": {"batch_seconds": 2.5, "chars_per_second": 90.0},
+        "glm": {"batch_seconds": 4.0, "chars_per_second": 35.0},
+        "gemini": {"batch_seconds": 6.0, "chars_per_second": 30.0},
+        "sakura": {"batch_seconds": 1.5, "chars_per_second": 80.0},
+        "custom": {"batch_seconds": 3.0, "chars_per_second": 60.0},
+    }
+    profile = provider_profile.get(provider, provider_profile["custom"])
+    batch_size = max(1, int(cfg.get("batch_size") or 1))
+    max_workers = max(1, int(cfg.get("max_workers") or 1))
+    estimated_batches = max(1, math.ceil(max(1, total_texts) / batch_size))
+    active_workers = min(max_workers, estimated_batches)
+    effective_workers = 1.0 + max(0, active_workers - 1) * 0.65
+    batch_seconds = estimated_batches * profile["batch_seconds"] / effective_workers
+    char_seconds = max(1, total_chars) / max(1.0, profile["chars_per_second"] * effective_workers)
+    overhead_seconds = max(10.0, total_texts * 0.02)
+    return max(batch_seconds, char_seconds) + overhead_seconds
+
+
 
 class _TranslateWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
     progressChanged = Signal(int, int, int)
     itemTranslated = Signal(str, str)
-    proofreadDetail = Signal(str, str, str)
+    proofreadDetail = Signal(str, str, str, str, bool, bool, bool)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
     errorDetail = Signal(str)
@@ -122,7 +159,8 @@ class _TranslateWorker(QObject):
 
             total_chars = sum(len(t) for t in all_texts) or 1
             total_texts = len(all_texts)
-            self.statusChanged.emit(f"开始翻译 文本块:{total_texts} 字符:{total_chars}")
+            estimated_seconds = _estimate_translation_duration(total_chars, total_texts, cfg)
+            self.statusChanged.emit(f"开始翻译 预计翻译时长: {_format_duration(estimated_seconds)}")
 
             def _emit_stat(completed, total):
                 stats = translator.get_stats() if translator else {}
@@ -147,10 +185,20 @@ class _TranslateWorker(QObject):
                 self.itemTranslated.emit(src, dst)
 
             def on_proofread_detail(detail):
+                issues = detail.get("issues") or []
+                if isinstance(issues, str):
+                    issues = [issues]
+                reason = "；".join(str(issue) for issue in issues if str(issue).strip()) or "-"
+                draft = str(detail.get("draft", detail.get("before", "")))
+                revised = str(detail.get("revised", detail.get("after", "")))
                 self.proofreadDetail.emit(
                     str(detail.get("original", "")),
-                    str(detail.get("draft", detail.get("before", ""))),
-                    str(detail.get("revised", detail.get("after", ""))),
+                    draft,
+                    revised,
+                    reason,
+                    bool(detail.get("japanese_residue", False)),
+                    bool(detail.get("glossary_mismatch", False)),
+                    draft.strip() != revised.strip(),
                 )
 
             results = translator.translate_batch(
@@ -240,6 +288,7 @@ class _TranslateWorker(QObject):
             except Exception:
                 pass
 
+            on_progress(total_texts, total_texts)
             translator.flush_cache()
             self.finished.emit(final_out)
 
@@ -310,7 +359,7 @@ class TranslateBridge(QObject):
 
     progressChanged = Signal(int, int, int)
     itemTranslated = Signal(str, str)
-    proofreadDetail = Signal(str, str, str)
+    proofreadDetail = Signal(str, str, str, str, bool, bool, bool)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
     finished = Signal(str)

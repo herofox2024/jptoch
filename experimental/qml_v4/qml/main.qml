@@ -1,22 +1,47 @@
-﻿import QtQuick
+import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import "."
 import "pages"
 
 ApplicationWindow {
     id: appWindow
     visible: true
-    width: 1100; height: 750
-    minimumWidth: 900; minimumHeight: 600
+    width: 1180
+    height: 780
+    minimumWidth: 940
+    minimumHeight: 640
     title: "EPUB 日译中 V4.0"
+    font.family: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
+
+    readonly property string uiFont: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
+    readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : uiFont
+    readonly property string themeMode: cfg ? cfg.theme : "light"
+    readonly property bool glassMode: themeMode === "glass"
+    readonly property bool darkMode: themeMode === "dark"
 
     property var cfg: ConfigBridge
     property var tbridge: TranslateBridge
     property var gbridge: GlossaryBridge
 
-    Material.theme: cfg && cfg.theme === "dark" ? Material.Dark : Material.Light
-    Material.accent: Material.Indigo; Material.primary: Material.Indigo
+    Material.theme: appWindow.darkMode ? Material.Dark : Material.Light
+    Material.accent: AppPalette.accentColor
+    Material.primary: AppPalette.accentColor
+
+    Binding {
+        target: AppPalette
+        property: "themeMode"
+        value: appWindow.themeMode
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
+        target: AppPalette
+        property: "darkMode"
+        value: appWindow.darkMode
+        restoreMode: Binding.RestoreNone
+    }
 
     Connections {
         target: cfg
@@ -24,9 +49,8 @@ ApplicationWindow {
         ignoreUnknownSignals: true
     }
 
-    readonly property color hintColor: Material.theme === Material.Dark ? "#aaaaaa" : "#888888"
+    readonly property color hintColor: AppPalette.mutedText
 
-    // --- Page switch animation ---
     function switchPage(index) {
         if (pageStack.currentIndex === index) return
         var wasVisible = false
@@ -45,7 +69,6 @@ ApplicationWindow {
             fadeInAnim.target = newPage
             fadeInAnim.start()
         } else if (!wasVisible) {
-            // First load: just show
             var np = pageStack.children[index]
             if (np && np.opacity !== undefined) np.opacity = 1.0
         }
@@ -54,55 +77,443 @@ ApplicationWindow {
     NumberAnimation { id: fadeOutAnim; property: "opacity"; to: 0.0; duration: 120; easing.type: Easing.OutCubic }
     NumberAnimation { id: fadeInAnim; property: "opacity"; to: 1.0; duration: 180; easing.type: Easing.OutCubic }
 
-    header: ToolBar {
-        Material.elevation: 2
+    background: Rectangle {
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: AppPalette.background }
+            GradientStop { position: 1.0; color: AppPalette.backgroundAlt }
+        }
+        Rectangle {
+            width: 520
+            height: 520
+            radius: 260
+            x: parent.width - width * 0.42
+            y: -180
+            color: appWindow.glassMode ? AppPalette.glassGlowCyan : AppPalette.accentSoft
+            opacity: appWindow.glassMode ? 0.72 : (AppPalette.dark ? 0.24 : 0.55)
+        }
+        Rectangle {
+            width: 360
+            height: 360
+            radius: 180
+            x: -150
+            y: parent.height - 230
+            color: appWindow.glassMode ? AppPalette.glassGlowAmber : AppPalette.amberColor
+            opacity: appWindow.glassMode ? 0.62 : (AppPalette.dark ? 0.08 : 0.12)
+        }
+        Rectangle {
+            visible: appWindow.glassMode
+            width: 420
+            height: 420
+            radius: 210
+            x: parent.width * 0.46
+            y: parent.height * 0.18
+            rotation: -18
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.48) }
+                GradientStop { position: 1.0; color: Qt.rgba(0.74, 0.91, 0.95, 0.04) }
+            }
+            opacity: 0.54
+        }
+    }
+
+    header: Rectangle {
+        height: 68
+        color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.52) : AppPalette.surface
+        border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.72) : AppPalette.lineColor
+        border.width: 1
+
+        Rectangle {
+            visible: appWindow.glassMode
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: Qt.rgba(1, 1, 1, 0.80)
+        }
+
+        Rectangle {
+            visible: appWindow.glassMode
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: Qt.rgba(0.20, 0.42, 0.43, 0.18)
+        }
+
         RowLayout {
-            anchors.fill: parent; anchors.leftMargin: 16
-            Label { text: "EPUB 日译中"; font.pixelSize: 18; font.weight: Font.DemiBold; color: Material.accent }
-            Label { text: "V4.0 · Material 3"; font.pixelSize: 12; color: hintColor; Layout.leftMargin: 8 }
+            anchors.fill: parent
+            anchors.leftMargin: 20
+            anchors.rightMargin: 20
+            spacing: 12
+
+            Rectangle {
+                Layout.preferredWidth: 38
+                Layout.preferredHeight: 38
+                radius: 12
+                color: appWindow.glassMode ? Qt.rgba(0.05, 0.43, 0.45, 0.88) : AppPalette.accentColor
+                border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.48) : "transparent"
+                Label {
+                    anchors.centerIn: parent
+                    text: "译"
+                    color: "white"
+                    font.family: appWindow.titleFont
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                }
+            }
+
+            ColumnLayout {
+                spacing: 0
+                Label {
+                    text: "EPUB 日译中"
+                    color: AppPalette.textColor
+                    font.family: appWindow.titleFont
+                    font.pixelSize: 19
+                    font.weight: Font.DemiBold
+                }
+                Label {
+                    text: "轻小说翻译工作台 · PySide6/QML 实验版"
+                    color: AppPalette.mutedText
+                    font.pixelSize: 12
+                }
+            }
+
             Item { Layout.fillWidth: true }
+
+            Rectangle {
+                Layout.preferredWidth: 124
+                Layout.minimumWidth: 124
+                Layout.preferredHeight: 32
+                radius: 16
+                color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.44) : AppPalette.accentSoft
+                border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.62) : AppPalette.borderColor
+                Label {
+                    anchors.centerIn: parent
+                    text: appWindow.glassMode ? "V4.0 玻璃" : "V4.0 实验"
+                    color: AppPalette.accentColor
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                }
+            }
         }
     }
 
     RowLayout {
-        anchors.fill: parent; spacing: 0
-        Pane {
-            Layout.preferredWidth: 80; Layout.fillHeight: true; padding: 0; Material.elevation: 1
+        anchors.fill: parent
+        spacing: 0
+
+        Rectangle {
+            Layout.preferredWidth: 168
+            Layout.fillHeight: true
+            border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.26) : (AppPalette.dark ? "#223934" : "#244a4b")
+            border.width: 1
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: AppPalette.navBg }
+                GradientStop { position: 1.0; color: AppPalette.navBgAlt }
+            }
+
+            Rectangle {
+                visible: appWindow.glassMode
+                anchors.fill: parent
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.15) }
+                    GradientStop { position: 0.38; color: Qt.rgba(1, 1, 1, 0.03) }
+                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.10) }
+                }
+            }
+
+            Rectangle {
+                visible: appWindow.glassMode
+                width: 130
+                height: 130
+                radius: 65
+                x: -42
+                y: 64
+                color: Qt.rgba(1, 1, 1, 0.12)
+            }
+
             ColumnLayout {
-                anchors.centerIn: parent; spacing: 4
-                NavButton { iconText: "📄"; label: "任务"; pageIndex: 0 }
-                NavButton { iconText: "📊"; label: "状态"; pageIndex: 1 }
-                NavButton { iconText: "☁️"; label: "API"; pageIndex: 2 }
-                NavButton { iconText: "📖"; label: "术语表"; pageIndex: 3 }
-                NavButton { iconText: "⚙️"; label: "设置"; pageIndex: 4 }
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 12
+
+                ColumnLayout {
+                    spacing: 2
+                    Layout.fillWidth: true
+                    Label {
+                        text: "Workflow"
+                        color: "#d9eee7"
+                        font.pixelSize: 12
+                        font.letterSpacing: 1.2
+                        opacity: 0.82
+                    }
+                    Label {
+                        text: "翻译流程"
+                        color: "white"
+                        font.family: appWindow.titleFont
+                        font.pixelSize: 18
+                        font.weight: Font.DemiBold
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: "#ffffff"
+                    opacity: 0.16
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    NavButton { iconName: "task"; label: "任务"; desc: "导入书籍"; pageIndex: 0 }
+                    NavButton { iconName: "status"; label: "状态"; desc: "实时进度"; pageIndex: 1 }
+                    NavButton { iconName: "api"; label: "API"; desc: "模型接口"; pageIndex: 2 }
+                    NavButton { iconName: "glossary"; label: "术语表"; desc: "名词统一"; pageIndex: 3 }
+                    NavButton { iconName: "settings"; label: "设置"; desc: "性能校对"; pageIndex: 4 }
+                }
+
+                Item { Layout.fillHeight: true }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 88
+                    radius: 18
+                    color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.11)
+                    border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+
+                    Label {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        text: "暂停后可切换模型，再恢复续译。"
+                        wrapMode: Text.WordWrap
+                        color: "#d9eee7"
+                        font.pixelSize: 11
+                        opacity: 0.86
+                    }
+                }
             }
         }
-        StackLayout {
-            id: pageStack; Layout.fillWidth: true; Layout.fillHeight: true; currentIndex: 0
-            TaskPage { cfg: appWindow.cfg; tbridge: appWindow.tbridge; onNavigateToStatus: appWindow.switchPage(1) }
-            MonitorPage { cfg: appWindow.cfg; tbridge: appWindow.tbridge }
-            ApiConfigPage { cfg: appWindow.cfg }
-            GlossaryPage { cfg: appWindow.cfg; gbridge: appWindow.gbridge }
-            OptionsPage { cfg: appWindow.cfg }
+
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            StackLayout {
+                id: pageStack
+                anchors.fill: parent
+                currentIndex: 0
+                TaskPage { cfg: appWindow.cfg; tbridge: appWindow.tbridge; onNavigateToStatus: appWindow.switchPage(1) }
+                MonitorPage { cfg: appWindow.cfg; tbridge: appWindow.tbridge }
+                ApiConfigPage { cfg: appWindow.cfg }
+                GlossaryPage { cfg: appWindow.cfg; gbridge: appWindow.gbridge }
+                OptionsPage { cfg: appWindow.cfg }
+            }
         }
     }
 
-    component NavButton: RoundButton {
+    component NavButton: Item {
         id: navBtn
-        property string iconText: ""
+        property string iconName: ""
         property string label: ""
+        property string desc: ""
         property int pageIndex: 0
-        implicitWidth: 60; implicitHeight: 64
-        checkable: true
-        checked: pageStack.currentIndex === pageIndex
-        flat: !checked
-        highlighted: checked
-        onClicked: appWindow.switchPage(pageIndex)
-        contentItem: Column {
-            anchors.centerIn: parent; spacing: 2
-            Text { text: navBtn.iconText; font.pixelSize: 22; anchors.horizontalCenter: parent.horizontalCenter }
-            Text { text: navBtn.label; font.pixelSize: 10; anchors.horizontalCenter: parent.horizontalCenter; color: navBtn.checked ? Material.accent : appWindow.hintColor }
+        property bool hovering: false
+        readonly property bool active: pageStack.currentIndex === pageIndex
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 62
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 18
+            color: navBtn.active
+                   ? AppPalette.navActiveBg
+                   : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.10) : "transparent")
+            border.color: navBtn.active
+                          ? (appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.72) : AppPalette.amberColor)
+                          : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.18) : "transparent")
+            border.width: navBtn.active || (appWindow.glassMode && navBtn.hovering) ? 1 : 0
         }
-        Behavior on highlighted { ColorAnimation { duration: 150 } }
+
+        Rectangle {
+            visible: appWindow.glassMode && navBtn.active
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            height: 1
+            color: Qt.rgba(1, 1, 1, 0.72)
+        }
+
+        Rectangle {
+            width: 4
+            height: 28
+            radius: 2
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            color: AppPalette.amberColor
+            visible: navBtn.active
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 14
+            anchors.rightMargin: 12
+            spacing: 10
+
+            Item {
+                Layout.preferredWidth: 34
+                Layout.preferredHeight: 34
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 12
+                    color: navBtn.active
+                           ? (appWindow.glassMode ? AppPalette.accentColor : AppPalette.amberColor)
+                           : "#ffffff"
+                    opacity: navBtn.active ? 1.0 : (appWindow.glassMode ? 0.22 : 0.18)
+                }
+                NavIcon {
+                    anchors.centerIn: parent
+                    width: 21
+                    height: 21
+                    name: navBtn.iconName
+                    lineColor: navBtn.active ? "white" : (appWindow.glassMode ? "#eefcf8" : "#d9eee7")
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+                Label {
+                    text: navBtn.label
+                    color: navBtn.active ? AppPalette.textColor : "white"
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
+                }
+                Label {
+                    text: navBtn.desc
+                    color: navBtn.active ? AppPalette.mutedText : "#c9e1d9"
+                    font.pixelSize: 10
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onEntered: navBtn.hovering = true
+            onExited: navBtn.hovering = false
+            onClicked: appWindow.switchPage(navBtn.pageIndex)
+        }
+    }
+
+    component NavIcon: Item {
+        id: navIcon
+        property string name: "task"
+        property color lineColor: "white"
+
+        Canvas {
+            id: iconCanvas
+            anchors.fill: parent
+            antialiasing: true
+
+            function px(v) { return v * width / 24 }
+            function py(v) { return v * height / 24 }
+
+            function roundedRect(ctx, x, y, w, h, r) {
+                ctx.beginPath()
+                ctx.moveTo(px(x + r), py(y))
+                ctx.lineTo(px(x + w - r), py(y))
+                ctx.quadraticCurveTo(px(x + w), py(y), px(x + w), py(y + r))
+                ctx.lineTo(px(x + w), py(y + h - r))
+                ctx.quadraticCurveTo(px(x + w), py(y + h), px(x + w - r), py(y + h))
+                ctx.lineTo(px(x + r), py(y + h))
+                ctx.quadraticCurveTo(px(x), py(y + h), px(x), py(y + h - r))
+                ctx.lineTo(px(x), py(y + r))
+                ctx.quadraticCurveTo(px(x), py(y), px(x + r), py(y))
+            }
+
+            function line(ctx, x1, y1, x2, y2) {
+                ctx.beginPath()
+                ctx.moveTo(px(x1), py(y1))
+                ctx.lineTo(px(x2), py(y2))
+                ctx.stroke()
+            }
+
+            function circle(ctx, x, y, r, fill) {
+                ctx.beginPath()
+                ctx.arc(px(x), py(y), px(r), 0, Math.PI * 2)
+                if (fill) ctx.fill()
+                else ctx.stroke()
+            }
+
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.reset()
+                ctx.clearRect(0, 0, width, height)
+                ctx.strokeStyle = navIcon.lineColor
+                ctx.fillStyle = navIcon.lineColor
+                ctx.lineWidth = Math.max(1.7, width / 13)
+                ctx.lineCap = "round"
+                ctx.lineJoin = "round"
+
+                if (navIcon.name === "task") {
+                    roundedRect(ctx, 5, 3.5, 12.5, 17, 2)
+                    ctx.stroke()
+                    line(ctx, 8, 9, 14, 9)
+                    line(ctx, 8, 13, 15, 13)
+                    line(ctx, 8, 17, 12, 17)
+                    line(ctx, 14.5, 3.5, 18.5, 7.5)
+                } else if (navIcon.name === "status") {
+                    circle(ctx, 12, 12, 8, false)
+                    ctx.beginPath()
+                    ctx.arc(px(12), py(12), px(8), -Math.PI / 2, Math.PI / 5)
+                    ctx.stroke()
+                    line(ctx, 12, 12, 16, 9)
+                    circle(ctx, 12, 12, 1.2, true)
+                } else if (navIcon.name === "api") {
+                    roundedRect(ctx, 3.5, 6, 17, 12, 2.5)
+                    ctx.stroke()
+                    line(ctx, 7, 12, 10, 12)
+                    line(ctx, 14, 12, 17, 12)
+                    circle(ctx, 12, 12, 1.4, true)
+                    line(ctx, 12, 6, 12, 3.5)
+                    line(ctx, 12, 18, 12, 20.5)
+                } else if (navIcon.name === "glossary") {
+                    ctx.beginPath()
+                    ctx.moveTo(px(4), py(6))
+                    ctx.quadraticCurveTo(px(8), py(4), px(12), py(6))
+                    ctx.quadraticCurveTo(px(16), py(4), px(20), py(6))
+                    ctx.lineTo(px(20), py(19))
+                    ctx.quadraticCurveTo(px(16), py(17), px(12), py(19))
+                    ctx.quadraticCurveTo(px(8), py(17), px(4), py(19))
+                    ctx.closePath()
+                    ctx.stroke()
+                    line(ctx, 12, 6, 12, 19)
+                    line(ctx, 7, 10, 10, 9.5)
+                    line(ctx, 14, 9.5, 17, 10)
+                } else {
+                    circle(ctx, 12, 12, 4, false)
+                    for (var i = 0; i < 8; i++) {
+                        var a = i * Math.PI / 4
+                        var x1 = 12 + Math.cos(a) * 7
+                        var y1 = 12 + Math.sin(a) * 7
+                        var x2 = 12 + Math.cos(a) * 9
+                        var y2 = 12 + Math.sin(a) * 9
+                        line(ctx, x1, y1, x2, y2)
+                    }
+                }
+            }
+
+            Component.onCompleted: requestPaint()
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+        }
+
+        onNameChanged: iconCanvas.requestPaint()
+        onLineColorChanged: iconCanvas.requestPaint()
     }
 }

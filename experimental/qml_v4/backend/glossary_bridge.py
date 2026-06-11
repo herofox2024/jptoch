@@ -232,6 +232,27 @@ class GlossaryModel(QAbstractListModel):
     def filtered_count(self):
         return len(self._filtered)
 
+    def source_stats(self):
+        auto_count = 0
+        manual_count = 0
+        unknown_count = 0
+        for row in self._all_rows:
+            source = str(row.get("source", "") or "").strip().lower()
+            note = str(row.get("note", "") or "")
+            if source == "auto" or "自动提取" in note:
+                auto_count += 1
+            elif source == "manual" or "手动添加" in note:
+                manual_count += 1
+            else:
+                unknown_count += 1
+        return {
+            "total": len(self._all_rows),
+            "filtered": len(self._filtered),
+            "auto": auto_count,
+            "manual": manual_count,
+            "unknown": unknown_count,
+        }
+
     def add_row(self, category="Item"):
         self._all_rows.append(self._make_row(category, "", "", "", "manual"))
         self._dirty = True
@@ -415,3 +436,7 @@ class GlossaryBridge(QObject):
     @Slot(str, str, str)
     def search(self, query: str, category_filter: str, source_filter: str):
         self._model.search(query, category_filter, source_filter)
+
+    @Slot(result="QVariantMap")
+    def getStats(self):
+        return self._model.source_stats()
