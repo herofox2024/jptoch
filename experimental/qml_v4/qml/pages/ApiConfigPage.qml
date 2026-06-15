@@ -11,14 +11,15 @@ Page {
 
     property var cfg: null
 
-    property var providerKeys: ["deepseek", "doubao", "sakura", "gemini", "glm", "custom"]
-    property var providerLabels: ["DeepSeek", "豆包 (火山引擎)", "Sakura (本地)", "Gemini", "GLM (智谱)", "自定义"]
+    property var providerKeys: ["deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"]
+    property var providerLabels: ["DeepSeek", "豆包 (火山引擎)", "Sakura (本地)", "Gemini", "GLM (智谱)", "文心一言 (千帆)", "自定义"]
     property var providerHints: ({
         "deepseek": "DeepSeek：推荐主力翻译；付费版支持高并发批量。",
         "doubao": "Doubao：火山方舟 OpenAI 兼容接口。",
         "sakura": "Sakura：本地模型，无需 API Key。",
         "gemini": "Gemini：不支持 thinking 参数；免费版易限流。",
         "glm": "GLM/智谱：免费版限流明显，建议用性能预设。",
+        "wenxin": "文心一言/千帆：使用百度千帆 OpenAI 兼容接口；旧版 access_token RPC 接口不兼容。",
         "custom": "Custom：自定义 OpenAI 兼容接口。"
     })
     property string currentProvider: cfg ? cfg.provider : "deepseek"

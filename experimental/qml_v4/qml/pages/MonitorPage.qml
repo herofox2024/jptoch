@@ -91,6 +91,26 @@ Page {
         proofreadModel.clear()
     }
 
+    function clearRuntimeState(statusText) {
+        page.finishElapsedTimer()
+        page.statCompleted = 0
+        page.statTotal = 0
+        page.statTerms = 0
+        page.statApiTotal = 0
+        page.statFailCount = 0
+        page.statSuccessRate = 0
+        page.statSpeed = 0
+        page.statCharSpeed = 0
+        page.statTranslatedChars = 0
+        page.statTokenTotal = 0
+        page.statTotalChars = 0
+        page.statElapsed = "--:--"
+        page.statStatus = statusText || "已停止，已清空本次译文缓存"
+        rtSrc.text = ""
+        rtDst.text = ""
+        page.clearProofreadDetails()
+    }
+
     function formatDuration(totalSeconds) {
         var seconds = Math.max(0, Math.floor(totalSeconds))
         var hours = Math.floor(seconds / 3600)
@@ -168,6 +188,10 @@ Page {
             page.appendProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed)
         }
 
+        function onRuntimeCleared() {
+            page.clearRuntimeState("已停止，已清空本次译文缓存")
+        }
+
         function onErrorDetail(msg) {
             diagText.text += msg + "\n"
         }
@@ -178,7 +202,9 @@ Page {
         }
 
         function onFinished(path) {
-            if (path === "__CANCELLED__") {
+            if (path === "__STOPPED__") {
+                page.clearRuntimeState("已停止，已清空本次译文缓存")
+            } else if (path === "__CANCELLED__") {
                 page.statStatus = "已取消"
             } else {
                 page.statStatus = "完成: " + path

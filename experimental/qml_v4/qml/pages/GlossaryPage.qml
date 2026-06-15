@@ -19,6 +19,7 @@ Page {
     property int manualCount: 0
     property int unknownCount: 0
     property bool dirty: false
+    property bool loadedOnce: false
     property var selectedRows: []
     property string statusMessage: "暂无术语"
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
@@ -56,13 +57,17 @@ Page {
         }
     }
 
-    Component.onCompleted: {
-        if (page.gbridge && page.gbridge.model) page.gbridge.load()
+    function ensureLoaded() {
+        if (page.loadedOnce || !page.gbridge || !page.gbridge.model) return
+        page.statusMessage = "正在加载术语表..."
+        page.loadedOnce = true
+        page.gbridge.load()
     }
 
     Connections {
         target: page.gbridge
         function onLoaded(count) {
+            page.loadedOnce = true
             page.statusMessage = count > 0 ? "共 " + count + " 条术语" : "暂无术语"
             page.clearSelection()
             page.refreshStats()

@@ -56,6 +56,7 @@ from qfluentwidgets.components.widgets.combo_box import ComboBoxMenu
 from epub_io import (
     apply_toc_translations,
     extract_toc_titles,
+    extract_visible_text,
     iter_text_nodes,
     load_book,
     save_book,
@@ -319,7 +320,7 @@ class TranslateWorker(QObject):
 
     @staticmethod
     def _extract_text(tag) -> str:
-        return tag.get_text(" ", strip=True)
+        return extract_visible_text(tag)
 
     @staticmethod
     def _is_translatable(text: str) -> bool:
@@ -1668,7 +1669,7 @@ class QtAppWindow(QWidget):
         all_texts = []
         for _, _, tags in iter_text_nodes(book):
             for tag in tags:
-                text = tag.get_text(" ", strip=True)
+                text = extract_visible_text(tag)
                 if text:
                     all_texts.append(text)
         all_texts.extend(extract_toc_titles(book))

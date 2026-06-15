@@ -73,6 +73,8 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/c
 GEMINI_MODEL = "gemini-2.5-flash"
 GLM_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 GLM_MODEL = "glm-4-flash"
+WENXIN_API_URL = "https://qianfan.baidubce.com/v2/chat/completions"
+WENXIN_MODEL = "ernie-4.5-turbo-128k"
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 
 
@@ -317,7 +319,7 @@ class JaZhTranslator:
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
-        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "glm", "custom"}:
+        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"}:
             raise ValueError(f"不支持的提供方: {provider}")
 
         self.api_key = api_key or ""
@@ -328,12 +330,16 @@ class JaZhTranslator:
                 self.api_key = os.getenv("DOUBAO_API_KEY", "") or os.getenv("ARK_API_KEY", "")
             elif self.provider == "glm":
                 self.api_key = os.getenv("GLM_API_KEY", "") or os.getenv("ZHIPU_API_KEY", "")
+            elif self.provider == "wenxin":
+                self.api_key = os.getenv("WENXIN_API_KEY", "") or os.getenv("QIANFAN_API_KEY", "")
         if self.provider == "deepseek" and not self.api_key:
             raise ValueError("未找到 DeepSeek API Key，请在界面输入或设置环境变量 DEEPSEEK_API_KEY")
         if self.provider == "doubao" and not self.api_key:
             raise ValueError("未找到豆包 API Key，请在界面输入或设置环境变量 DOUBAO_API_KEY / ARK_API_KEY")
         if self.provider == "gemini" and not self.api_key:
             raise ValueError("未找到 Gemini API Key，请在界面输入")
+        if self.provider == "wenxin" and not self.api_key:
+            raise ValueError("未找到文心一言/千帆 API Key，请在界面输入或设置环境变量 WENXIN_API_KEY / QIANFAN_API_KEY")
         if self.provider == "sakura" and not self.api_key:
             # Sakura 本地服务通常可无鉴权，默认给一个占位 key，兼容部分网关。
             self.api_key = "sk-local"
@@ -354,6 +360,9 @@ class JaZhTranslator:
         elif self.provider == "glm":
             default_url = GLM_API_URL
             default_model = GLM_MODEL
+        elif self.provider == "wenxin":
+            default_url = WENXIN_API_URL
+            default_model = WENXIN_MODEL
 
         raw_api_url = (api_url or default_url).strip()
         self.api_url = self._normalize_api_url(raw_api_url)
@@ -392,6 +401,7 @@ class JaZhTranslator:
         self._cache_dirty = False
         self._save_counter = 0
         self._cache_lock = threading.RLock()
+        self._discard_cache_writes = threading.Event()
         self._stats_lock = threading.Lock()
         self._glossary_prompt_max_terms = 120
         self.max_workers = max_workers
@@ -755,6 +765,39 @@ class JaZhTranslator:
         """强制保存缓存（程序退出或翻译完成时调用）"""
         if self._cache_dirty:
             self._save_cache(force=True)
+
+    def discard_cache_writes(self) -> None:
+        """停止本实例继续写入翻译缓存，用于“停止并清空本次译文”。"""
+        flag = getattr(self, "_discard_cache_writes", None)
+        if flag is None:
+            self._discard_cache_writes = threading.Event()
+            flag = self._discard_cache_writes
+        flag.set()
+
+    def _should_write_cache(self) -> bool:
+        flag = getattr(self, "_discard_cache_writes", None)
+        return not (flag is not None and flag.is_set())
+
+    def clear_cache_for_texts(self, texts: List[str]) -> int:
+        """清理当前 provider/model 下指定原文对应的缓存。"""
+        unique_texts = {str(text or "").strip() for text in texts}
+        unique_texts.discard("")
+        if not unique_texts:
+            return 0
+
+        removed = 0
+        with self._cache_lock:
+            for text in unique_texts:
+                cache_key = self._cache_key(text)
+                if cache_key in self.cache:
+                    self.cache.pop(cache_key, None)
+                    removed += 1
+            if removed:
+                self._cache_dirty = True
+
+        if removed:
+            self._save_cache(force=True)
+        return removed
 
     def _count_glossary_terms(self) -> int:
         """统计术语表中的术语数量"""
@@ -1349,10 +1392,10 @@ JSON 顶层字段：
 
         zh = self._call_deepseek(text)
 
-        with self._cache_lock:
-            self.cache[cache_key] = zh
-
-        self._save_cache()
+        if self._should_write_cache():
+            with self._cache_lock:
+                self.cache[cache_key] = zh
+            self._save_cache()
         return zh
 
     @staticmethod
@@ -1435,9 +1478,10 @@ JSON 顶层字段：
 
             zh = "\n".join(results).strip()
 
-        with self._cache_lock:
-            self.cache[cache_key] = zh
-        self._save_cache()
+        if self._should_write_cache():
+            with self._cache_lock:
+                self.cache[cache_key] = zh
+            self._save_cache()
         return zh
 
     def translate_batch(
@@ -1683,15 +1727,17 @@ JSON 顶层字段：
                     try:
                         batch_results = future.result()
                         for original, translated in batch_results:
-                            with self._cache_lock:
-                                self.cache[self._cache_key(original)] = translated
+                            if self._should_write_cache():
+                                with self._cache_lock:
+                                    self.cache[self._cache_key(original)] = translated
                             results[original] = translated
                             completed += pending_counts.get(original, 1)
                             if item_callback:
                                 item_callback(original, translated)
                             if progress_callback:
                                 progress_callback(completed, total)
-                        self._save_cache()
+                        if self._should_write_cache():
+                            self._save_cache()
                     except Exception as e:
                         logger.error(f"批次翻译失败: {e}")
                         if "502" in str(e):

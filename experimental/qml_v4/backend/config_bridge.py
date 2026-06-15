@@ -9,21 +9,20 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Property, Slot
 
-from translator import (
-    DEEPSEEK_API_URL,
-    DEEPSEEK_MODEL,
-    DOUBAO_API_URL,
-    DOUBAO_MODEL,
-    SAKURA_API_URL,
-    SAKURA_MODEL,
-    GEMINI_API_URL,
-    GEMINI_MODEL,
-    GLM_API_URL,
-    GLM_MODEL,
-    get_data_dir,
-)
-
 logger = logging.getLogger(__name__)
+
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+DOUBAO_API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+DOUBAO_MODEL = "Doubao-Seed-1.6-flash"
+SAKURA_API_URL = "http://127.0.0.1:8080/v1/chat/completions"
+SAKURA_MODEL = "sakura-v1.0"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+GEMINI_MODEL = "gemini-2.5-flash"
+GLM_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+GLM_MODEL = "glm-4-flash"
+WENXIN_API_URL = "https://qianfan.baidubce.com/v2/chat/completions"
+WENXIN_MODEL = "ernie-4.5-turbo-128k"
 
 PROVIDER_DEFAULTS = {
     "deepseek": {"url": DEEPSEEK_API_URL, "model": DEEPSEEK_MODEL},
@@ -31,6 +30,7 @@ PROVIDER_DEFAULTS = {
     "sakura":   {"url": SAKURA_API_URL,   "model": SAKURA_MODEL},
     "gemini":   {"url": GEMINI_API_URL,   "model": GEMINI_MODEL},
     "glm":      {"url": GLM_API_URL,      "model": GLM_MODEL},
+    "wenxin":   {"url": WENXIN_API_URL,   "model": WENXIN_MODEL},
     "custom":   {"url": "", "model": ""},
 }
 
@@ -40,12 +40,14 @@ PROVIDER_HINTS = {
     "sakura":   "本地 Sakura 模型，需自行部署（默认 127.0.0.1:8080）",
     "gemini":   "Google Gemini API，免费额度有限",
     "glm":      "智谱开放平台，免费版限制并发",
+    "wenxin":   "百度千帆/文心一言 OpenAI 兼容接口，需使用千帆 API Key",
     "custom":   "任意 OpenAI 兼容端点，请手动填写 URL 和模型名",
 }
 
 PROVIDER_CAPABILITY = {
     "glm": "智谱免费版限制并发 ≤2，batch ≤2",
     "gemini": "Gemini 免费版有限流",
+    "wenxin": "文心一言/千帆：建议先低并发低批量测试，旧版 access_token RPC 接口不兼容",
 }
 
 PERF_UI_PRESETS = {
@@ -86,8 +88,14 @@ _CONFIG_KEYS = [
 CONFIG_FILE_NAME = "config.json"
 
 
+def _data_dir() -> Path:
+    data_dir = Path.home() / ".epub_translator"
+    data_dir.mkdir(exist_ok=True)
+    return data_dir
+
+
 def _config_path() -> Path:
-    return get_data_dir() / CONFIG_FILE_NAME
+    return _data_dir() / CONFIG_FILE_NAME
 
 
 class ConfigBridge(QObject):

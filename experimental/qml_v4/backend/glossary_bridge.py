@@ -15,11 +15,21 @@ from PySide6.QtCore import (
     QAbstractListModel, QModelIndex, Qt, QObject, Signal, Slot, Property, QThread,
 )
 
-from translator import JaZhTranslator, get_data_dir
-
 logger = logging.getLogger(__name__)
 
 GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
+
+
+def _translator_cls():
+    from translator import JaZhTranslator
+
+    return JaZhTranslator
+
+
+def _data_dir() -> Path:
+    from translator import get_data_dir
+
+    return get_data_dir()
 
 # Model roles
 ROLE_CATEGORY = Qt.UserRole + 1
@@ -178,7 +188,8 @@ class GlossaryModel(QAbstractListModel):
         return category, entry
 
     def load_from_disk(self):
-        path = get_data_dir() / "glossary.json"
+        translator_cls = _translator_cls()
+        path = _data_dir() / "glossary.json"
         if not path.exists():
             self._all_rows = []
             self._apply_filter()
@@ -190,7 +201,7 @@ class GlossaryModel(QAbstractListModel):
             self._all_rows = []
             self._apply_filter()
             return 0
-        normalized, _ = JaZhTranslator.normalize_glossary_payload(data if isinstance(data, dict) else {})
+        normalized, _ = translator_cls.normalize_glossary_payload(data if isinstance(data, dict) else {})
         rows = []
         for category in GLOSSARY_CATEGORIES:
             for entry in normalized.get(category, []):
@@ -206,6 +217,7 @@ class GlossaryModel(QAbstractListModel):
         return len(rows)
 
     def save_to_disk(self):
+        translator_cls = _translator_cls()
         payload = {}
         for row in self._all_rows:
             cat, entry = self._row_to_payload_entry(row)
@@ -214,9 +226,9 @@ class GlossaryModel(QAbstractListModel):
             if cat not in payload:
                 payload[cat] = []
             payload[cat].append(entry)
-        path = get_data_dir() / "glossary.json"
-        normalized, _ = JaZhTranslator.normalize_glossary_payload(payload)
-        JaZhTranslator._atomic_write_json(path, normalized)
+        path = _data_dir() / "glossary.json"
+        normalized, _ = translator_cls.normalize_glossary_payload(payload)
+        translator_cls._atomic_write_json(path, normalized)
         self._dirty = False
         return len(self._all_rows)
 
@@ -275,27 +287,28 @@ class GlossaryModel(QAbstractListModel):
 
     def import_json(self, path_str: str):
         try:
+            translator_cls = _translator_cls()
             with open(path_str, "r", encoding="utf-8") as f:
                 payload = json.load(f)
             if not isinstance(payload, dict):
                 raise ValueError("术语表 JSON 顶层必须是对象")
-            normalized, import_stats = JaZhTranslator.normalize_glossary_payload(payload)
-            glossary_path = get_data_dir() / "glossary.json"
+            normalized, import_stats = translator_cls.normalize_glossary_payload(payload)
+            glossary_path = _data_dir() / "glossary.json"
             existing = {}
             if glossary_path.exists():
                 existing = json.loads(glossary_path.read_text(encoding="utf-8"))
-            existing_normalized, _ = JaZhTranslator.normalize_glossary_payload(existing if isinstance(existing, dict) else {})
+            existing_normalized, _ = translator_cls.normalize_glossary_payload(existing if isinstance(existing, dict) else {})
             if existing_normalized:
-                merged, merge_stats = JaZhTranslator.merge_glossaries(existing_normalized, normalized)
+                merged, merge_stats = translator_cls.merge_glossaries(existing_normalized, normalized)
             else:
                 merged = normalized
                 merge_stats = {"added": import_stats.get("accepted", 0), "skipped": import_stats.get("skipped", 0), "conflicts": import_stats.get("conflicts", 0)}
             # Backup before overwriting
             timestamp = time.strftime("%Y%m%d-%H%M%S")
-            backup_path = get_data_dir() / f"glossary.backup.before_import.{timestamp}.json"
+            backup_path = _data_dir() / f"glossary.backup.before_import.{timestamp}.json"
             if glossary_path.exists():
                 shutil.copy2(glossary_path, backup_path)
-            JaZhTranslator._atomic_write_json(glossary_path, merged)
+            translator_cls._atomic_write_json(glossary_path, merged)
             self.load_from_disk()
             return {
                 "added": int(merge_stats.get("added", 0)),
@@ -307,6 +320,7 @@ class GlossaryModel(QAbstractListModel):
             raise ValueError(str(e))
 
     def export_json(self, path_str: str):
+        translator_cls = _translator_cls()
         payload = {}
         for row in self._all_rows:
             cat, entry = self._row_to_payload_entry(row)
@@ -315,22 +329,23 @@ class GlossaryModel(QAbstractListModel):
             if cat not in payload:
                 payload[cat] = []
             payload[cat].append(entry)
-        normalized, _ = JaZhTranslator.normalize_glossary_payload(payload)
+        normalized, _ = translator_cls.normalize_glossary_payload(payload)
         Path(path_str).write_text(json.dumps(normalized, indent=2, ensure_ascii=False), encoding="utf-8")
         return len(self._all_rows)
 
     def restore_backup(self, path_str: str):
         try:
+            translator_cls = _translator_cls()
             with open(path_str, "r", encoding="utf-8") as f:
                 payload = json.load(f)
             if not isinstance(payload, dict):
                 raise ValueError("备份 JSON 顶层必须是对象")
-            glossary_path = get_data_dir() / "glossary.json"
+            glossary_path = _data_dir() / "glossary.json"
             timestamp = time.strftime("%Y%m%d-%H%M%S")
-            backup_path = get_data_dir() / f"glossary.backup.before_restore.{timestamp}.json"
+            backup_path = _data_dir() / f"glossary.backup.before_restore.{timestamp}.json"
             if glossary_path.exists():
                 shutil.copy2(glossary_path, backup_path)
-            JaZhTranslator._atomic_write_json(glossary_path, payload)
+            translator_cls._atomic_write_json(glossary_path, payload)
             self.load_from_disk()
             return len(self._all_rows)
         except Exception as e:

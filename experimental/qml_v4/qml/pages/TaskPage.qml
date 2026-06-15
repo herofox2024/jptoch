@@ -239,7 +239,7 @@ Page {
                                 onTextChanged: {
                                     if (cfg) cfg.inp = text
                                     if (!activeFocus) cursorPosition = 0
-                                    estimateTimer.restart()
+                                    if (activeFocus) estimateTimer.restart()
                                 }
                                 onEditingFinished: {
                                     if (text !== "") taskPage.setInputPath(text)
@@ -365,7 +365,7 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "暂停会停止后续翻译；已写入缓存的内容会保留。切换模型后点“恢复”可继续处理剩余文本。"
+                        text: "暂停会保留已写入缓存的内容，切换模型后点“恢复”可续译；停止会取消任务并清空本次已翻译缓存。"
                         color: AppPalette.mutedText
                         wrapMode: Text.WordWrap
                         font.pixelSize: 12
@@ -382,19 +382,39 @@ Page {
                     }
                 }
 
-                Button {
-                    id: startBtn
-                    Layout.preferredWidth: 188
-                    Layout.preferredHeight: 66
-                    text: "开始翻译"
-                    highlighted: true
-                    font.pixelSize: 17
-                    font.weight: Font.DemiBold
-                    enabled: taskPage.readyToStart && !taskPage.busy
-                    onClicked: {
-                        if (taskPage.tbridge) {
-                            taskPage.tbridge.startTranslation(cfg)
-                            taskPage.navigateToStatus()
+                RowLayout {
+                    Layout.preferredWidth: 292
+                    spacing: 10
+
+                    Button {
+                        id: startBtn
+                        Layout.preferredWidth: 182
+                        Layout.preferredHeight: 66
+                        text: "开始翻译"
+                        highlighted: true
+                        font.pixelSize: 17
+                        font.weight: Font.DemiBold
+                        enabled: taskPage.readyToStart && !taskPage.busy
+                        onClicked: {
+                            if (taskPage.tbridge) {
+                                taskPage.tbridge.startTranslation(cfg)
+                                taskPage.navigateToStatus()
+                            }
+                        }
+                    }
+
+                    Button {
+                        id: stopBtn
+                        Layout.preferredWidth: 100
+                        Layout.preferredHeight: 66
+                        text: "停止"
+                        enabled: taskPage.busy
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                        onClicked: {
+                            if (taskPage.tbridge) {
+                                taskPage.tbridge.stopTranslation()
+                            }
                         }
                     }
                 }
@@ -546,7 +566,6 @@ Page {
     }
 
     Component.onCompleted: {
-        if (cfg && cfg.inp && taskPage.tbridge) taskPage.tbridge.startEstimateChars(cfg.inp)
         Qt.callLater(function() {
             inpField.cursorPosition = 0
             outField.cursorPosition = 0

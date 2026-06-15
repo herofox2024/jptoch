@@ -1,9 +1,11 @@
-﻿# -*- mode: python ; coding: utf-8 -*-
+# -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for EPUB JP->ZH Translator (QML edition)
+PyInstaller onedir spec for EPUB JP->ZH Translator (QML edition).
+
+This build keeps Qt/PySide files as separate files so Inno Setup can compress
+the whole directory more effectively than wrapping an already-packed onefile exe.
 """
 
-import sys
 from pathlib import Path
 
 experiment_root = Path(SPECPATH).resolve()
@@ -16,7 +18,7 @@ a = Analysis(
     pathex=[str(project_root), str(experiment_root)],
     binaries=[],
     datas=[
-        (str(experiment_root / "qml"), "qml"),  # Include entire QML directory
+        (str(experiment_root / "qml"), "qml"),
         (str(experiment_root / "assets"), "assets"),
     ],
     hiddenimports=[
@@ -44,7 +46,7 @@ a = Analysis(
         "qfluentwidgets",
     ],
     noarchive=False,
-    optimize=0,
+    optimize=1,
 )
 
 pyz = PYZ(a.pure)
@@ -52,16 +54,14 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="AI日译中(EPUB)V4.0 RC1",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -69,4 +69,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(app_icon) if app_icon.exists() else (str(fallback_icon) if fallback_icon.exists() else None),
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="AI日译中(EPUB)V4.0 RC1_onedir",
 )

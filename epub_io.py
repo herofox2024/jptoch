@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -7,12 +8,226 @@ from pathlib import Path
 from typing import Generator, Tuple, Any, Optional
 from urllib.parse import unquote
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from ebooklib import epub, ITEM_DOCUMENT
 
 logger = logging.getLogger(__name__)
 
 TARGET_TAGS = ["p", "h1", "h2", "h3", "li", "blockquote"]
+DOCUMENT_MEDIA_TYPES = {"application/xhtml+xml", "text/html"}
+BODY_FALLBACK_MIN_CHARS = 200
+TOC_LINK_MIN_COUNT = 3
+HIDDEN_TEXT_TAGS = {"rt", "rp", "script", "style", "noscript"}
+BLOCK_SPLIT_TAGS = {
+    "address",
+    "article",
+    "aside",
+    "div",
+    "dl",
+    "figure",
+    "footer",
+    "header",
+    "main",
+    "nav",
+    "ol",
+    "section",
+    "table",
+    "ul",
+}
+
+
+def extract_visible_text(node: Any) -> str:
+    """Extract display text while skipping ruby annotations and hidden tags."""
+    parts = []
+
+    def _walk(current):
+        if isinstance(current, NavigableString):
+            parts.append(str(current))
+            return
+        if not isinstance(current, Tag):
+            return
+        if current.name in HIDDEN_TEXT_TAGS:
+            return
+        for child in current.children:
+            _walk(child)
+
+    _walk(node)
+    text = "".join(parts).replace("\xa0", " ")
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r" *\n+ *", "\n", text)
+    return text.strip()
+
+
+def _compact_text_len(text: str) -> int:
+    return len(re.sub(r"\s+", "", text or ""))
+
+
+def _has_japanese_text(text: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text or ""))
+
+
+def _is_document_item(item: Any) -> bool:
+    if item.get_type() == ITEM_DOCUMENT:
+        return True
+    media_type = str(getattr(item, "media_type", "") or "").lower()
+    file_name = str(getattr(item, "file_name", "") or "").lower()
+    return media_type in DOCUMENT_MEDIA_TYPES or file_name.endswith((".html", ".xhtml", ".htm"))
+
+
+def _first_anchor_attrs(node: Any) -> dict:
+    """Return the first id/name anchor attributes found in a node tree."""
+    if not isinstance(node, Tag):
+        return {}
+    search_nodes = [node]
+    search_nodes.extend(node.find_all(True))
+    for tag in search_nodes:
+        attrs = {}
+        if tag.get("id"):
+            attrs["id"] = tag.get("id")
+        if tag.name == "a" and tag.get("name"):
+            attrs["name"] = tag.get("name")
+        if attrs:
+            return attrs
+    return {}
+
+
+def _should_use_body_fallback(soup: BeautifulSoup, tags: list) -> bool:
+    body = soup.find("body")
+    if body is None:
+        return False
+
+    body_text = extract_visible_text(body)
+    body_chars = _compact_text_len(body_text)
+    if body_chars < BODY_FALLBACK_MIN_CHARS or not _has_japanese_text(body_text):
+        return False
+
+    target_chars = sum(_compact_text_len(extract_visible_text(tag)) for tag in tags)
+    if target_chars == 0:
+        return True
+
+    # Some EPUBs put only a title in h1/h2 and the actual body directly under
+    # body with <br>. Treat that as the same malformed layout, but do not touch
+    # normal EPUBs where target tags already cover most text.
+    return target_chars < body_chars * 0.2 and (body_chars - target_chars) >= BODY_FALLBACK_MIN_CHARS
+
+
+def _is_descendant_of_any(tag: Tag, containers: list) -> bool:
+    container_ids = {id(container) for container in containers}
+    return any(id(parent) in container_ids for parent in tag.parents)
+
+
+def _find_inbook_toc_link_tags(soup: BeautifulSoup, tags: list) -> list:
+    """Find short in-book TOC pages whose entries are bare <a href> links."""
+    body = soup.find("body")
+    if body is None:
+        return []
+
+    links = []
+    for link in body.find_all("a", href=True):
+        text = extract_visible_text(link)
+        if _compact_text_len(text) and _has_japanese_text(text):
+            links.append(link)
+
+    if len(links) < TOC_LINK_MIN_COUNT:
+        return []
+
+    link_chars = sum(_compact_text_len(extract_visible_text(link)) for link in links)
+    target_chars = sum(_compact_text_len(extract_visible_text(tag)) for tag in tags)
+    if target_chars >= link_chars:
+        return []
+
+    return [link for link in links if not _is_descendant_of_any(link, tags)]
+
+
+def _build_body_fallback_tags(soup: BeautifulSoup) -> list:
+    """Convert body-level text split by <br> into temporary paragraph tags."""
+    body = soup.find("body")
+    if body is None:
+        return []
+
+    rebuilt_nodes = []
+    fallback_tags = []
+    segment_parts = []
+    segment_attrs = {}
+
+    def _add_attrs(attrs: dict):
+        for key, value in attrs.items():
+            if value and key not in segment_attrs:
+                segment_attrs[key] = value
+
+    def _append_text(text: str):
+        if text:
+            segment_parts.append(text)
+
+    def _flush_segment():
+        nonlocal segment_parts, segment_attrs
+        text = "".join(segment_parts)
+        text = re.sub(r"[ \t\r\f\v]+", " ", text)
+        text = re.sub(r" *\n+ *", "\n", text).strip()
+        if _compact_text_len(text):
+            p_tag = soup.new_tag("p")
+            for key, value in segment_attrs.items():
+                p_tag[key] = value
+            p_tag.append(NavigableString(text))
+            rebuilt_nodes.append(p_tag)
+            fallback_tags.append(p_tag)
+        segment_parts = []
+        segment_attrs = {}
+
+    def _append_preserved_tag(tag: Tag):
+        _flush_segment()
+        rebuilt_nodes.append(tag.extract())
+
+    for child in list(body.contents):
+        if isinstance(child, NavigableString):
+            _append_text(str(child))
+            continue
+
+        if not isinstance(child, Tag):
+            continue
+
+        name = child.name
+        if name in HIDDEN_TEXT_TAGS:
+            child.extract()
+            continue
+
+        if name == "br":
+            _flush_segment()
+            child.extract()
+            continue
+
+        if name == "img":
+            _append_preserved_tag(child)
+            continue
+
+        if name in BLOCK_SPLIT_TAGS:
+            _flush_segment()
+            text = extract_visible_text(child)
+            if _compact_text_len(text):
+                p_tag = soup.new_tag("p")
+                for key, value in _first_anchor_attrs(child).items():
+                    p_tag[key] = value
+                p_tag.append(NavigableString(text))
+                rebuilt_nodes.append(p_tag)
+                fallback_tags.append(p_tag)
+            elif child.find("img"):
+                _append_preserved_tag(child)
+            else:
+                child.extract()
+            continue
+
+        _add_attrs(_first_anchor_attrs(child))
+        _append_text(extract_visible_text(child))
+        child.extract()
+
+    _flush_segment()
+
+    body.clear()
+    for node in rebuilt_nodes:
+        body.append(node)
+        body.append(NavigableString("\n"))
+
+    return fallback_tags
 
 
 def extract_toc_titles(book: epub.EpubBook) -> list:
@@ -269,10 +484,15 @@ def iter_text_nodes(book: epub.EpubBook) -> Generator[Tuple[Any, BeautifulSoup, 
         (item, soup, tags): 文档项、解析后的 BeautifulSoup 对象、目标标签列表
     """
     for item in book.get_items():
-        if item.get_type() == ITEM_DOCUMENT:
+        if _is_document_item(item):
             content = item.get_content()
             soup = BeautifulSoup(content, "html.parser")
             tags = soup.find_all(TARGET_TAGS)
+            toc_link_tags = _find_inbook_toc_link_tags(soup, tags)
+            if toc_link_tags:
+                tags = tags + toc_link_tags
+            elif _should_use_body_fallback(soup, tags):
+                tags = _build_body_fallback_tags(soup)
             yield item, soup, tags
 
 

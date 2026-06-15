@@ -13,14 +13,8 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
-from bs4 import NavigableString
-
-import requests
-from translator import JaZhTranslator, get_data_dir
-from epub_io import load_book, save_book, iter_text_nodes, extract_toc_titles, apply_toc_translations
-from text_utils import is_translatable
-
 CANCELLED_RESULT = "__CANCELLED__"
+STOPPED_RESULT = "__STOPPED__"
 def _sanitize_filename(name):
     invalid = '<>:"/\\\\|?*'
     cleaned = ''.join('_' if c in invalid or ord(c) < 32 else c for c in name)
@@ -70,6 +64,7 @@ def _estimate_translation_duration(total_chars, total_texts, cfg):
         "doubao": {"batch_seconds": 2.5, "chars_per_second": 90.0},
         "glm": {"batch_seconds": 4.0, "chars_per_second": 35.0},
         "gemini": {"batch_seconds": 6.0, "chars_per_second": 30.0},
+        "wenxin": {"batch_seconds": 4.0, "chars_per_second": 45.0},
         "sakura": {"batch_seconds": 1.5, "chars_per_second": 80.0},
         "custom": {"batch_seconds": 3.0, "chars_per_second": 60.0},
     }
@@ -107,6 +102,18 @@ class _TranslateWorker(QObject):
         cfg = self._config
         start_ts = time.time()
         try:
+            from bs4 import NavigableString
+            from translator import JaZhTranslator
+            from epub_io import (
+                load_book,
+                save_book,
+                iter_text_nodes,
+                extract_toc_titles,
+                apply_toc_translations,
+                extract_visible_text,
+            )
+            from text_utils import is_translatable
+
             translator = JaZhTranslator(
                 api_key=cfg["api_key"],
                 provider=cfg["provider"],
@@ -147,7 +154,7 @@ class _TranslateWorker(QObject):
                         if node_records:
                             text_tag_map.append(("multi_anchor", doc_idx, tag, node_records))
                         continue
-                    text = tag.get_text(" ", strip=True)
+                    text = extract_visible_text(tag)
                     if is_translatable(text):
                         all_texts.append(text)
                         mode = "single_anchor" if len(anchors) == 1 else "plain"
@@ -159,6 +166,8 @@ class _TranslateWorker(QObject):
 
             total_chars = sum(len(t) for t in all_texts) or 1
             total_texts = len(all_texts)
+            if self._bridge:
+                self._bridge._register_active_texts(all_texts, translator)
             estimated_seconds = _estimate_translation_duration(total_chars, total_texts, cfg)
             self.statusChanged.emit(f"开始翻译 预计翻译时长: {_format_duration(estimated_seconds)}")
 
@@ -310,11 +319,13 @@ class _EstimateWorker(QObject):
 
     def run(self):
         try:
+            from epub_io import load_book, iter_text_nodes, extract_toc_titles, extract_visible_text
+
             book = load_book(self._path)
             all_texts = []
             for _, _, tags in iter_text_nodes(book):
                 for tag in tags:
-                    text = tag.get_text(" ", strip=True)
+                    text = extract_visible_text(tag)
                     if text:
                         all_texts.append(text)
             all_texts.extend(extract_toc_titles(book))
@@ -335,6 +346,8 @@ class _TestWorker(QObject):
         self._timeout = timeout
 
     def run(self):
+        import requests
+
         try:
             headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
             payload = {
@@ -368,6 +381,7 @@ class TranslateBridge(QObject):
     connectionResult = Signal(str)
     estimateFinished = Signal(str, int)
     estimateFailed = Signal(str, str)
+    runtimeCleared = Signal()
 
     _progressValueChanged = Signal()
     _busyChanged = Signal()
@@ -384,6 +398,8 @@ class TranslateBridge(QObject):
         # Hold references to prevent GC of workers during async operations
         self._pending_workers = []
         self._active_translator = None
+        self._active_texts = []
+        self._stop_requested = False
 
     def _track_worker_thread(self, worker, thread):
         """Prevent GC by holding a reference until thread finishes."""
@@ -396,6 +412,23 @@ class TranslateBridge(QObject):
             thread.deleteLater()
         thread.finished.connect(_cleanup)
         return pair
+
+    def _register_active_texts(self, texts, translator):
+        self._active_texts = list(texts or [])
+        self._active_translator = translator
+        if self._stop_requested:
+            self._discard_and_clear_active_cache()
+
+    def _discard_and_clear_active_cache(self):
+        translator = self._active_translator
+        if not translator:
+            return 0
+        try:
+            translator.discard_cache_writes()
+            return translator.clear_cache_for_texts(self._active_texts)
+        except Exception as e:
+            self.errorDetail.emit(f"停止清理缓存失败: {e}")
+            return 0
 
     @Property(float, notify=_progressValueChanged)
     def progressValue(self) -> float:
@@ -435,7 +468,7 @@ class TranslateBridge(QObject):
             self.failed.emit("请选择有效的输入 EPUB"); return
         if not config["out"]:
             self.failed.emit("请填写输出文件路径"); return
-        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "custom"} and not config["api_key"]:
+        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
             self.failed.emit("该提供方需要 API Key"); return
         if not config["api_url"] or not config["model"]:
             self.failed.emit("请填写 Base URL 和模型"); return
@@ -443,6 +476,8 @@ class TranslateBridge(QObject):
         self._last_cfg = config
         self._cancel_event.clear()
         self._is_paused = False
+        self._stop_requested = False
+        self._active_texts = []
         self.busy = True
         self.progressValue = 0.0
 
@@ -469,13 +504,23 @@ class TranslateBridge(QObject):
         self.progressValue = float(completed) / float(total) if total > 0 else 0.0
 
     def _on_finished(self, out_path):
+        was_stopped = self._stop_requested
+        if was_stopped:
+            self._discard_and_clear_active_cache()
         self._active_translator = None
+        self._active_texts = []
         self.busy = False
         if out_path == CANCELLED_RESULT:
-            self.finished.emit(CANCELLED_RESULT)
+            if was_stopped:
+                self.progressValue = 0.0
+                self.runtimeCleared.emit()
+                self.finished.emit(STOPPED_RESULT)
+            else:
+                self.finished.emit(CANCELLED_RESULT)
         else:
             self.progressValue = 1.0
             self.finished.emit(out_path)
+        self._stop_requested = False
 
     @Slot()
     def cancelTranslation(self):
@@ -483,8 +528,22 @@ class TranslateBridge(QObject):
         self.statusChanged.emit("正在取消...")
 
     @Slot()
+    def stopTranslation(self):
+        self._is_paused = False
+        self._stop_requested = True
+        self._cancel_event.set()
+        removed = self._discard_and_clear_active_cache()
+        self.progressValue = 0.0
+        self.runtimeCleared.emit()
+        if removed:
+            self.statusChanged.emit(f"正在停止... 已清理 {removed} 条本次译文缓存")
+        else:
+            self.statusChanged.emit("正在停止... 将清空本次译文缓存")
+
+    @Slot()
     def pauseTranslation(self):
         self._is_paused = True
+        self._stop_requested = False
         self._cancel_event.set()
         self.statusChanged.emit("暂停中 — 等待当前请求完成...")
 
@@ -531,6 +590,8 @@ class TranslateBridge(QObject):
         import zipfile
         import os as _os
         from pathlib import Path as _Path
+        from translator import get_data_dir
+
         try:
             data_dir = get_data_dir()
             with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -568,4 +629,6 @@ class TranslateBridge(QObject):
 
     @Slot(result=str)
     def dataDir(self) -> str:
+        from translator import get_data_dir
+
         return str(get_data_dir())

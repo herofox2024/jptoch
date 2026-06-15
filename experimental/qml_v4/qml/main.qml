@@ -7,12 +7,12 @@ import "pages"
 
 ApplicationWindow {
     id: appWindow
-    visible: true
+    visible: false
     width: 1180
     height: 780
     minimumWidth: 940
     minimumHeight: 640
-    title: "EPUB 日译中 V4.0"
+    title: "AI日译中（EPUB）V4.0 RC1"
     font.family: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
 
     readonly property string uiFont: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
@@ -24,6 +24,12 @@ ApplicationWindow {
     property var cfg: ConfigBridge
     property var tbridge: TranslateBridge
     property var gbridge: GlossaryBridge
+    property int currentPageIndex: 0
+    property bool taskPageLoaded: true
+    property bool monitorPageLoaded: false
+    property bool apiPageLoaded: false
+    property bool glossaryPageLoaded: false
+    property bool optionsPageLoaded: false
 
     Material.theme: appWindow.darkMode ? Material.Dark : Material.Light
     Material.accent: AppPalette.accentColor
@@ -52,30 +58,27 @@ ApplicationWindow {
     readonly property color hintColor: AppPalette.mutedText
 
     function switchPage(index) {
-        if (pageStack.currentIndex === index) return
-        var wasVisible = false
-        var oldPage = pageStack.children[pageStack.currentIndex]
-        if (oldPage && oldPage.opacity !== undefined) {
-            wasVisible = (oldPage.opacity > 0.5)
-            if (wasVisible) {
-                fadeOutAnim.target = oldPage
-                fadeOutAnim.start()
-            }
-        }
-        pageStack.currentIndex = index
-        var newPage = pageStack.children[index]
-        if (newPage && newPage.opacity !== undefined) {
-            newPage.opacity = 0.0
-            fadeInAnim.target = newPage
-            fadeInAnim.start()
-        } else if (!wasVisible) {
-            var np = pageStack.children[index]
-            if (np && np.opacity !== undefined) np.opacity = 1.0
-        }
+        if (appWindow.currentPageIndex === index) return
+        appWindow.markPageLoaded(index)
+        appWindow.currentPageIndex = index
+        Qt.callLater(appWindow.activateCurrentPage)
     }
 
-    NumberAnimation { id: fadeOutAnim; property: "opacity"; to: 0.0; duration: 120; easing.type: Easing.OutCubic }
-    NumberAnimation { id: fadeInAnim; property: "opacity"; to: 1.0; duration: 180; easing.type: Easing.OutCubic }
+    function markPageLoaded(index) {
+        if (index === 0) appWindow.taskPageLoaded = true
+        else if (index === 1) appWindow.monitorPageLoaded = true
+        else if (index === 2) appWindow.apiPageLoaded = true
+        else if (index === 3) appWindow.glossaryPageLoaded = true
+        else if (index === 4) appWindow.optionsPageLoaded = true
+    }
+
+    function activateCurrentPage() {
+        if (appWindow.currentPageIndex === 3
+                && glossaryLoader.item
+                && glossaryLoader.item.ensureLoaded) {
+            glossaryLoader.item.ensureLoaded()
+        }
+    }
 
     background: Rectangle {
         gradient: Gradient {
@@ -165,14 +168,14 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 0
                 Label {
-                    text: "EPUB 日译中"
+                    text: "AI日译中（EPUB）V4.0 RC1"
                     color: AppPalette.textColor
                     font.family: appWindow.titleFont
                     font.pixelSize: 19
                     font.weight: Font.DemiBold
                 }
                 Label {
-                    text: "轻小说翻译工作台 · PySide6/QML 实验版"
+                    text: "日系小说翻译工作台 · PySide6/QML RC1"
                     color: AppPalette.mutedText
                     font.pixelSize: 12
                 }
@@ -181,15 +184,15 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
 
             Rectangle {
-                Layout.preferredWidth: 124
-                Layout.minimumWidth: 124
+                Layout.preferredWidth: 150
+                Layout.minimumWidth: 150
                 Layout.preferredHeight: 32
                 radius: 16
                 color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.44) : AppPalette.accentSoft
                 border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.62) : AppPalette.borderColor
                 Label {
                     anchors.centerIn: parent
-                    text: appWindow.glassMode ? "V4.0 玻璃" : "V4.0 实验"
+                    text: appWindow.glassMode ? "V4.0 RC1 玻璃" : "V4.0 RC1"
                     color: AppPalette.accentColor
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
@@ -299,15 +302,80 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            StackLayout {
+            Item {
                 id: pageStack
                 anchors.fill: parent
-                currentIndex: 0
-                TaskPage { cfg: appWindow.cfg; tbridge: appWindow.tbridge; onNavigateToStatus: appWindow.switchPage(1) }
-                MonitorPage { cfg: appWindow.cfg; tbridge: appWindow.tbridge }
-                ApiConfigPage { cfg: appWindow.cfg }
-                GlossaryPage { cfg: appWindow.cfg; gbridge: appWindow.gbridge }
-                OptionsPage { cfg: appWindow.cfg }
+                property int currentIndex: appWindow.currentPageIndex
+
+                Loader {
+                    id: taskLoader
+                    anchors.fill: parent
+                    active: appWindow.taskPageLoaded
+                    visible: opacity > 0.01
+                    enabled: appWindow.currentPageIndex === 0
+                    opacity: appWindow.currentPageIndex === 0 ? 1 : 0
+                    sourceComponent: TaskPage {
+                        cfg: appWindow.cfg
+                        tbridge: appWindow.tbridge
+                        onNavigateToStatus: appWindow.switchPage(1)
+                    }
+                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                }
+
+                Loader {
+                    id: monitorLoader
+                    anchors.fill: parent
+                    active: appWindow.monitorPageLoaded
+                    visible: opacity > 0.01
+                    enabled: appWindow.currentPageIndex === 1
+                    opacity: appWindow.currentPageIndex === 1 ? 1 : 0
+                    sourceComponent: MonitorPage {
+                        cfg: appWindow.cfg
+                        tbridge: appWindow.tbridge
+                    }
+                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                }
+
+                Loader {
+                    id: apiLoader
+                    anchors.fill: parent
+                    active: appWindow.apiPageLoaded
+                    visible: opacity > 0.01
+                    enabled: appWindow.currentPageIndex === 2
+                    opacity: appWindow.currentPageIndex === 2 ? 1 : 0
+                    sourceComponent: ApiConfigPage {
+                        cfg: appWindow.cfg
+                    }
+                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                }
+
+                Loader {
+                    id: glossaryLoader
+                    anchors.fill: parent
+                    active: appWindow.glossaryPageLoaded
+                    visible: opacity > 0.01
+                    enabled: appWindow.currentPageIndex === 3
+                    opacity: appWindow.currentPageIndex === 3 ? 1 : 0
+                    sourceComponent: GlossaryPage {
+                        cfg: appWindow.cfg
+                        gbridge: appWindow.gbridge
+                    }
+                    onLoaded: appWindow.activateCurrentPage()
+                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                }
+
+                Loader {
+                    id: optionsLoader
+                    anchors.fill: parent
+                    active: appWindow.optionsPageLoaded
+                    visible: opacity > 0.01
+                    enabled: appWindow.currentPageIndex === 4
+                    opacity: appWindow.currentPageIndex === 4 ? 1 : 0
+                    sourceComponent: OptionsPage {
+                        cfg: appWindow.cfg
+                    }
+                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                }
             }
         }
     }

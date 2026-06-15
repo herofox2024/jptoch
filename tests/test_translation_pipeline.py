@@ -9,7 +9,9 @@ from pathlib import Path
 from unittest import mock
 
 from bs4 import BeautifulSoup
+from ebooklib import ITEM_DOCUMENT
 
+from epub_io import extract_visible_text, iter_text_nodes
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult
 
@@ -24,6 +26,28 @@ def temp_test_dir():
         yield str(path)
     finally:
         shutil.rmtree(path, ignore_errors=True)
+
+
+class FakeEpubItem:
+    def __init__(self, html: str, item_type=ITEM_DOCUMENT, media_type="application/xhtml+xml", file_name="content.xhtml"):
+        self._html = html.encode("utf-8")
+        self._item_type = item_type
+        self.media_type = media_type
+        self.file_name = file_name
+
+    def get_type(self):
+        return self._item_type
+
+    def get_content(self):
+        return self._html
+
+
+class FakeEpubBook:
+    def __init__(self, html: str, **item_kwargs):
+        self.item = FakeEpubItem(html, **item_kwargs)
+
+    def get_items(self):
+        return [self.item]
 
 
 class DummyTranslator(JaZhTranslator):
@@ -69,6 +93,69 @@ class DummyTranslator(JaZhTranslator):
 
 
 class TranslatorTests(unittest.TestCase):
+    def test_iter_text_nodes_keeps_normal_paragraph_mode_and_skips_ruby_rt(self):
+        html = """
+        <html><body>
+          <p><ruby>能<rt>のう</rt>面<rt>めん</rt></ruby>島へ行く。</p>
+          <span>これは段落外なので通常モードでは拾わない。</span>
+        </body></html>
+        """
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+        tags = docs[0][2]
+
+        self.assertEqual(len(tags), 1)
+        self.assertEqual(extract_visible_text(tags[0]), "能面島へ行く。")
+
+    def test_iter_text_nodes_falls_back_to_body_br_layout_and_preserves_anchor(self):
+        long_line = "これは本文です。" * 30
+        html = f"""
+        <html><body>
+          <span id="toc-001"></span>{long_line}<br/>
+          <ruby>久<rt>く</rt>堂<rt>どう</rt></ruby>は尾根を歩いた。<br/>
+        </body></html>
+        """
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+        tags = docs[0][2]
+        texts = [extract_visible_text(tag) for tag in tags]
+
+        self.assertGreaterEqual(len(tags), 2)
+        self.assertEqual(tags[0].get("id"), "toc-001")
+        self.assertEqual(texts[0], long_line)
+        self.assertEqual(texts[1], "久堂は尾根を歩いた。")
+
+    def test_iter_text_nodes_accepts_text_html_items(self):
+        html = "<html><body><p>これはHTML本文です。</p></body></html>"
+        docs = list(iter_text_nodes(FakeEpubBook(
+            html,
+            item_type=0,
+            media_type="text/html",
+            file_name="content.html",
+        )))
+
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(extract_visible_text(docs[0][2][0]), "これはHTML本文です。")
+
+    def test_iter_text_nodes_extracts_short_inbook_toc_links(self):
+        html = """
+        <html><body>
+          <span>\u76ee\u6b21</span><br/>
+          <a href="content_1.html#toc-001">\u7b2c\u4e00\u7ae0\u3000\u63a2\u5075\u529b</a><br/>
+          <a href="content_2.html#toc-002">\u7b2c\u4e8c\u7ae0\u3000\u306a\u3093\u3060\u304b\u3059\u3054\u3044\u3053\u3068\u306b\u306a\u3063\u3066\u304d\u307e\u3057\u305f</a><br/>
+          <a href="content_3.html#toc-003"><ruby>\u524d<rt>\u307e\u3048</rt>\u53e3\u4e0a<rt>\u3053\u3046\u3058\u3087\u3046</rt></ruby></a><br/>
+        </body></html>
+        """
+        docs = list(iter_text_nodes(FakeEpubBook(
+            html,
+            item_type=0,
+            media_type="text/html",
+            file_name="content.html",
+        )))
+        tags = docs[0][2]
+
+        self.assertEqual([tag.name for tag in tags], ["a", "a", "a"])
+        self.assertEqual(tags[0].get("href"), "content_1.html#toc-001")
+        self.assertEqual(extract_visible_text(tags[2]), "\u524d\u53e3\u4e0a")
+
     def test_smart_split_text(self):
         text = "第一段。第二段！\n第三段？第四段。"
         parts = JaZhTranslator._smart_split_text(text, chunk_size=8)
@@ -130,6 +217,34 @@ class TranslatorTests(unittest.TestCase):
         t.model = "other-model"
         self.assertEqual(t.translate("A"), "other-model:A")
         self.assertEqual(calls["n"], 2)
+
+    def test_wenxin_provider_defaults(self):
+        with temp_test_dir() as d:
+            t = JaZhTranslator(
+                api_key="test-key",
+                provider="wenxin",
+                glossary_path=os.path.join(d, "glossary.json"),
+                cache_path=os.path.join(d, "cache.json"),
+            )
+
+            self.assertEqual(t.provider, "wenxin")
+            self.assertEqual(t.api_url, "https://qianfan.baidubce.com/v2/chat/completions")
+            self.assertEqual(t.model, "ernie-4.5-turbo-128k")
+
+    def test_discard_cache_writes_and_clear_texts(self):
+        t = DummyTranslator()
+        t._call_deepseek = lambda text, max_retries=3, text_separator=None: f"ZH:{text}"  # type: ignore
+
+        self.assertEqual(t.translate("A"), "ZH:A")
+        self.assertIn(t._cache_key("A"), t.cache)
+
+        removed = t.clear_cache_for_texts(["A", "A"])
+        self.assertEqual(removed, 1)
+        self.assertNotIn(t._cache_key("A"), t.cache)
+
+        t.discard_cache_writes()
+        self.assertEqual(t.translate("B"), "ZH:B")
+        self.assertNotIn(t._cache_key("B"), t.cache)
 
     def test_proofread_detects_japanese_residue(self):
         t = DummyTranslator()
