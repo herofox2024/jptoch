@@ -82,7 +82,7 @@ _CONFIG_KEYS = [
     "inp", "out", "api_key", "provider", "api_url", "model",
     "extract_glossary", "enable_glossary",
     "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
-    "direction", "enable_thinking", "enable_proofread", "theme",
+    "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone", "theme",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -117,6 +117,8 @@ class ConfigBridge(QObject):
     _directionChanged = Signal()
     _enableThinkingChanged = Signal()
     _enableProofreadChanged = Signal()
+    _proofreadGenreChanged = Signal()
+    _proofreadToneChanged = Signal()
     _themeChanged = Signal()
 
     def __init__(self, parent=None):
@@ -137,6 +139,8 @@ class ConfigBridge(QObject):
         self._direction = "zh"
         self._enable_thinking = False
         self._enable_proofread = True
+        self._proofread_genre = "auto"
+        self._proofread_tone = "auto"
         self._theme = "light"
         self._load_from_disk()
 
@@ -308,6 +312,20 @@ class ConfigBridge(QObject):
     def enableProofread(self, val: bool):
         if val != self._enable_proofread:
             self._enable_proofread = val; self._enableProofreadChanged.emit()
+
+    @Property(str, notify=_proofreadGenreChanged)
+    def proofreadGenre(self) -> str: return self._proofread_genre
+    @proofreadGenre.setter
+    def proofreadGenre(self, val: str):
+        if val != self._proofread_genre:
+            self._proofread_genre = val; self._proofreadGenreChanged.emit()
+
+    @Property(str, notify=_proofreadToneChanged)
+    def proofreadTone(self) -> str: return self._proofread_tone
+    @proofreadTone.setter
+    def proofreadTone(self, val: str):
+        if val != self._proofread_tone:
+            self._proofread_tone = val; self._proofreadToneChanged.emit()
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

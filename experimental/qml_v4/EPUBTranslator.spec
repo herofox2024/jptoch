@@ -29,6 +29,7 @@ a = Analysis(
         "glossary_store",
         "cache_store",
         "text_utils",
+        "style_detector",
         "logging_config",
         "backend.config_bridge",
         "backend.translate_bridge",

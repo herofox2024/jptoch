@@ -26,6 +26,10 @@ Page {
     property int statTotalChars: 0
     property string statElapsed: "--:--"
     property string statStatus: "就绪"
+    property string proofreadStyleText: "等待自动识别"
+    property string proofreadStyleReason: ""
+    property int proofreadStyleConfidence: 0
+    property string proofreadStyleMode: ""
     property int proofreadCount: 0
     property int proofreadMaxItems: 300
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
@@ -62,6 +66,18 @@ Page {
         if (remaining <= 0 && page.safeProgress() >= 0.999) return "00:00"
         if (page.statCharSpeed <= 0) return page.isBusy() ? "计算中" : "--"
         return page.formatDuration(remaining / page.statCharSpeed)
+    }
+
+    function promptStyleMetaText() {
+        if (page.proofreadStyleConfidence > 0) {
+            var modeText = page.proofreadStyleMode === "manual" ? "手动指定" : "自动识别"
+            return modeText + " · 置信度 " + page.proofreadStyleConfidence + "%"
+        }
+        return "开始翻译后显示自动识别结果"
+    }
+
+    function promptStyleReasonText() {
+        return page.proofreadStyleReason || "作品类型和叙事口吻会同时影响初译 Prompt 与译后校对 Prompt。"
     }
 
     function appendProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed) {
@@ -106,6 +122,10 @@ Page {
         page.statTotalChars = 0
         page.statElapsed = "--:--"
         page.statStatus = statusText || "已停止，已清空本次译文缓存"
+        page.proofreadStyleText = "等待自动识别"
+        page.proofreadStyleReason = ""
+        page.proofreadStyleConfidence = 0
+        page.proofreadStyleMode = ""
         rtSrc.text = ""
         rtDst.text = ""
         page.clearProofreadDetails()
@@ -188,6 +208,13 @@ Page {
             page.appendProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed)
         }
 
+        function onProofreadStyleDetected(styleText, reason, confidence, mode) {
+            page.proofreadStyleText = styleText || "通用小说 + 中性口吻"
+            page.proofreadStyleReason = reason || ""
+            page.proofreadStyleConfidence = confidence || 0
+            page.proofreadStyleMode = mode || "auto"
+        }
+
         function onRuntimeCleared() {
             page.clearRuntimeState("已停止，已清空本次译文缓存")
         }
@@ -264,7 +291,7 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 176
+            Layout.preferredHeight: 238
             radius: AppPalette.radiusLarge
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
@@ -338,6 +365,67 @@ Page {
                         elide: Text.ElideRight
                         font.pixelSize: 12
                     }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 62
+                        radius: AppPalette.radiusMedium
+                        color: AppPalette.cardBg
+                        border.color: AppPalette.lineColor
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 12
+
+                            Rectangle {
+                                Layout.preferredWidth: 4
+                                Layout.fillHeight: true
+                                radius: 2
+                                color: AppPalette.amberColor
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    Label {
+                                        text: "Prompt 风格识别结果"
+                                        color: AppPalette.mutedText
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: page.promptStyleMetaText()
+                                        color: AppPalette.amberColor
+                                        font.pixelSize: 11
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: page.proofreadStyleText
+                                    color: AppPalette.textColor
+                                    font.pixelSize: 15
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: page.promptStyleReasonText()
+                                    color: AppPalette.mutedText
+                                    font.pixelSize: 11
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -383,6 +471,7 @@ Page {
                     StatCard { title: "成功率"; value: page.isBusy() && page.statApiTotal === 0 ? "--" : (page.statApiTotal === 0 && page.statCompleted === 0 ? "--" : page.statSuccessRate.toFixed(1) + "%"); tone: "success" }
                     StatCard { title: "新术语"; value: page.statTerms; tone: "amber" }
                     StatCard { title: "文本块"; value: page.statCompleted + " / " + (page.statTotal > 0 ? page.statTotal : "--") }
+                    StatCard { title: "Prompt风格"; value: page.proofreadStyleText; tone: "amber" }
                 }
             }
 

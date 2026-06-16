@@ -87,6 +87,7 @@ class _TranslateWorker(QObject):
     progressChanged = Signal(int, int, int)
     itemTranslated = Signal(str, str)
     proofreadDetail = Signal(str, str, str, str, bool, bool, bool)
+    proofreadStyleDetected = Signal(str, str, int, str)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
     errorDetail = Signal(str)
@@ -113,26 +114,7 @@ class _TranslateWorker(QObject):
                 extract_visible_text,
             )
             from text_utils import is_translatable
-
-            translator = JaZhTranslator(
-                api_key=cfg["api_key"],
-                provider=cfg["provider"],
-                api_url=cfg["api_url"],
-                model=cfg["model"],
-                max_workers=cfg["max_workers"],
-                batch_size=cfg["batch_size"],
-                max_batch_length=cfg["max_batch_length"],
-                max_text_size_for_batch=cfg["max_text_size_for_batch"],
-                api_timeout=cfg["api_timeout"],
-                cancel_event=self._cancel_event,
-                extract_glossary=cfg["extract_glossary"],
-                enable_glossary=cfg["enable_glossary"],
-                enable_thinking=cfg["enable_thinking"],
-                enable_proofread=cfg["enable_proofread"],
-            )
-            self._translator = translator
-            if self._bridge:
-                self._bridge._active_translator = translator
+            from style_detector import detect_novel_style, resolve_style_selection
 
             book = load_book(cfg["inp"])
             docs = list(iter_text_nodes(book))
@@ -163,6 +145,45 @@ class _TranslateWorker(QObject):
             toc_indices_start = len(all_texts)
             all_texts.extend(toc_titles)
             toc_indices_end = len(all_texts)
+
+            detected_style = detect_novel_style(
+                title=os.path.basename(cfg["inp"]),
+                toc_titles=toc_titles,
+                samples=all_texts[:80],
+            )
+            proofread_style = resolve_style_selection(
+                cfg.get("proofread_genre", "auto"),
+                cfg.get("proofread_tone", "auto"),
+                detected_style,
+            )
+            self.proofreadStyleDetected.emit(
+                proofread_style.display_text,
+                proofread_style.reason,
+                proofread_style.confidence,
+                "auto" if cfg.get("proofread_genre") == "auto" or cfg.get("proofread_tone") == "auto" else "manual",
+            )
+
+            translator = JaZhTranslator(
+                api_key=cfg["api_key"],
+                provider=cfg["provider"],
+                api_url=cfg["api_url"],
+                model=cfg["model"],
+                max_workers=cfg["max_workers"],
+                batch_size=cfg["batch_size"],
+                max_batch_length=cfg["max_batch_length"],
+                max_text_size_for_batch=cfg["max_text_size_for_batch"],
+                api_timeout=cfg["api_timeout"],
+                cancel_event=self._cancel_event,
+                extract_glossary=cfg["extract_glossary"],
+                enable_glossary=cfg["enable_glossary"],
+                enable_thinking=cfg["enable_thinking"],
+                enable_proofread=cfg["enable_proofread"],
+                proofread_genre=proofread_style.genre,
+                proofread_tone=proofread_style.tone,
+            )
+            self._translator = translator
+            if self._bridge:
+                self._bridge._active_translator = translator
 
             total_chars = sum(len(t) for t in all_texts) or 1
             total_texts = len(all_texts)
@@ -373,6 +394,7 @@ class TranslateBridge(QObject):
     progressChanged = Signal(int, int, int)
     itemTranslated = Signal(str, str)
     proofreadDetail = Signal(str, str, str, str, bool, bool, bool)
+    proofreadStyleDetected = Signal(str, str, int, str)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
     finished = Signal(str)
@@ -459,6 +481,7 @@ class TranslateBridge(QObject):
             "max_batch_length": cfg.maxBatchLength, "max_text_size_for_batch": cfg.maxTextSizeForBatch,
             "api_timeout": cfg.apiTimeout, "direction": cfg.direction,
             "enable_thinking": cfg.enableThinking, "enable_proofread": cfg.enableProofread,
+            "proofread_genre": cfg.proofreadGenre, "proofread_tone": cfg.proofreadTone,
         }
 
     @Slot("QVariant")
@@ -490,6 +513,7 @@ class TranslateBridge(QObject):
         worker.progressChanged.connect(self._on_progress)
         worker.itemTranslated.connect(self.itemTranslated)
         worker.proofreadDetail.connect(self.proofreadDetail)
+        worker.proofreadStyleDetected.connect(self.proofreadStyleDetected)
         worker.statusChanged.connect(self.statusChanged)
         worker.statUpdate.connect(self.statUpdate)
         worker.errorDetail.connect(self.errorDetail)

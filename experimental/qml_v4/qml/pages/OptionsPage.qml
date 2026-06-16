@@ -12,6 +12,10 @@ Page {
 
     property string activePreset: "custom"
     property bool applyingPreset: false
+    property var proofreadGenreValues: ["auto", "general", "mystery", "scifi", "fantasy"]
+    property var proofreadGenreLabels: ["自动识别（推荐）", "通用小说", "推理小说", "科幻小说", "奇幻小说"]
+    property var proofreadToneValues: ["auto", "neutral", "light", "literary"]
+    property var proofreadToneLabels: ["自动识别（推荐）", "中性口吻", "轻小说口吻", "文学化口吻"]
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     Flickable {
@@ -269,6 +273,70 @@ Page {
             }
 
             GroupBox {
+                title: "翻译与校对 Prompt 风格"
+                Layout.fillWidth: true
+
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 10
+
+                    CheckBox {
+                        text: "启用译后校对"
+                        checked: cfg ? cfg.enableProofread : true
+                        onCheckedChanged: {
+                            if (cfg) {
+                                cfg.enableProofread = checked
+                                cfg.saveToDisk()
+                            }
+                        }
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: page.width > 820 ? 4 : 2
+                        rowSpacing: 8
+                        columnSpacing: 12
+
+                        Label { text: "作品类型" }
+                        ComboBox {
+                            id: proofreadGenreCombo
+                            Layout.fillWidth: true
+                            model: page.proofreadGenreLabels
+                            currentIndex: page.proofreadGenreIndex(cfg ? cfg.proofreadGenre : "auto")
+                            onActivated: function(index) {
+                                if (cfg) {
+                                    cfg.proofreadGenre = page.proofreadGenreValue(index)
+                                    cfg.saveToDisk()
+                                }
+                            }
+                        }
+
+                        Label { text: "叙事口吻" }
+                        ComboBox {
+                            id: proofreadToneCombo
+                            Layout.fillWidth: true
+                            model: page.proofreadToneLabels
+                            currentIndex: page.proofreadToneIndex(cfg ? cfg.proofreadTone : "auto")
+                            onActivated: function(index) {
+                                if (cfg) {
+                                    cfg.proofreadTone = page.proofreadToneValue(index)
+                                    cfg.saveToDisk()
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "作品类型和叙事口吻会影响初译 Prompt；启用译后校对后，也会影响校对 Prompt。自动识别会在开始翻译后根据书名、目录和样本文本生成结果，识别不确定时回退到“通用小说 + 中性口吻”。"
+                        color: AppPalette.mutedText
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+
+            GroupBox {
                 title: "界面与推理"
                 Layout.fillWidth: true
 
@@ -288,11 +356,6 @@ Page {
                         text: "开启深度思考"
                         checked: cfg ? cfg.enableThinking : false
                         onCheckedChanged: { if (cfg) cfg.enableThinking = checked }
-                    }
-                    CheckBox {
-                        text: "启用译后校对"
-                        checked: cfg ? cfg.enableProofread : true
-                        onCheckedChanged: { if (cfg) cfg.enableProofread = checked }
                     }
                 }
             }
@@ -341,5 +404,23 @@ Page {
         if (index === 1) return "dark"
         if (index === 2) return "glass"
         return "light"
+    }
+
+    function proofreadGenreIndex(value) {
+        var idx = page.proofreadGenreValues.indexOf(value)
+        return idx >= 0 ? idx : 0
+    }
+
+    function proofreadGenreValue(index) {
+        return page.proofreadGenreValues[Math.max(0, Math.min(index, page.proofreadGenreValues.length - 1))]
+    }
+
+    function proofreadToneIndex(value) {
+        var idx = page.proofreadToneValues.indexOf(value)
+        return idx >= 0 ? idx : 0
+    }
+
+    function proofreadToneValue(index) {
+        return page.proofreadToneValues[Math.max(0, Math.min(index, page.proofreadToneValues.length - 1))]
     }
 }

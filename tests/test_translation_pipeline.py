@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from ebooklib import ITEM_DOCUMENT
 
 from epub_io import extract_visible_text, iter_text_nodes
+from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult
 
@@ -59,6 +60,8 @@ class DummyTranslator(JaZhTranslator):
         self.extract_glossary = False
         self.enable_thinking = False
         self.enable_proofread = False
+        self.proofread_genre = "general"
+        self.proofread_tone = "neutral"
         self.glossary_categories = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
         self._glossary_index = {}
         self.glossary = {}
@@ -68,6 +71,8 @@ class DummyTranslator(JaZhTranslator):
         self._cache_lock = threading.RLock()
         self._stats_lock = threading.Lock()
         self._glossary_prompt_max_terms = 120
+        self._output_format_data = None
+        self._extraction_prompt_data = None
         self.stats = {
             "api_requests_total": 0,
             "batch_total": 0,
@@ -155,6 +160,44 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual([tag.name for tag in tags], ["a", "a", "a"])
         self.assertEqual(tags[0].get("href"), "content_1.html#toc-001")
         self.assertEqual(extract_visible_text(tags[2]), "\u524d\u53e3\u4e0a")
+
+    def test_detect_novel_style_handles_light_mystery(self):
+        result = detect_novel_style(
+            title="女学生探偵シリーズ",
+            toc_titles=["第一章 探偵力", "第二章 密室の謎", "第三章 アリバイ"],
+            samples=["「えっ、なんでですか先輩！」事件の犯人はまだ分からない。"],
+        )
+
+        self.assertEqual(result.genre, "mystery")
+        self.assertEqual(result.tone, "light")
+        self.assertGreaterEqual(result.confidence, 60)
+
+    def test_resolve_style_selection_manual_override(self):
+        detected = detect_novel_style(
+            title="宇宙船とAI",
+            toc_titles=["第一章 量子実験"],
+            samples=["研究所のロボットが静かに起動した。"],
+        )
+        resolved = resolve_style_selection("mystery", "light", detected)
+
+        self.assertEqual(resolved.genre, "mystery")
+        self.assertEqual(resolved.tone, "light")
+        self.assertEqual(resolved.confidence, 100)
+
+    def test_translation_and_proofread_prompts_combine_genre_and_tone(self):
+        t = DummyTranslator()
+        t.proofread_genre = "mystery"
+        t.proofread_tone = "light"
+
+        proofread_prompt = t._build_proofread_system_prompt()
+        batch_prompt = t._build_batch_system_prompt()
+        single_prompt = t._build_style_guidance("translation")
+
+        for prompt in (proofread_prompt, batch_prompt, single_prompt):
+            self.assertIn("推理小说", prompt)
+            self.assertIn("轻小说口吻", prompt)
+            self.assertIn("不要替读者解释谜题", prompt)
+            self.assertIn("对白要自然", prompt)
 
     def test_smart_split_text(self):
         text = "第一段。第二段！\n第三段？第四段。"

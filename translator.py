@@ -19,6 +19,7 @@ from glossary_store import merge_glossaries as gs_merge_glossaries
 from glossary_store import clean_new_terms as gs_clean_new_terms
 from glossary_store import select_glossary_entries as gs_select_glossary_entries
 from glossary_store import build_glossary_text as gs_build_glossary_text
+from style_detector import GENRE_LABELS, TONE_LABELS
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +317,8 @@ class JaZhTranslator:
         preset: Optional[str] = None,  # 已弃用，保留签名以兼容 Tk UI
         enable_thinking: bool = False,
         enable_proofread: bool = False,
+        proofread_genre: str = "general",
+        proofread_tone: str = "neutral",
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -419,6 +422,8 @@ class JaZhTranslator:
         self.extract_glossary = bool(extract_glossary)
         self.enable_thinking = bool(enable_thinking)
         self.enable_proofread = bool(enable_proofread)
+        self.proofread_genre = proofread_genre if proofread_genre in GENRE_LABELS else "general"
+        self.proofread_tone = proofread_tone if proofread_tone in TONE_LABELS else "neutral"
 
         # 加载提示词模板
         dict_dir = get_dict_dir()
@@ -580,6 +585,9 @@ class JaZhTranslator:
                     issues.append(f"术语未按术语表翻译: {original} -> {translation}")
         return issues
 
+    def _build_proofread_system_prompt(self) -> str:
+        return self._build_style_guidance("proofread")
+
     def _proofread_translation(self, src: str, draft: str, issues: List[str]) -> str:
         """Ask the model to fix only detected translation/proper-noun issues."""
         if not bool(getattr(self, "enable_proofread", False)) or not issues:
@@ -587,14 +595,7 @@ class JaZhTranslator:
 
         selected_entries = self._select_proofread_glossary_entries(src, max_terms=30)
         glossary_text = self._build_glossary_text(selected_entries)
-        system_prompt = """你是日译中轻小说校对编辑。
-你的任务是修正中文初译中的明显问题，不做自由润色。
-必须遵守：
-1. 不新增剧情、不删除信息、不改变原意。
-2. 修正日文残留、漏译、明显错译。
-3. 专有名词必须按术语表翻译。
-4. 保持原段落结构，不输出解释。
-5. 只输出修正后的中文译文。"""
+        system_prompt = self._build_proofread_system_prompt()
         user_prompt = (
             "【发现的问题】\n"
             + "\n".join(f"- {issue}" for issue in issues)
@@ -839,6 +840,88 @@ class JaZhTranslator:
             glossary_snapshot = dict(self.glossary)
         return gs_build_glossary_text(glossary_snapshot, self.glossary_categories, selected_entries)
 
+    def _get_style_profile(self) -> Tuple[str, str, str, str]:
+        genre = self.proofread_genre if self.proofread_genre in GENRE_LABELS else "general"
+        tone = self.proofread_tone if self.proofread_tone in TONE_LABELS else "neutral"
+        return genre, tone, GENRE_LABELS.get(genre, "通用小说"), TONE_LABELS.get(tone, "中性口吻")
+
+    def _build_style_guidance(self, stage: str) -> str:
+        genre, tone, genre_label, tone_label = self._get_style_profile()
+        genre_rules = {
+            "general": [
+                "保持中性、自然、准确的中文表达。",
+                "不主动强化文风，不把译文改成轻小说、古风或网络文风。",
+                "只在表达明显生硬时做小幅调整。",
+            ],
+            "mystery": [
+                "保留线索、时间顺序、人物关系、证词和模糊表达。",
+                "不要替读者解释谜题，不要补充原文没有明说的因果。",
+                "对数字、地点、称谓、物证、动作细节保持准确。",
+                "语气可以更清晰，但不能牺牲原文悬念。",
+            ],
+            "scifi": [
+                "保持技术术语、设定名、组织名、设备名一致。",
+                "技术表达要准确清楚，不要为了口语化而削弱专业感。",
+                "不擅自解释设定，不补充原文没有的信息。",
+                "对单位、数字、时间、空间、实验条件保持准确。",
+            ],
+            "fantasy": [
+                "保持人名、地名、种族、魔法、技能、道具、组织名一致。",
+                "文风可以略有叙事感，但不要改成古风腔或网文腔。",
+                "不擅自强化设定，不补充原文没有的世界观说明。",
+                "战斗、技能、称号和等级表达要清楚稳定。",
+            ],
+        }
+        tone_rules = {
+            "neutral": [
+                "使用中性、克制、自然的中文口吻。",
+                "不额外强化角色卖萌、吐槽或文学腔。",
+            ],
+            "light": [
+                "对白要自然，符合中文轻小说阅读习惯。",
+                "保留角色语气、吐槽感、情绪强弱和称呼关系。",
+                "不要过度书面化，不要把口语对白改得太正式。",
+                "不要擅自加入网络流行语。",
+            ],
+            "literary": [
+                "叙述语言可以更顺畅、凝练，但不能改写原意。",
+                "保留原文的节奏、留白和情绪，不要过度口语化。",
+                "避免华丽堆砌，不要把普通叙述改成生硬文学腔。",
+            ],
+        }
+
+        def numbered(items: List[str]) -> str:
+            return "\n".join(f"{idx}. {item}" for idx, item in enumerate(items, 1))
+
+        if stage == "proofread":
+            header = (
+                "你是日译中小说校对编辑。\n"
+                f"当前作品类型是：{genre_label}。\n"
+                f"当前叙事口吻是：{tone_label}。\n\n"
+                "你的任务是修正中文初译中的明显问题，不做自由润色。\n\n"
+                "必须遵守：\n"
+                "1. 不新增剧情、不删除信息、不改变原意。\n"
+                "2. 修正日文残留、漏译、明显错译、语病和不自然表达。\n"
+                "3. 专有名词必须按术语表翻译。\n"
+                "4. 保持原段落结构，不合并、不拆分段落。\n"
+                "5. 不解释原文，不输出注释，不输出修改说明。\n"
+                "6. 只输出修正后的中文译文。\n\n"
+            )
+        else:
+            header = (
+                "当前翻译风格设置：\n"
+                f"- 作品类型：{genre_label}\n"
+                f"- 叙事口吻：{tone_label}\n\n"
+                "请按上述类型与口吻进行初译，同时必须遵守：\n"
+                "1. 不新增剧情、不删除信息、不改变原意。\n"
+                "2. 专有名词必须按术语表翻译。\n"
+                "3. 保持原段落结构，不合并、不拆分段落。\n"
+                "4. 保持人物语气、叙事节奏和情绪层次。\n"
+                "5. 只输出译文，不输出解释或注释。\n\n"
+            )
+
+        return header + f"{genre_label}要求：\n{numbered(genre_rules[genre])}\n\n{tone_label}要求：\n{numbered(tone_rules[tone])}"
+
 
     def _build_batch_system_prompt(self) -> str:
         """
@@ -885,11 +968,12 @@ JSON 顶层字段：
                         extraction_prompt = resolve_template_vars(extraction_prompt, target_lang="简体中文")
                         system_prompt += "\n\n" + extraction_prompt
 
-                return system_prompt
+                return system_prompt.rstrip() + "\n\n" + self._build_style_guidance("translation")
 
         # 回退到硬编码
         if not self.extract_glossary:
-            return base_prompt + '\n\n当未启用术语抽取时，必须返回 "new_terms": []。'
+            system_prompt = base_prompt + '\n\n当未启用术语抽取时，必须返回 "new_terms": []。'
+            return system_prompt.rstrip() + "\n\n" + self._build_style_guidance("translation")
 
         # 添加术语提取规则
         extraction_rules = """
@@ -905,7 +989,8 @@ JSON 顶层字段：
             if template_extraction:
                 extraction_rules = "\n" + resolve_template_vars(template_extraction, target_lang="简体中文")
 
-        return base_prompt + "\n" + extraction_rules
+        system_prompt = base_prompt + "\n" + extraction_rules
+        return system_prompt.rstrip() + "\n\n" + self._build_style_guidance("translation")
 
     def _call_deepseek_single(
         self,
@@ -951,7 +1036,8 @@ JSON 顶层字段：
 2. 仅输出译文，不输出说明。
 3. 不改变段落数量与顺序。"""
 
-        system_prompt = sakura_prompt if self.provider == "sakura" else deepseek_prompt
+        system_prompt = (sakura_prompt if self.provider == "sakura" else deepseek_prompt).rstrip()
+        system_prompt += "\n\n" + self._build_style_guidance("translation")
         if is_batch:
             system_prompt += f"""
 
