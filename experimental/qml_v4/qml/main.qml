@@ -1,9 +1,10 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls.Material
-import QtQuick.Layouts
-import "."
-import "pages"
+    import QtQuick.Controls.Material
+    import QtQuick.Layouts
+    import "."
+    import "pages"
+    import "components"
 
 ApplicationWindow {
     id: appWindow
@@ -17,6 +18,8 @@ ApplicationWindow {
 
     readonly property string uiFont: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : uiFont
+
+    // 主题系统：通过 cfg.theme 驱动，Binding 同步到 AppPalette
     readonly property string themeMode: cfg ? cfg.theme : "light"
     readonly property bool glassMode: themeMode === "glass"
     readonly property bool darkMode: themeMode === "dark"
@@ -24,6 +27,7 @@ ApplicationWindow {
     property var cfg: ConfigBridge
     property var tbridge: TranslateBridge
     property var gbridge: GlossaryBridge
+    property var toast: typeof ToastBridge !== "undefined" ? ToastBridge : null
     property int currentPageIndex: 0
     property bool taskPageLoaded: true
     property bool monitorPageLoaded: false
@@ -35,6 +39,7 @@ ApplicationWindow {
     Material.accent: AppPalette.accentColor
     Material.primary: AppPalette.accentColor
 
+    // 主题同步：将 main.qml 的 themeMode/darkMode 绑定到 AppPalette
     Binding {
         target: AppPalette
         property: "themeMode"
@@ -49,9 +54,18 @@ ApplicationWindow {
         restoreMode: Binding.RestoreNone
     }
 
+    // 监听主题变化 → 保存到磁盘 + Toast 通知
     Connections {
         target: cfg
-        function onThemeChanged() { if (cfg) cfg.saveToDisk() }
+        function onThemeChanged() {
+            if (cfg) cfg.saveToDisk()
+            if (typeof ToastBridge !== "undefined" && ToastBridge !== null) {
+                var label = typeof ThemeRegistry !== "undefined"
+                    ? ThemeRegistry.labelFor(cfg.theme) : cfg.theme
+                // 直接 emit 信号，QML Toast 组件通过 Connections 接收
+                ToastBridge.showInfo("主题已切换: " + label)
+            }
+        }
         ignoreUnknownSignals: true
     }
 
@@ -81,6 +95,10 @@ ApplicationWindow {
     }
 
     background: Rectangle {
+        id: bgRoot
+        // 主题过渡：在 color/opacity 变化时添加平滑动画
+        Behavior on color { ColorAnimation { duration: 400; easing.type: Easing.OutCubic } }
+
         gradient: Gradient {
             GradientStop { position: 0.0; color: AppPalette.background }
             GradientStop { position: 1.0; color: AppPalette.backgroundAlt }
@@ -278,21 +296,53 @@ ApplicationWindow {
 
                 Item { Layout.fillHeight: true }
 
-                Rectangle {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 88
-                    radius: 18
-                    color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.11)
-                    border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+                    spacing: 8
 
-                    Label {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        text: "暂停后可切换模型，再恢复续译。"
-                        wrapMode: Text.WordWrap
-                        color: "#d9eee7"
-                        font.pixelSize: 11
-                        opacity: 0.86
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 56
+                        radius: 18
+                        color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.11)
+                        border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+
+                        Label {
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            text: "暂停后可切换模型，再恢复续译。"
+                            wrapMode: Text.WordWrap
+                            color: "#d9eee7"
+                            font.pixelSize: 11
+                            opacity: 0.86
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 50
+                        radius: 18
+                        color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.06)
+                        border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: 2
+
+                            Label {
+                                text: "github.com/herofox2024/jptoch"
+                                color: "#b8d8ce"
+                                font.pixelSize: 10
+                                opacity: 0.75
+                            }
+
+                            Label {
+                                text: "4284574@qq.com"
+                                color: "#b8d8ce"
+                                font.pixelSize: 10
+                                opacity: 0.65
+                            }
+                        }
                     }
                 }
             }
@@ -583,5 +633,13 @@ ApplicationWindow {
 
         onNameChanged: iconCanvas.requestPaint()
         onLineColorChanged: iconCanvas.requestPaint()
+    }
+
+    // ====== Toast 通知浮层 ======
+    Loader {
+        id: toastLoader
+        anchors.fill: parent
+        active: true
+        sourceComponent: Toast { }
     }
 }

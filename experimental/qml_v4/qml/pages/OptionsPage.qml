@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import ".."
+import "../components"
 
 Page {
     id: page
@@ -16,6 +17,8 @@ Page {
     property var proofreadGenreLabels: ["自动识别（推荐）", "通用小说", "推理小说", "科幻小说", "奇幻小说"]
     property var proofreadToneValues: ["auto", "neutral", "light", "literary"]
     property var proofreadToneLabels: ["自动识别（推荐）", "中性口吻", "轻小说口吻", "文学化口吻"]
+    property var proofreadProviderValues: ["", "deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"]
+    property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Gemini", "智谱 GLM", "文心一言", "自定义"]
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     Flickable {
@@ -346,16 +349,117 @@ Page {
 
                     Label { text: "主题:" }
                     ComboBox {
-                        model: ["浅色纸感", "深色墨色", "iOS26 玻璃"]
-                        currentIndex: page.themeIndex(cfg ? cfg.theme : "light")
+                        model: ThemeRegistry.labels()
+                        currentIndex: ThemeRegistry.indexFromName(cfg ? cfg.theme : "light")
                         onActivated: function(index) {
-                            if (cfg) cfg.theme = page.themeFromIndex(index)
+                            var name = ThemeRegistry.nameFromIndex(index)
+                            if (cfg) cfg.theme = name
                         }
                     }
                     CheckBox {
                         text: "开启深度思考"
                         checked: cfg ? cfg.enableThinking : false
                         onCheckedChanged: { if (cfg) cfg.enableThinking = checked }
+                    }
+                }
+            }
+
+            GroupBox {
+                title: "校对模型与缓存"
+                Layout.fillWidth: true
+
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 10
+
+                    Label {
+                        text: "校对可使用独立供应商和模型。跨模型缓存只复用已经过校对的译文，避免换模型时误用未验证旧译文。"
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                        Layout.fillWidth: true
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: page.width > 820 ? 4 : 2
+                        rowSpacing: 8
+                        columnSpacing: 12
+
+                        Label {
+                            text: "校对供应商"
+                        }
+                        ComboBox {
+                            id: proofreadProviderCombo
+                            Layout.fillWidth: true
+                            model: page.proofreadProviderLabels
+                            currentIndex: page.proofreadProviderIndex(cfg ? cfg.proofreadProvider : "")
+                            onActivated: function(index) {
+                                if (!cfg) return
+                                var provider = page.proofreadProviderValue(index)
+                                cfg.proofreadProvider = provider
+                                if (provider === "") {
+                                    cfg.proofreadApiUrl = ""
+                                    cfg.proofreadModel = ""
+                                } else {
+                                    var defaults = cfg.getProviderDefaults(provider)
+                                    cfg.proofreadApiUrl = defaults.url || ""
+                                    cfg.proofreadModel = defaults.model || ""
+                                }
+                                cfg.saveToDisk()
+                            }
+                        }
+
+                        Label {
+                            text: "校对 API Key"
+                        }
+                        TextField {
+                            id: proofreadApiKeyField
+                            Layout.fillWidth: true
+                            placeholderText: "留空则使用翻译 API Key"
+                            text: cfg ? cfg.proofreadApiKey : ""
+                            echoMode: TextInput.Password
+                            selectByMouse: true
+                            onTextChanged: { if (cfg) cfg.proofreadApiKey = text }
+                            onEditingFinished: { if (cfg) cfg.saveToDisk() }
+                        }
+
+                        Label {
+                            text: "校对 Base URL"
+                        }
+                        TextField {
+                            id: proofreadApiUrlField
+                            Layout.fillWidth: true
+                            placeholderText: "留空则使用翻译 Base URL"
+                            text: cfg ? cfg.proofreadApiUrl : ""
+                            selectByMouse: true
+                            onTextChanged: { if (cfg) cfg.proofreadApiUrl = text }
+                            onEditingFinished: { if (cfg) cfg.saveToDisk() }
+                        }
+
+                        Label {
+                            text: "校对模型名"
+                        }
+                        TextField {
+                            id: proofreadModelField
+                            Layout.fillWidth: true
+                            placeholderText: "留空则使用翻译模型"
+                            text: cfg ? cfg.proofreadModel : ""
+                            selectByMouse: true
+                            onTextChanged: { if (cfg) cfg.proofreadModel = text }
+                            onEditingFinished: { if (cfg) cfg.saveToDisk() }
+                        }
+                    }
+
+                    CheckBox {
+                        text: "允许跨模型复用已校对译文缓存"
+                        checked: cfg ? cfg.allowTextCacheReuse : false
+                        onCheckedChanged: {
+                            if (cfg) {
+                                cfg.allowTextCacheReuse = checked
+                                cfg.saveToDisk()
+                            }
+                        }
                     }
                 }
             }
@@ -394,18 +498,6 @@ Page {
         presetHint.text = "参数已手动修改，当前为自定义性能参数"
     }
 
-    function themeIndex(theme) {
-        if (theme === "dark") return 1
-        if (theme === "glass") return 2
-        return 0
-    }
-
-    function themeFromIndex(index) {
-        if (index === 1) return "dark"
-        if (index === 2) return "glass"
-        return "light"
-    }
-
     function proofreadGenreIndex(value) {
         var idx = page.proofreadGenreValues.indexOf(value)
         return idx >= 0 ? idx : 0
@@ -422,5 +514,14 @@ Page {
 
     function proofreadToneValue(index) {
         return page.proofreadToneValues[Math.max(0, Math.min(index, page.proofreadToneValues.length - 1))]
+    }
+
+    function proofreadProviderIndex(value) {
+        var idx = page.proofreadProviderValues.indexOf(value)
+        return idx >= 0 ? idx : 0
+    }
+
+    function proofreadProviderValue(index) {
+        return page.proofreadProviderValues[Math.max(0, Math.min(index, page.proofreadProviderValues.length - 1))]
     }
 }

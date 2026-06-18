@@ -17,6 +17,8 @@ from PySide6.QtCore import (
 
 logger = logging.getLogger(__name__)
 
+from backend.toast_bridge import ToastBridge
+
 GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
 
 
@@ -410,8 +412,10 @@ class GlossaryBridge(QObject):
         try:
             count = self._model.save_to_disk()
             self.saved.emit(count)
+            ToastBridge.success(f"术语表已保存 ({count} 条)")
         except Exception as e:
             self.errorOccurred.emit(f"保存术语表失败: {e}")
+            ToastBridge.error("保存术语表失败")
 
     @Slot(str)
     def addRow(self, category: str = "Item"):
@@ -429,24 +433,30 @@ class GlossaryBridge(QObject):
         try:
             result = self._model.import_json(path_str)
             self.importDone.emit(result["added"], result["skipped"], result["conflicts"], result["total"])
+            ToastBridge.success(f"导入完成: 新增 {result['added']} 条, 跳过 {result['skipped']} 条")
         except Exception as e:
             self.errorOccurred.emit(f"导入失败: {e}")
+            ToastBridge.error("术语表导入失败")
 
     @Slot(str)
     def exportJson(self, path_str: str):
         try:
             count = self._model.export_json(path_str)
             self.exportDone.emit(path_str, count)
+            ToastBridge.success(f"术语表已导出 ({count} 条)")
         except Exception as e:
             self.errorOccurred.emit(f"导出失败: {e}")
+            ToastBridge.error("术语表导出失败")
 
     @Slot(str)
     def restoreBackup(self, path_str: str):
         try:
             count = self._model.restore_backup(path_str)
             self.restoreDone.emit(count)
+            ToastBridge.success(f"备份已恢复 ({count} 条)")
         except Exception as e:
             self.errorOccurred.emit(f"恢复备份失败: {e}")
+            ToastBridge.error("恢复备份失败")
 
     @Slot(str, str, str)
     def search(self, query: str, category_filter: str, source_filter: str):

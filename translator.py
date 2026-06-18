@@ -19,6 +19,8 @@ from glossary_store import merge_glossaries as gs_merge_glossaries
 from glossary_store import clean_new_terms as gs_clean_new_terms
 from glossary_store import select_glossary_entries as gs_select_glossary_entries
 from glossary_store import build_glossary_text as gs_build_glossary_text
+from glossary_store import rebuild_glossary_index as gs_rebuild_glossary_index
+from glossary_store import has_valid_glossary_match as gs_has_valid_glossary_match
 from style_detector import GENRE_LABELS, TONE_LABELS
 
 
@@ -294,6 +296,199 @@ class JaZhTranslator:
     MAX_RETRIES = 3  # API 请求最大重试次数
     MAX_CONTINUATIONS = 2  # finish_reason=length 时最大续取次数
 
+    # ---- Phase 1-③: 本地预翻译规则表（高频短句直接替换，跳过 API）----
+    PRE_TRANSLATE_RULES: Dict[str, str] = {
+        # 基本应答
+        "はい": "是的",
+        "いいえ": "不",
+        "うん": "嗯",
+        "ううん": "不是",
+        "そう": "是的",
+        "そうか": "是吗",
+        "そうですね": "是啊",
+        "なるほど": "原来如此",
+        "もちろん": "当然",
+        "もちろんです": "当然",
+        "大丈夫": "没问题",
+        "大丈夫です": "没关系",
+        "大丈夫ですか": "没事吧",
+        "よかった": "太好了",
+        "よかったです": "太好了",
+        "残念": "可惜",
+        "残念です": "真遗憾",
+        "仕方ない": "没办法",
+        "仕方がない": "没办法",
+        "気にしないで": "别在意",
+        "気をつけて": "小心",
+        # 问候
+        "おはよう": "早上好",
+        "おはようございます": "早上好",
+        "こんにちは": "你好",
+        "こんばんは": "晚上好",
+        "おやすみ": "晚安",
+        "おやすみなさい": "晚安",
+        "さようなら": "再见",
+        "じゃあね": "再见",
+        "またね": "回头见",
+        "また後で": "待会见",
+        "いってきます": "我出门了",
+        "いってらっしゃい": "路上小心",
+        "ただいま": "我回来了",
+        "おかえり": "欢迎回来",
+        "おかえりなさい": "欢迎回来",
+        # 感谢/道歉
+        "ありがとう": "谢谢",
+        "ありがとうございます": "谢谢",
+        "ありがとうございました": "非常感谢",
+        "どうも": "多谢",
+        "すみません": "不好意思",
+        "すいません": "不好意思",
+        "ごめん": "抱歉",
+        "ごめんなさい": "对不起",
+        "ごめんね": "抱歉啊",
+        "申し訳ありません": "非常抱歉",
+        "申し訳ございません": "非常抱歉",
+        # 用餐
+        "いただきます": "我开动了",
+        "ごちそうさま": "我吃好了",
+        "ごちそうさまでした": "多谢款待",
+        "おいしい": "好吃",
+        "おいしいです": "很好吃",
+        "うまい": "好吃",
+        "まずい": "难吃",
+        # 日常
+        "お願いします": "拜托了",
+        "お願い": "拜托",
+        "お疲れ様": "辛苦了",
+        "お疲れ様です": "辛苦了",
+        "お疲れ様でした": "辛苦了",
+        "頑張って": "加油",
+        "頑張ります": "我会努力的",
+        "頑張った": "努力了",
+        "すごい": "好厉害",
+        "すごいですね": "好厉害啊",
+        "やった": "太好了",
+        "やったー": "太好了",
+        "やばい": "糟了",
+        "まさか": "不会吧",
+        "本当": "真的",
+        "本当ですか": "真的吗",
+        "嘘": "骗人",
+        "嘘つき": "骗子",
+        "さすが": "不愧是",
+        "さすがです": "真不愧是",
+        "わかった": "知道了",
+        "わかりました": "明白了",
+        "わからない": "不知道",
+        "わかりません": "我不明白",
+        "知らない": "不知道",
+        "知りません": "不知道",
+        "待って": "等等",
+        "ちょっと待って": "稍等一下",
+        "ちょっと": "稍等",
+        "どうぞ": "请",
+        "どうした": "怎么了",
+        "どうしたの": "怎么了",
+        "どうしましたか": "怎么了",
+        "どうしよう": "怎么办",
+        "大変": "糟糕",
+        "大変です": "不得了",
+        "やめろ": "住手",
+        "やめて": "不要",
+        "やめてください": "请住手",
+        "助けて": "救命",
+        "助けてください": "请救救我",
+        "おめでとう": "恭喜",
+        "おめでとうございます": "恭喜",
+        "さあ": "来吧",
+        "ええ": "嗯",
+        "えっと": "那个",
+        "あの": "那个",
+        "あのさ": "那个啊",
+        "ねえ": "喂",
+        "おい": "喂",
+        "ほら": "你看",
+        "はいはい": "好好",
+        "まあまあ": "还行",
+        "さて": "那么",
+        "さてと": "那么",
+        "よし": "好",
+        "よし！": "好！",
+        "えっ": "诶",
+        "ええっ": "诶诶",
+        "ふん": "哼",
+        "ふうん": "哼",
+        "へえ": "哦",
+        "へー": "哦—",
+        "はあ": "哈",
+        "はぁ": "唉",
+    }
+
+    # ---- Phase 1-①: 智能分批阈值 ----
+    SMART_BATCH_SHORT = 30    # 短文本上限（称呼、语气词、短对话）
+    SMART_BATCH_LONG = 200    # 长文本下限（整段叙述，单独处理）
+
+    # ---- Phase 2-④: 上下文窗口翻译 ----
+    ENABLE_CONTEXT_WINDOW = True   # 是否启用上下文窗口
+    ENABLE_BATCH_ITEM_CONTEXT = False  # 批量 JSON 不默认给每条塞 prev/next，避免大幅增加 token
+    CONTEXT_PREVIEW_LEN = 80       # 前后文预览最大字符数
+
+    def _build_context_guidance(self, prev_text: Optional[str], next_text: Optional[str]) -> str:
+        """构建上下文提示（仅附加到 user_prompt，不影响 system_prompt）。"""
+        parts = []
+        if prev_text:
+            preview = prev_text[:self.CONTEXT_PREVIEW_LEN]
+            parts.append(f"【前文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】\n{preview}")
+        if next_text:
+            preview = next_text[:self.CONTEXT_PREVIEW_LEN]
+            parts.append(f"【后文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】\n{preview}")
+        return "\n\n".join(parts) if parts else ""
+
+    # ---- Phase 2-⑤: 校对分级 ----
+    PROOFREAD_SKIP_PATTERNS: List[str] = [
+        # 这些模式的译文通常不需要校对（标点、空行、纯数字等）
+        r"^[、。！？…\s]*$",       # 纯标点/空白
+        r"^\d+[%％]?$",            # 纯数字/百分比
+        r"^[A-Za-z0-9\s]+$",      # 纯英文数字
+        r"^[「」『』\s]*$",        # 纯引号
+    ]
+
+    # P3-⑥: 提供方默认 URL 映射
+    _PROVIDER_URLS: Dict[str, str] = {
+        "deepseek": "https://api.deepseek.com/chat/completions",
+        "doubao": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        "sakura": "http://127.0.0.1:8080/v1/chat/completions",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "glm": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "wenxin": "https://qianfan.baidubce.com/v2/chat/completions",
+        "custom": "",
+    }
+
+    @classmethod
+    def _get_provider_default_url(cls, provider: str) -> str:
+        return cls._PROVIDER_URLS.get(provider, "")
+
+    def _get_proofread_url(self) -> str:
+        """获取校对专用 API URL。"""
+        if self._proofread_api_url:
+            return self._proofread_api_url
+        return self.api_url
+
+    def _should_skip_proofread(self, src: str, dst: str) -> bool:
+        """快速判断译文是否应该跳过 LLM 校对。"""
+        dst = (dst or "").strip()
+        if not dst:
+            return True
+        # 超短文本跳过校对（标点、语气词等）
+        if len(src) <= 5 and len(dst) <= 5:
+            return True
+        # 匹配跳过模式
+        import re as _re
+        for pattern in self.PROOFREAD_SKIP_PATTERNS:
+            if _re.match(pattern, dst):
+                return True
+        return False
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -319,6 +514,11 @@ class JaZhTranslator:
         enable_proofread: bool = False,
         proofread_genre: str = "general",
         proofread_tone: str = "neutral",
+        proofread_model: Optional[str] = None,  # P3-⑥: 校对专用模型
+        proofread_provider: Optional[str] = None,  # P3-⑥: 校对专用 provider
+        proofread_api_key: Optional[str] = None,
+        proofread_api_url: Optional[str] = None,
+        allow_text_cache_reuse: bool = False,
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -375,7 +575,9 @@ class JaZhTranslator:
         self.frequency_penalty = (
             frequency_penalty if frequency_penalty is not None else (0.1 if self.provider == "sakura" else None)
         )
-        if self.provider == "glm":
+        glm_model_name = self.model.lower()
+        is_glm_free_or_flash = self.provider == "glm" and ("flash" in glm_model_name or "free" in glm_model_name)
+        if is_glm_free_or_flash:
             max_workers = min(max_workers, 2)
             batch_size = min(batch_size, 2)
             max_batch_length = min(max_batch_length, 500)
@@ -400,6 +602,7 @@ class JaZhTranslator:
             logger.info(f"加载术语表: {glossary_count} 条术语（来源: {self.glossary_path}）")
         else:
             logger.info(f"术语表为空或不存在: {self.glossary_path}")
+        self._glossary_index = gs_rebuild_glossary_index(self.glossary or {}, self.glossary_categories) if self.enable_glossary else {}
 
         self._cache_dirty = False
         self._save_counter = 0
@@ -424,6 +627,17 @@ class JaZhTranslator:
         self.enable_proofread = bool(enable_proofread)
         self.proofread_genre = proofread_genre if proofread_genre in GENRE_LABELS else "general"
         self.proofread_tone = proofread_tone if proofread_tone in TONE_LABELS else "neutral"
+        # P3-⑥: 双模型流水线 — 校对用独立模型
+        self.proofread_model = proofread_model or None
+        self.proofread_provider = proofread_provider or None
+        self.proofread_api_key = proofread_api_key or None
+        self.allow_text_cache_reuse = bool(allow_text_cache_reuse)
+        # P3-⑥: 校对专用 API URL（当 proofread_provider 与主 provider 不同时使用）
+        self._proofread_api_url: Optional[str] = None
+        if proofread_api_url:
+            self._proofread_api_url = self._normalize_api_url(proofread_api_url)
+        elif self.proofread_provider and self.proofread_provider != self.provider:
+            self._proofread_api_url = self._get_provider_default_url(self.proofread_provider)
 
         # 加载提示词模板
         dict_dir = get_dict_dir()
@@ -446,15 +660,17 @@ class JaZhTranslator:
             "glossary_new_terms_added": 0,
             "proofread_suspicious": 0,
             "proofread_fixed": 0,
+            "proofread_rejected": 0,
         }
         logger.info(
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
             f"并发数={self.max_workers}, 批量大小={self.batch_size}"
         )
 
-    def _apply_provider_payload_options(self, payload: Dict[str, Any]) -> None:
+    def _apply_provider_payload_options(self, payload: Dict[str, Any], provider: Optional[str] = None) -> None:
         """为特定提供方追加请求参数。"""
-        if (not self.enable_thinking) and self.provider in {"deepseek", "doubao", "glm", "custom"}:
+        active_provider = (provider or self.provider or "").lower()
+        if (not self.enable_thinking) and active_provider in {"deepseek", "doubao", "glm", "custom"}:
             # 用户要求关闭深度思考。
             payload["thinking"] = {"type": "disabled"}
 
@@ -557,13 +773,203 @@ class JaZhTranslator:
         semantic_pattern = r"[A-Za-z0-9\u3040-\u30ff\u31f0-\u31ff\u3400-\u9fff]"
         return bool(re.search(semantic_pattern, original or "")) and bool(re.search(semantic_pattern, translation or ""))
 
+    @staticmethod
+    def _contains_katakana(text: str) -> bool:
+        return bool(re.search(r"[\u30a0-\u30ff\u31f0-\u31ff\uff66-\uff9f]", text or ""))
+
+    @staticmethod
+    def _is_explicit_force_glossary_marker(source: str, info: str) -> bool:
+        marker = f"{source} {info}".lower()
+        return any(token in marker for token in ("force", "forced", "confirmed", "强制", "固定", "已确认"))
+
+    @staticmethod
+    def _is_reference_only_glossary_marker(source: str, info: str) -> bool:
+        source_l = (source or "").strip().lower()
+        marker = f"{source} {info}".lower()
+        if source_l in {"auto", "自动提取", "reference", "ref", "weak", "suggestion"}:
+            return True
+        return any(token in marker for token in ("参考", "弱", "多义", "普通名词", "不强制", "reference-only"))
+
+    def _lookup_glossary_metadata(self, original: str) -> Dict[str, str]:
+        original = str(original or "").strip()
+        if not original:
+            return {}
+
+        glossary_snapshot = getattr(self, "glossary", {}) or {}
+        categories = getattr(self, "glossary_categories", DEFAULT_GLOSSARY_CATEGORIES)
+        is_categorized = any(key in glossary_snapshot and isinstance(glossary_snapshot.get(key), list) for key in categories)
+        if is_categorized:
+            for category in categories:
+                entries = glossary_snapshot.get(category, [])
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    entry_original = str(entry.get("original", entry.get("src", ""))).strip()
+                    if entry_original != original:
+                        continue
+                    return {
+                        "category": category,
+                        "source": str(entry.get("source", "")).strip(),
+                        "info": str(entry.get("info", "")).strip(),
+                    }
+            return {}
+
+        value = glossary_snapshot.get(original)
+        if isinstance(value, dict):
+            return {
+                "category": "Item",
+                "source": str(value.get("source", "")).strip(),
+                "info": str(value.get("info", "")).strip(),
+            }
+        return {"category": "Item", "source": "", "info": ""} if value else {}
+
+    def _glossary_enforcement_level(self, entry: Dict[str, str]) -> str:
+        """Return force/reference/ignore for proofread glossary enforcement."""
+        original = str(entry.get("original", "")).strip()
+        translation = str(entry.get("translation", "")).strip()
+        if not self._is_meaningful_glossary_term(original, translation):
+            return "ignore"
+
+        metadata = self._lookup_glossary_metadata(original)
+        category = str(entry.get("category") or metadata.get("category") or "Item").strip()
+        source = str(entry.get("source") or metadata.get("source") or "").strip()
+        info = str(entry.get("info") or metadata.get("info") or "").strip()
+
+        if self._is_explicit_force_glossary_marker(source, info):
+            return "force"
+        if self._is_reference_only_glossary_marker(source, info):
+            return "reference"
+
+        if category in {"Person", "Location", "Org", "Skill", "Creature"}:
+            return "force"
+
+        # Short katakana item names are often common nouns embedded in longer words,
+        # so keep them as prompt references unless explicitly marked as forced.
+        if self._contains_katakana(original) and len(original) <= 4:
+            return "reference"
+
+        return "force"
+
+    def _iter_all_glossary_entries(self) -> List[Dict[str, str]]:
+        entries: List[Dict[str, str]] = []
+        seen_original = set()
+
+        glossary_index = getattr(self, "_glossary_index", None) or {}
+        if glossary_index:
+            for indexed_entries in glossary_index.values():
+                for original, translation, source in indexed_entries:
+                    original = str(original).strip()
+                    translation = str(translation).strip()
+                    source = str(source or "").strip()
+                    if not original or not translation or original in seen_original:
+                        continue
+                    item = {"original": original, "translation": translation}
+                    if source:
+                        item["source"] = source
+                    entries.append(item)
+                    seen_original.add(original)
+            return entries
+
+        glossary_snapshot = getattr(self, "glossary", {}) or {}
+        categories = getattr(self, "glossary_categories", DEFAULT_GLOSSARY_CATEGORIES)
+        is_categorized = any(key in glossary_snapshot and isinstance(glossary_snapshot.get(key), list) for key in categories)
+        if is_categorized:
+            for category in categories:
+                category_entries = glossary_snapshot.get(category, [])
+                if not isinstance(category_entries, list):
+                    continue
+                for entry in category_entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    original = str(entry.get("original", entry.get("src", ""))).strip()
+                    translation = str(entry.get("translation", entry.get("dst", ""))).strip()
+                    source = str(entry.get("source", "")).strip()
+                    if not original or not translation or original in seen_original:
+                        continue
+                    item = {"original": original, "translation": translation}
+                    if source:
+                        item["source"] = source
+                    entries.append(item)
+                    seen_original.add(original)
+            return entries
+
+        for original, value in glossary_snapshot.items():
+            original = str(original).strip()
+            if not original or original in seen_original:
+                continue
+            if isinstance(value, dict):
+                translation = str(value.get("dst", value.get("translation", ""))).strip()
+                source = str(value.get("source", "")).strip()
+            else:
+                translation = str(value).strip()
+                source = ""
+            if not translation:
+                continue
+            item = {"original": original, "translation": translation}
+            if source:
+                item["source"] = source
+            entries.append(item)
+            seen_original.add(original)
+        return entries
+
+    def _find_invalid_glossary_injections(
+        self,
+        src: str,
+        draft: str,
+        revised: str,
+        allowed_entries: Optional[List[Dict[str, str]]] = None,
+    ) -> List[str]:
+        """Find glossary translations newly introduced without a valid source-side term match."""
+        if not self.enable_glossary:
+            return []
+
+        src = src or ""
+        draft = draft or ""
+        revised = revised or ""
+        if not src or not revised or revised == draft:
+            return []
+
+        allowed_originals = {
+            str(entry.get("original", "")).strip()
+            for entry in (allowed_entries or [])
+            if str(entry.get("original", "")).strip()
+        }
+        invalid: List[str] = []
+        for entry in self._iter_all_glossary_entries():
+            original = str(entry.get("original", "")).strip()
+            translation = str(entry.get("translation", "")).strip()
+            if not original or not translation:
+                continue
+            if original in allowed_originals:
+                continue
+            if len(translation) < 2 or not self._is_meaningful_glossary_term(original, translation):
+                continue
+            if translation in draft or translation not in revised:
+                continue
+            # Only reject when the source contains the glossary term text but it was
+            # not a valid standalone match, e.g. グラス inside サングラス.
+            if original in src and not gs_has_valid_glossary_match(src, original):
+                invalid.append(f"{original}->{translation}")
+                if len(invalid) >= 5:
+                    break
+        return invalid
+
     def _select_proofread_glossary_entries(self, src: str, max_terms: int = 30) -> List[Dict[str, str]]:
         entries = self._select_glossary_entries(src, max_terms=max_terms)
         filtered = []
         for entry in entries:
             original = str(entry.get("original", "")).strip()
             translation = str(entry.get("translation", "")).strip()
-            if self._is_meaningful_glossary_term(original, translation):
+            source = str(entry.get("source", "")).strip().lower()
+            # 自动提取术语容易跨书污染。初译可参考，但校对阶段不强制执行。
+            if source in {"auto", "自动提取"}:
+                continue
+            metadata = self._lookup_glossary_metadata(original)
+            if metadata:
+                entry = {**entry, **{k: v for k, v in metadata.items() if v}}
+            if self._glossary_enforcement_level(entry) == "force":
                 filtered.append(entry)
         return filtered
 
@@ -581,12 +987,35 @@ class JaZhTranslator:
             for entry in self._select_proofread_glossary_entries(src, max_terms=30):
                 original = str(entry.get("original", "")).strip()
                 translation = str(entry.get("translation", "")).strip()
-                if original and translation and original in src and translation not in dst:
+                if original and translation and gs_has_valid_glossary_match(src, original) and translation not in dst:
                     issues.append(f"术语未按术语表翻译: {original} -> {translation}")
         return issues
 
     def _build_proofread_system_prompt(self) -> str:
         return self._build_style_guidance("proofread")
+
+    @staticmethod
+    def _strip_proofread_explanations(text: str, fallback: str = "") -> str:
+        """Remove model-added proofreading notes while preserving the revised translation."""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return fallback
+
+        cleaned = re.sub(r"^```(?:text|markdown|zh|中文)?\s*", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+        cleaned = re.sub(r"^(?:修正后的中文译文|修正后译文|校对后译文|译文)[:：]\s*", "", cleaned).strip()
+
+        note_prefix = r"(?:说明|修改说明|校对说明|修正说明|理由|解释|注)"
+        # Remove a trailing parenthesized note such as "（说明：...）".
+        while True:
+            stripped = re.sub(rf"\s*[\(（]\s*{note_prefix}\s*[:：][\s\S]*?[\)）]\s*$", "", cleaned).strip()
+            if stripped == cleaned:
+                break
+            cleaned = stripped
+
+        # Remove a trailing free-form note line such as "说明：..." or "修改说明：...".
+        cleaned = re.sub(rf"(?:^|\n)\s*{note_prefix}\s*[:：][\s\S]*$", "", cleaned).strip()
+        return cleaned or fallback
 
     def _proofread_translation(self, src: str, draft: str, issues: List[str]) -> str:
         """Ask the model to fix only detected translation/proper-noun issues."""
@@ -602,21 +1031,28 @@ class JaZhTranslator:
             + f"\n\n【术语表】\n{glossary_text}\n\n"
             + f"【日文原文】\n{src}\n\n"
             + f"【中文初译】\n{draft}\n"
+            + "\n【术语规则】\n术语只在日文原文中独立命中且符合上下文时才修正；"
+            + "短片假名普通物品和参考术语不得强行替换；如果术语译法会破坏语义，保留初译。\n"
+            + "\n【输出格式】\n只输出修正后的中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
         )
+        proofread_api_key = self.proofread_api_key or self.api_key
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {proofread_api_key}",
             "Content-Type": "application/json",
         }
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
+        # P3-⑥: 双模型流水线 — 校对用独立模型/URL
+        proofread_model = self.proofread_model or self.model
+        proofread_url = self._get_proofread_url() if self.proofread_provider else self.api_url
         payload = {
-            "model": self.model,
+            "model": proofread_model,
             "messages": messages,
             "temperature": 0.1,
         }
-        self._apply_provider_payload_options(payload)
+        self._apply_provider_payload_options(payload, self.proofread_provider or self.provider)
 
         for attempt in range(2):
             if self.cancel_event.is_set():
@@ -624,7 +1060,7 @@ class JaZhTranslator:
             try:
                 self._inc_stat("api_requests_total")
                 resp = self.session.post(
-                    self.api_url,
+                    proofread_url,
                     headers=headers,
                     json=payload,
                     timeout=self.API_TIMEOUT,
@@ -645,7 +1081,21 @@ class JaZhTranslator:
                     return draft
                 message = choices[0].get("message", {})
                 revised = (message.get("content", "") or "").strip()
-                return revised or draft
+                cleaned = self._strip_proofread_explanations(revised, fallback=draft)
+                invalid_injections = self._find_invalid_glossary_injections(
+                    src,
+                    draft,
+                    cleaned,
+                    allowed_entries=selected_entries,
+                )
+                if invalid_injections:
+                    self._inc_stat("proofread_rejected")
+                    logger.warning(
+                        "校对结果引入未命中术语，已保留初译: "
+                        + ", ".join(invalid_injections)
+                    )
+                    return draft
+                return cleaned
             except Exception as e:
                 logger.warning(f"译后校对失败: {e}")
                 if attempt == 1:
@@ -748,6 +1198,59 @@ class JaZhTranslator:
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         return f"v2:{provider_model}:{digest}"
 
+    # ---- Phase 1-②: 文本级缓存（跨模型共享已验证译文）----
+    _text_cache: Dict[str, Dict[str, Any]] = {}
+    _text_cache_loaded = False
+    TEXT_CACHE_FILE_NAME = "text_cache.json"
+
+    def _load_text_cache(self):
+        """加载文本级缓存（跨模型共享）。"""
+        if self._text_cache_loaded:
+            return
+        text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
+        loaded = self._load_json(text_cache_path, {})
+        if isinstance(loaded, dict):
+            self._text_cache = loaded
+        self._text_cache_loaded = True
+        logger.info(f"文本缓存已加载: {len(self._text_cache)} 条记录")
+
+    def _text_cache_key(self, text: str) -> str:
+        """纯文本缓存键（不绑定 provider/model）。"""
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def _lookup_text_cache(self, text: str) -> Optional[str]:
+        """查找文本级缓存，返回已验证的译文或 None。"""
+        self._load_text_cache()
+        key = self._text_cache_key(text)
+        entry = self._text_cache.get(key)
+        if entry and isinstance(entry, dict) and entry.get("verified", False):
+            return entry.get("translation")
+        return None
+
+    def _save_text_cache_entry(self, text: str, translation: str, verified: bool = False):
+        """保存文本级缓存条目。"""
+        self._load_text_cache()
+        key = self._text_cache_key(text)
+        # 不覆盖已 verified 的条目
+        existing = self._text_cache.get(key, {})
+        if isinstance(existing, dict) and existing.get("verified", False):
+            return
+        self._text_cache[key] = {
+            "translation": translation,
+            "verified": verified,
+            "updated_at": int(time.time()),
+        }
+        # 每 50 条保存一次
+        if len(self._text_cache) % 50 == 0:
+            self._flush_text_cache()
+
+    def _flush_text_cache(self):
+        """持久化文本缓存。"""
+        if not self._text_cache:
+            return
+        text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
+        self._atomic_write_json(text_cache_path, self._text_cache)
+
     def _save_cache(self, force: bool = False):
         """保存缓存到文件，使用延迟写入策略"""
         with self._cache_lock:
@@ -766,6 +1269,7 @@ class JaZhTranslator:
         """强制保存缓存（程序退出或翻译完成时调用）"""
         if self._cache_dirty:
             self._save_cache(force=True)
+        self._flush_text_cache()
 
     def discard_cache_writes(self) -> None:
         """停止本实例继续写入翻译缓存，用于“停止并清空本次译文”。"""
@@ -779,8 +1283,19 @@ class JaZhTranslator:
         flag = getattr(self, "_discard_cache_writes", None)
         return not (flag is not None and flag.is_set())
 
-    def clear_cache_for_texts(self, texts: List[str]) -> int:
-        """清理当前 provider/model 下指定原文对应的缓存。"""
+    def clear_cache_for_texts(
+        self,
+        texts: List[str],
+        include_text_cache: bool = False,
+        all_models: bool = False,
+    ) -> int:
+        """清理指定原文对应的缓存。
+
+        Args:
+            texts: 要清理的原文文本。
+            include_text_cache: 是否同时清理跨模型 text_cache.json。
+            all_models: 是否清理所有 provider/model 下的同原文缓存。
+        """
         unique_texts = {str(text or "").strip() for text in texts}
         unique_texts.discard("")
         if not unique_texts:
@@ -788,16 +1303,43 @@ class JaZhTranslator:
 
         removed = 0
         with self._cache_lock:
-            for text in unique_texts:
-                cache_key = self._cache_key(text)
-                if cache_key in self.cache:
-                    self.cache.pop(cache_key, None)
+            if all_models:
+                digests = set()
+                for text in unique_texts:
+                    raw = text.encode("utf-8")
+                    digests.add(hashlib.sha256(raw).hexdigest())
+                    digests.add(hashlib.md5(raw).hexdigest())
+                keys_to_remove = [
+                    key for key in list(self.cache)
+                    if any(str(key).endswith(f":{digest}") or str(key) == digest for digest in digests)
+                ]
+                for key in keys_to_remove:
+                    self.cache.pop(key, None)
                     removed += 1
+            else:
+                for text in unique_texts:
+                    cache_key = self._cache_key(text)
+                    if cache_key in self.cache:
+                        self.cache.pop(cache_key, None)
+                        removed += 1
             if removed:
                 self._cache_dirty = True
 
         if removed:
             self._save_cache(force=True)
+
+        if include_text_cache:
+            self._load_text_cache()
+            text_removed = 0
+            for text in unique_texts:
+                key = self._text_cache_key(text)
+                if key in self._text_cache:
+                    self._text_cache.pop(key, None)
+                    text_removed += 1
+            if text_removed:
+                text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
+                self._atomic_write_json(text_cache_path, self._text_cache)
+                removed += text_removed
         return removed
 
     def _count_glossary_terms(self) -> int:
@@ -831,7 +1373,14 @@ class JaZhTranslator:
             return []
 
         limit = max_terms or self._glossary_prompt_max_terms
-        return gs_select_glossary_entries(context_text, glossary_snapshot, self.glossary_categories, limit)
+        glossary_index = getattr(self, "_glossary_index", None)
+        return gs_select_glossary_entries(
+            context_text,
+            glossary_snapshot,
+            self.glossary_categories,
+            limit,
+            glossary_index=glossary_index,
+        )
 
 
     def _build_glossary_text(self, selected_entries: Optional[List[Dict[str, str]]] = None) -> str:
@@ -997,6 +1546,8 @@ JSON 顶层字段：
         text: str,
         max_retries: int = 3,
         text_separator: Optional[str] = None,
+        prev_text: Optional[str] = None,
+        next_text: Optional[str] = None,
     ) -> SingleChunkResult:
         """
         调用模型 API（单条），支持截断续取。
@@ -1028,7 +1579,9 @@ JSON 顶层字段：
 1. 输出仅为译文，不要解释或添加原文
 2. 保持原文段落结构，不合并或拆分段落
 3. 保留专有名词一致性（人名、地名、作品名等）
-4. 标点符号使用中文规范"""
+4. 标点符号使用中文规范
+5. 禁止输出任何翻译说明、注释、括号备注或编号列表
+6. 禁止在译文末尾附加翻译说明内容"""
 
         sakura_prompt = """你是一个轻小说翻译模型，可以流畅通顺地使用给定术语表以指定格式从日文翻译到简体中文，并联系上下文正确使用人称代词，不擅自添加原文中没有的人名。
 你必须按照以下规则执行：
@@ -1047,9 +1600,13 @@ JSON 顶层字段：
 输出格式：译文1{sep.strip()}译文2{sep.strip()}译文3..."""
 
         selected_entries = self._select_glossary_entries(text)
+        context_guidance = ""
+        if self.ENABLE_CONTEXT_WINDOW and (prev_text or next_text):
+            context_guidance = "\n\n" + self._build_context_guidance(prev_text, next_text)
         user_prompt = (
             f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
             f"请将以下日文翻译为优美流畅的中文：\n{text}"
+            f"{context_guidance}"
         )
 
         headers = {
@@ -1188,26 +1745,52 @@ JSON 顶层字段：
         text: str,
         max_retries: int = 3,
         text_separator: Optional[str] = None,
+        prev_text: Optional[str] = None,
+        next_text: Optional[str] = None,
     ) -> str:
         """向后兼容的包装器，仅返回 content 字符串"""
-        result = self._call_deepseek_single(text, max_retries, text_separator)
+        result = self._call_deepseek_single(text, max_retries, text_separator,
+                                              prev_text=prev_text, next_text=next_text)
         return result.content
 
-    def _call_deepseek_batch_json(self, texts: List[str], max_retries: int = 2) -> BatchJsonResult:
+    def _call_deepseek_batch_json(
+        self,
+        texts: List[str],
+        max_retries: int = 2,
+        prev_text: Optional[str] = None,
+        next_text: Optional[str] = None,
+        item_contexts: Optional[List[Tuple[Optional[str], Optional[str]]]] = None,
+    ) -> BatchJsonResult:
         """批量翻译：结构化返回 translations + new_terms。支持截断续取和部分成功。"""
         if not texts:
             return BatchJsonResult(translations=[], new_terms=[], missing_indices=[], finish_reason="stop")
 
-        numbered = [{"idx": i, "text": t} for i, t in enumerate(texts)]
+        numbered = []
+        for i, t in enumerate(texts):
+            item = {"idx": i, "text": t}
+            if item_contexts and i < len(item_contexts):
+                item_prev, item_next = item_contexts[i]
+                if item_prev:
+                    item["prev"] = item_prev[:self.CONTEXT_PREVIEW_LEN]
+                if item_next:
+                    item["next"] = item_next[:self.CONTEXT_PREVIEW_LEN]
+            numbered.append(item)
 
         # 从模板构建系统提示词
         system_prompt = self._build_batch_system_prompt()
         context_text = "\n".join(texts)
         selected_entries = self._select_glossary_entries(context_text)
 
+        context_guidance = ""
+        if item_contexts:
+            context_guidance = "\n\nJSON 中的 prev/next 字段是上下文参考，只用于理解语境；只翻译 text 字段。"
+        elif self.ENABLE_CONTEXT_WINDOW and (prev_text or next_text):
+            context_guidance = "\n\n" + self._build_context_guidance(prev_text, next_text)
+
         user_prompt = (
             f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
             f"请翻译以下 JSON 数组中的 text 字段并返回 JSON：\n{json.dumps(numbered, ensure_ascii=False)}"
+            f"{context_guidance}"
         )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -1383,6 +1966,7 @@ JSON 顶层字段：
         with self._cache_lock:
             normalized, _ = self.normalize_glossary_payload(glossary or {})
             self.glossary = normalized
+            self._glossary_index = gs_rebuild_glossary_index(self.glossary or {}, self.glossary_categories)
             self._atomic_write_json(self.glossary_path, self.glossary)
 
     @classmethod
@@ -1443,6 +2027,7 @@ JSON 顶层字段：
 
             merged, merge_stats = gs_merge_glossaries(self.glossary, incoming_by_category)
             self.glossary = merged
+            self._glossary_index = gs_rebuild_glossary_index(self.glossary or {}, self.glossary_categories)
             added += int(merge_stats.get("added", 0))
             skipped += int(merge_stats.get("skipped", 0))
             conflicts += int(merge_stats.get("conflicts", 0))
@@ -1462,8 +2047,8 @@ JSON 顶层字段：
 
         return added
 
-    def _translate_chunk(self, text: str) -> str:
-        """翻译单个文本块（带缓存）"""
+    def _translate_chunk(self, text: str, prev_text: Optional[str] = None, next_text: Optional[str] = None) -> str:
+        """翻译单个文本块（带缓存），可选上下文窗口。"""
         text = text.strip()
         if not text:
             return text
@@ -1476,7 +2061,7 @@ JSON 顶层字段：
             if cache_key in self.cache:
                 return self.cache[cache_key]
 
-        zh = self._call_deepseek(text)
+        zh = self._call_deepseek(text, prev_text=prev_text, next_text=next_text)
 
         if self._should_write_cache():
             with self._cache_lock:
@@ -1570,6 +2155,86 @@ JSON 顶层字段：
             self._save_cache()
         return zh
 
+    # ---- Phase 1-③: 本地预翻译 ----
+    def _pre_translate(self, text: str) -> Optional[str]:
+        """本地规则预翻译，命中则返回译文，否则返回 None。"""
+        stripped = text.strip()
+        if stripped in self.PRE_TRANSLATE_RULES:
+            return self.PRE_TRANSLATE_RULES[stripped]
+        return None
+
+    # ---- Phase 1-①: 智能分批 ----
+    def _smart_batch(self, texts: List[str], effective_batch_size: int) -> List[List[str]]:
+        """
+        按文本长度分三档智能分批：
+        - 短文本（≤30字）：大 batch 合并（2x batch_size），减少 API 调用
+        - 中文本（30~200字）：正常 batch_size 合并
+        - 长文本（>200字）：单条处理，避免 JSON 格式解析失败
+        """
+        short = []
+        medium = []
+        long = []
+
+        long_threshold = max(self.SMART_BATCH_LONG, int(getattr(self, "max_text_size_for_batch", self.SMART_BATCH_LONG) or self.SMART_BATCH_LONG))
+
+        for text in texts:
+            text_len = len(text)
+            if text_len <= self.SMART_BATCH_SHORT:
+                short.append(text)
+            elif text_len <= long_threshold:
+                medium.append(text)
+            else:
+                long.append(text)
+
+        batches = []
+
+        # 短文本：大 batch（2x），按字符总量限制
+        short_batch_size = min(effective_batch_size * 2, 20)
+        current = []
+        current_len = 0
+        for text in short:
+            if len(current) < short_batch_size and current_len + len(text) < self.max_batch_length * 2:
+                current.append(text)
+                current_len += len(text)
+            else:
+                if current:
+                    batches.append(current)
+                current = [text]
+                current_len = len(text)
+        if current:
+            batches.append(current)
+
+        # 中文本：正常 batch_size
+        current = []
+        current_len = 0
+        for text in medium:
+            if len(current) < effective_batch_size and current_len + len(text) < self.max_batch_length:
+                current.append(text)
+                current_len += len(text)
+            else:
+                if current:
+                    batches.append(current)
+                current = [text]
+                current_len = len(text)
+        if current:
+            batches.append(current)
+
+        # 长文本：每条单独处理
+        for text in long:
+            batches.append([text])
+
+        # 统计
+        short_count = len([b for b in batches if b and len(b[0]) <= self.SMART_BATCH_SHORT])
+        medium_count = len([b for b in batches if b and self.SMART_BATCH_SHORT < len(b[0]) <= long_threshold])
+        long_count = len([b for b in batches if b and len(b[0]) > long_threshold])
+        logger.info(
+            f"智能分批: 短文本 {len(short)}→{short_count}批, "
+            f"中文本 {len(medium)}→{medium_count}批, "
+            f"长文本 {len(long)}→{long_count}批"
+        )
+
+        return batches
+
     def translate_batch(
         self,
         texts: List[str],
@@ -1577,8 +2242,9 @@ JSON 顶层字段：
         item_callback: Optional[Callable[[str, str], None]] = None,
         proofread_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         batch_size: Optional[int] = None,
+        context_texts: Optional[List[str]] = None,
     ) -> Dict[str, str]:
-        """并发批量翻译多个文本"""
+        """并发批量翻译多个文本（Phase 1 优化版）"""
         results: Dict[str, str] = {}
         total = len(texts)
         completed = 0
@@ -1590,50 +2256,96 @@ JSON 顶层字段：
         pending_counts: Dict[str, int] = {}
         seen_uncached = set()
 
+        # Phase 1-③: 预翻译计数
+        pre_translated = 0
+        # Phase 1-②: 文本缓存命中计数
+        text_cache_hits = 0
+
         with self._cache_lock:
             for text in texts:
+                # ① 模型缓存查找
                 cache_key = self._cache_key(text)
                 if cache_key in self.cache:
                     results[text] = self.cache[cache_key]
                     completed += 1
-                else:
-                    pending_counts[text] = pending_counts.get(text, 0) + 1
-                    if text not in seen_uncached:
-                        uncached_unique.append(text)
-                        seen_uncached.add(text)
+                    continue
 
+                # ② Phase 1-③: 本地预翻译规则
+                pre_result = self._pre_translate(text)
+                if pre_result is not None:
+                    results[text] = pre_result
+                    # 同步写入模型缓存
+                    self.cache[cache_key] = pre_result
+                    completed += 1
+                    pre_translated += 1
+                    if item_callback:
+                        item_callback(text, pre_result)
+                    continue
+
+                # ③ Phase 1-②: 文本级缓存（跨模型，仅复用已校对译文）
+                if getattr(self, "allow_text_cache_reuse", False):
+                    text_cached = self._lookup_text_cache(text)
+                    if text_cached is not None:
+                        results[text] = text_cached
+                        self.cache[cache_key] = text_cached
+                        completed += 1
+                        text_cache_hits += 1
+                        if item_callback:
+                            item_callback(text, text_cached)
+                        continue
+
+                # ④ 未命中，加入待翻译队列
+                pending_counts[text] = pending_counts.get(text, 0) + 1
+                if text not in seen_uncached:
+                    uncached_unique.append(text)
+                    seen_uncached.add(text)
+
+        if pre_translated:
+            logger.info(f"预翻译命中: {pre_translated} 条")
+        if text_cache_hits:
+            logger.info(f"文本缓存命中: {text_cache_hits} 条（跨模型）")
         logger.info(f"批量翻译: {total} 条，缓存命中 {completed} 条，待翻译去重后 {len(uncached_unique)} 条")
 
         if progress_callback:
             progress_callback(completed, total)
 
         if not uncached_unique:
+            self._save_cache(force=True)
+            if pre_translated or text_cache_hits:
+                self._flush_text_cache()
             return results
 
-        batches = []
-        current_batch = []
-        current_length = 0
-        max_batch_length = self.max_batch_length
+        # ---- Phase 1-①: 智能分批 ----
+        batches = self._smart_batch(uncached_unique, effective_batch_size)
+        logger.info(f"智能分批为 {len(batches)} 个批次进行并发翻译")
 
-        for text in uncached_unique:
-            if len(text) <= self.max_text_size_for_batch and current_length + len(text) < max_batch_length and len(current_batch) < effective_batch_size:
-                current_batch.append(text)
-                current_length += len(text)
-            else:
-                if current_batch:
-                    batches.append(current_batch)
-                if len(text) <= self.max_text_size_for_batch:
-                    current_batch = [text]
-                    current_length = len(text)
-                else:
-                    batches.append([text])
-                    current_batch = []
-                    current_length = 0
+        # Phase 2-④: 构建文本→索引映射，用原始文本顺序提供上下文。
+        text_index_map: Dict[str, int] = {}
+        context_sequence = list(context_texts or texts)
+        if self.ENABLE_CONTEXT_WINDOW:
+            for idx, text in enumerate(context_sequence):
+                text_index_map.setdefault(text, idx)
 
-        if current_batch:
-            batches.append(current_batch)
+        def get_context_for_text(text: str) -> Tuple[Optional[str], Optional[str]]:
+            if not self.ENABLE_CONTEXT_WINDOW or not text_index_map:
+                return None, None
+            idx = text_index_map.get(text, -1)
+            if idx < 0:
+                return None, None
+            prev_text = context_sequence[idx - 1] if idx > 0 else None
+            next_text = context_sequence[idx + 1] if idx + 1 < len(context_sequence) else None
+            return prev_text, next_text
 
-        logger.info(f"合并为 {len(batches)} 个批次进行并发翻译")
+        def call_translate_chunk(text: str, prev_text: Optional[str] = None, next_text: Optional[str] = None) -> str:
+            try:
+                return self._translate_chunk(text, prev_text=prev_text, next_text=next_text)
+            except TypeError as exc:
+                # 兼容测试或旧子类 monkeypatch 的 _translate_chunk(text) 签名。
+                message = str(exc)
+                if "prev_text" in message or "next_text" in message or "positional" in message:
+                    return self._translate_chunk(text)
+                raise
+
         mismatch_count = 0
 
         def is_suspicious_pair(src: str, dst: str) -> bool:
@@ -1674,6 +2386,10 @@ JSON 顶层字段：
                 if enable_proofread:
                     issues = self._find_proofread_issues(src, clean_dst)
                     if issues:
+                        # Phase 2-⑤: 校对分级 — 本地检查通过则跳过 LLM 校对
+                        if self._should_skip_proofread(src, clean_dst):
+                            logger.debug(f"校对分级跳过 [{i}]: 文本过短或匹配跳过模式")
+                            continue
                         proofread_issues[i] = issues
 
             if proofread_issues:
@@ -1699,13 +2415,15 @@ JSON 顶层字段：
                         revised = self._proofread_translation(src, draft, issues)
                         if any("日文" in issue or "假名" in issue for issue in issues) and self._has_japanese_residue(revised):
                             try:
-                                fallback_revised = self._translate_chunk(src)
+                                fallback_prev, fallback_next = get_context_for_text(src)
+                                fallback_revised = call_translate_chunk(src, fallback_prev, fallback_next)
                                 if fallback_revised:
                                     revised = fallback_revised
                                 issues.append("校对后仍残留日文，已回退单条重译")
                             except Exception as fallback_error:
                                 logger.warning(f"校对后单条重译失败 [{i}]: {fallback_error}")
                         repaired[i] = (src, revised)
+                        self._save_text_cache_entry(src, revised, verified=True)
                         proofread_fixed += 1
                         if proofread_callback:
                             detail = {
@@ -1721,7 +2439,8 @@ JSON 顶层字段：
                             except Exception as callback_error:
                                 logger.warning(f"译后校对详情回调失败: {callback_error}")
                     else:
-                        repaired[i] = (src, self._translate_chunk(src))
+                        repair_prev, repair_next = get_context_for_text(src)
+                        repaired[i] = (src, call_translate_chunk(src, repair_prev, repair_next))
                     fixed_count += 1
                 except Exception as e:
                     logger.warning(f"质检重译失败 [{i}]: {e}")
@@ -1737,12 +2456,33 @@ JSON 顶层字段：
 
             if len(batch) == 1:
                 text = batch[0]
-                zh = self._translate_chunk(text)
+                prev_ctx, next_ctx = get_context_for_text(text)
+                zh = call_translate_chunk(text, prev_ctx, next_ctx)
                 return repair_batch_quality(batch, [(text, zh)])
 
             self._inc_stat("batch_total")
             # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
-            result = self._call_deepseek_batch_json(batch)
+            item_contexts = (
+                [get_context_for_text(text) for text in batch]
+                if self.ENABLE_CONTEXT_WINDOW and self.ENABLE_BATCH_ITEM_CONTEXT
+                else None
+            )
+            batch_prev_ctx, batch_next_ctx = get_context_for_text(batch[0])
+            try:
+                result = self._call_deepseek_batch_json(
+                    batch,
+                    prev_text=batch_prev_ctx,
+                    next_text=batch_next_ctx,
+                    item_contexts=item_contexts,
+                )
+            except TypeError as exc:
+                if "item_contexts" not in str(exc):
+                    raise
+                result = self._call_deepseek_batch_json(
+                    batch,
+                    prev_text=batch_prev_ctx,
+                    next_text=batch_next_ctx,
+                )
 
             # Case 1: 全部成功（所有 idx 都有有效译文）
             if result.translations is not None and not result.missing_indices:
@@ -1766,7 +2506,8 @@ JSON 顶层字段：
                 for idx in result.missing_indices:
                     logger.info(f"部分成功重试: 缺失索引 {idx} 走单条翻译")
                     try:
-                        final_parts[idx] = self._translate_chunk(batch[idx])
+                        retry_prev, retry_next = get_context_for_text(batch[idx])
+                        final_parts[idx] = call_translate_chunk(batch[idx], retry_prev, retry_next)
                     except Exception as e:
                         logger.warning(f"单条重试失败 [idx={idx}]: {e}")
                         final_parts[idx] = batch[idx]  # 兜底：回退原文
@@ -1776,7 +2517,12 @@ JSON 顶层字段：
             # Case 3: 全部失败 — 回退到分隔符批量
             separator = f"\n---SPLIT-{uuid.uuid4().hex}---\n"
             combined = separator.join(batch)
-            combined_zh = self._call_deepseek(combined, text_separator=separator)
+            combined_zh = self._call_deepseek(
+                combined,
+                text_separator=separator,
+                prev_text=batch_prev_ctx,
+                next_text=batch_next_ctx,
+            )
             parts = combined_zh.split(separator)
 
             if len(parts) != len(batch):
@@ -1784,7 +2530,7 @@ JSON 顶层字段：
                     mismatch_count += 1
                 self._inc_stat("batch_fallback")
                 self._inc_stat("batch_split_mismatch")
-                return [(t, self._translate_chunk(t)) for t in batch]
+                return [(t, call_translate_chunk(t, *get_context_for_text(t))) for t in batch]
 
             self._inc_stat("batch_delimiter_success")
             return repair_batch_quality(batch, list(zip(batch, parts)))
@@ -1797,57 +2543,59 @@ JSON 顶层字段：
                     raise RuntimeError("翻译已取消")
                 futures[executor.submit(translate_one_batch, batch)] = batch
 
-            pending = set(futures)
-            while pending:
+            # P3-⑦: 流式处理 — 使用 as_completed 让先完成的批次先回写
+            # 相比 wait(pending, timeout=0.2) 轮询，as_completed 响应更及时
+            pending_futures = set(futures)
+            for future in as_completed(pending_futures):
                 if self.cancel_event.is_set():
-                    for f in pending:
+                    for f in pending_futures:
                         f.cancel()
                     self._save_cache(force=True)
                     raise RuntimeError("翻译已取消")
 
-                done, pending = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
-                if not done:
-                    continue
-
-                for future in done:
-                    try:
-                        batch_results = future.result()
-                        for original, translated in batch_results:
-                            if self._should_write_cache():
-                                with self._cache_lock:
-                                    self.cache[self._cache_key(original)] = translated
-                            results[original] = translated
-                            completed += pending_counts.get(original, 1)
-                            if item_callback:
-                                item_callback(original, translated)
-                            if progress_callback:
-                                progress_callback(completed, total)
+                try:
+                    batch_results = future.result()
+                    for original, translated in batch_results:
                         if self._should_write_cache():
-                            self._save_cache()
-                    except Exception as e:
-                        logger.error(f"批次翻译失败: {e}")
-                        if "502" in str(e):
-                            raise
-                        batch = futures[future]
-                        for text in batch:
-                            if self.cancel_event.is_set():
-                                self._save_cache(force=True)
-                                raise RuntimeError("翻译已取消")
-                            try:
-                                zh = self._translate_chunk(text)
-                                results[text] = zh
-                            except Exception as e2:
-                                logger.error(f"翻译失败: {e2}")
-                                results[text] = text
-                            completed += pending_counts.get(text, 1)
-                            if item_callback:
-                                item_callback(text, results[text])
-                            if progress_callback:
-                                progress_callback(completed, total)
+                            with self._cache_lock:
+                                self.cache[self._cache_key(original)] = translated
+                        # Phase 1-②: 写入文本级缓存（非短文本才写入）
+                        if len(original) > self.SMART_BATCH_SHORT:
+                            self._save_text_cache_entry(original, translated, verified=False)
+                        results[original] = translated
+                        completed += pending_counts.get(original, 1)
+                        if item_callback:
+                            item_callback(original, translated)
+                        if progress_callback:
+                            progress_callback(completed, total)
+                    if self._should_write_cache():
+                        self._save_cache()
+                except Exception as e:
+                    logger.error(f"批次翻译失败: {e}")
+                    if "502" in str(e):
+                        raise
+                    batch = futures[future]
+                    for text in batch:
+                        if self.cancel_event.is_set():
+                            self._save_cache(force=True)
+                            raise RuntimeError("翻译已取消")
+                        try:
+                            fallback_prev, fallback_next = get_context_for_text(text)
+                            zh = call_translate_chunk(text, fallback_prev, fallback_next)
+                            results[text] = zh
+                        except Exception as e2:
+                            logger.error(f"翻译失败: {e2}")
+                            results[text] = text
+                        completed += pending_counts.get(text, 1)
+                        if item_callback:
+                            item_callback(text, results[text])
+                        if progress_callback:
+                            progress_callback(completed, total)
         finally:
             executor.shutdown(wait=not self.cancel_event.is_set(), cancel_futures=True)
 
         self._save_cache(force=True)
+        self._flush_text_cache()
         if mismatch_count:
             logger.warning(f"批量拆分回退 {mismatch_count} 次（模型输出与批次数不一致，已自动逐条翻译）")
 

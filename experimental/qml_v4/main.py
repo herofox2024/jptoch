@@ -207,9 +207,13 @@ def main():
     get_dict_dir()
 
     _set_startup_status(app, splash, "正在加载配置与桥接器")
+    from backend.service_container import get_container
+    container = get_container()
+    container.init_light()
     from backend.config_bridge import ConfigBridge
     from backend.translate_bridge import TranslateBridge
     from backend.glossary_bridge import GlossaryBridge
+    from backend.toast_bridge import ToastBridge
 
     config_bridge = ConfigBridge()
     translate_bridge = TranslateBridge()
@@ -231,6 +235,7 @@ def main():
     ctx.setContextProperty("AppFontTitle", title_font)
     # Keep the old QML property name for compatibility; this is now a stable title font.
     ctx.setContextProperty("AppFontSerif", title_font)
+    ctx.setContextProperty("ToastBridge", ToastBridge())
 
     qml_dir = EXPERIMENT_DIR / "qml"
     qml_file = qml_dir / "main.qml"

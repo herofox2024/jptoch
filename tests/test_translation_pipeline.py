@@ -15,6 +15,7 @@ from epub_io import extract_visible_text, iter_text_nodes
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult
+from glossary_store import rebuild_glossary_index
 
 
 @contextmanager
@@ -62,6 +63,10 @@ class DummyTranslator(JaZhTranslator):
         self.enable_proofread = False
         self.proofread_genre = "general"
         self.proofread_tone = "neutral"
+        self.proofread_model = None
+        self.proofread_provider = None
+        self.proofread_api_key = None
+        self._proofread_api_url = None
         self.glossary_categories = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
         self._glossary_index = {}
         self.glossary = {}
@@ -85,12 +90,17 @@ class DummyTranslator(JaZhTranslator):
             "truncation_continuation": 0,
             "proofread_suspicious": 0,
             "proofread_fixed": 0,
+            "proofread_rejected": 0,
         }
         self.max_workers = 2
         self.batch_size = 4
         self.max_batch_length = 800
         self.max_text_size_for_batch = 200
         self.chunk_size = 1200
+        self.top_p = None
+        self.frequency_penalty = None
+        self.temperature = 0.3
+        self.api_url = "http://example.com/v1/chat/completions"
         self.cancel_event = threading.Event()
 
     def _save_cache(self, force: bool = False):
@@ -211,7 +221,7 @@ class TranslatorTests(unittest.TestCase):
         calls = {"n": 0}
         progress = []
 
-        def fake_call(text, max_retries=3, text_separator=None):
+        def fake_call(text, max_retries=3, text_separator=None, prev_text=None, next_text=None):
             calls["n"] += 1
             return f"ZH:{text}"
 
@@ -231,7 +241,7 @@ class TranslatorTests(unittest.TestCase):
 
     def test_batch_json_path(self):
         t = DummyTranslator()
-        t._call_deepseek_batch_json = lambda batch, max_retries=2: BatchJsonResult(
+        t._call_deepseek_batch_json = lambda batch, max_retries=2, prev_text=None, next_text=None: BatchJsonResult(
             translations=[f"ZH:{x}" for x in batch],
             new_terms=[],
             missing_indices=[],
@@ -248,7 +258,7 @@ class TranslatorTests(unittest.TestCase):
         t = DummyTranslator()
         calls = {"n": 0}
 
-        def fake_call(text, max_retries=3, text_separator=None):
+        def fake_call(text, max_retries=3, text_separator=None, prev_text=None, next_text=None):
             calls["n"] += 1
             return f"{t.model}:{text}"
 
@@ -276,7 +286,7 @@ class TranslatorTests(unittest.TestCase):
 
     def test_discard_cache_writes_and_clear_texts(self):
         t = DummyTranslator()
-        t._call_deepseek = lambda text, max_retries=3, text_separator=None: f"ZH:{text}"  # type: ignore
+        t._call_deepseek = lambda text, max_retries=3, text_separator=None, prev_text=None, next_text=None: f"ZH:{text}"  # type: ignore
 
         self.assertEqual(t.translate("A"), "ZH:A")
         self.assertIn(t._cache_key("A"), t.cache)
@@ -330,7 +340,7 @@ class TranslatorTests(unittest.TestCase):
         t.batch_size = 2
         t.max_batch_length = 100
         t.max_text_size_for_batch = 100
-        t._call_deepseek_batch_json = lambda batch, max_retries=2: BatchJsonResult(
+        t._call_deepseek_batch_json = lambda batch, max_retries=2, prev_text=None, next_text=None: BatchJsonResult(
             translations=["她は笑った。", "她笑了。"],
             new_terms=[],
             missing_indices=[],
@@ -361,7 +371,7 @@ class TranslatorTests(unittest.TestCase):
         t.batch_size = 2
         t.max_batch_length = 100
         t.max_text_size_for_batch = 100
-        t._call_deepseek_batch_json = lambda batch, max_retries=2: BatchJsonResult(
+        t._call_deepseek_batch_json = lambda batch, max_retries=2, prev_text=None, next_text=None: BatchJsonResult(
             translations=["彼女は笑った。", "她点头。"],
             new_terms=[],
             missing_indices=[],
@@ -378,6 +388,16 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(details[0]["draft"], "彼女は笑った。")
         self.assertEqual(details[0]["revised"], "她笑了。")
         self.assertTrue(any("单条重译" in issue for issue in details[0]["issues"]))
+
+    def test_proofread_strips_model_explanation_note(self):
+        raw = "治疗出了bug。\n（说明：根据术语表修正了专有名词，但原文未出现该词；调整了标点。）"
+        cleaned = DummyTranslator._strip_proofread_explanations(raw, fallback="处理出了bug。")
+        self.assertEqual(cleaned, "治疗出了bug。")
+
+    def test_proofread_explanation_only_falls_back_to_draft(self):
+        raw = "（说明：根据术语表修正了专有名词，但原文未出现该词。）"
+        cleaned = DummyTranslator._strip_proofread_explanations(raw, fallback="处理出了bug。")
+        self.assertEqual(cleaned, "处理出了bug。")
 
     def test_fast_fail_502_not_swallowed(self):
         t = DummyTranslator()
@@ -493,6 +513,127 @@ class TranslatorTests(unittest.TestCase):
         }
         selected = t._select_glossary_entries("A B C", max_terms=2)
         self.assertEqual(len(selected), 2)
+
+    def test_select_glossary_entries_does_not_match_katakana_substring(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Person": [],
+            "Location": [],
+            "Org": [],
+            "Item": [
+                {"original": "\u30b0\u30e9\u30b9", "translation": "\u676f\u5b50"},
+                {"original": "\u30b5\u30f3\u30b0\u30e9\u30b9", "translation": "\u58a8\u955c"},
+            ],
+            "Skill": [],
+            "Creature": [],
+        }
+        t._glossary_index = rebuild_glossary_index(t.glossary, t.glossary_categories)
+
+        selected = t._select_glossary_entries("\u5f7c\u306f\u30b5\u30f3\u30b0\u30e9\u30b9\u3092\u304b\u3051\u305f\u3002")
+
+        self.assertEqual([item["original"] for item in selected], ["\u30b5\u30f3\u30b0\u30e9\u30b9"])
+
+    def test_select_glossary_entries_prefers_longer_overlapping_term(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Person": [],
+            "Location": [
+                {"original": "\u6771\u4eac", "translation": "\u4e1c\u4eac"},
+                {"original": "\u6771\u4eac\u90fd", "translation": "\u4e1c\u4eac\u90fd"},
+            ],
+            "Org": [],
+            "Item": [],
+            "Skill": [],
+            "Creature": [],
+        }
+        t._glossary_index = rebuild_glossary_index(t.glossary, t.glossary_categories)
+
+        selected = t._select_glossary_entries("\u6771\u4eac\u90fd\u3078\u884c\u304f", max_terms=1)
+
+        self.assertEqual(selected[0]["original"], "\u6771\u4eac\u90fd")
+
+    def test_proofread_rejects_new_glossary_translation_without_valid_source_match(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.glossary = {
+            "Person": [],
+            "Location": [],
+            "Org": [],
+            "Item": [{"original": "\u30b0\u30e9\u30b9", "translation": "\u676f\u5b50"}],
+            "Skill": [],
+            "Creature": [],
+        }
+        t._glossary_index = rebuild_glossary_index(t.glossary, t.glossary_categories)
+        resp = mock.Mock()
+        resp.status_code = 200
+        resp.raise_for_status = mock.Mock()
+        resp.json.return_value = {
+            "choices": [{"message": {"content": "\u4ed6\u6234\u4e0a\u4e86\u676f\u5b50\u3002"}}],
+            "usage": {"total_tokens": 10},
+        }
+        t.session = mock.Mock()
+        t.session.post.return_value = resp
+
+        revised = t._proofread_translation(
+            "\u5f7c\u306f\u30b5\u30f3\u30b0\u30e9\u30b9\u3092\u304b\u3051\u305f\u3002",
+            "\u4ed6\u6234\u4e0a\u4e86\u58a8\u955c\u3002",
+            ["\u672f\u8bed\u672a\u6309\u672f\u8bed\u8868\u7ffb\u8bd1: dummy"],
+        )
+
+        self.assertEqual(revised, "\u4ed6\u6234\u4e0a\u4e86\u58a8\u955c\u3002")
+        self.assertEqual(t.stats["proofread_rejected"], 1)
+
+    def test_proofread_treats_short_katakana_item_as_reference_only(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Person": [],
+            "Location": [],
+            "Org": [],
+            "Item": [{"original": "\u30b0\u30e9\u30b9", "translation": "\u676f\u5b50"}],
+            "Skill": [],
+            "Creature": [],
+        }
+        t._glossary_index = rebuild_glossary_index(t.glossary, t.glossary_categories)
+
+        issues = t._find_proofread_issues("\u5f7c\u306f\u30b0\u30e9\u30b9\u3092\u7f6e\u3044\u305f\u3002", "\u4ed6\u653e\u4e0b\u4e86\u73bb\u7483\u676f\u3002")
+
+        self.assertEqual(issues, [])
+
+    def test_proofread_can_force_short_item_with_explicit_marker(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Person": [],
+            "Location": [],
+            "Org": [],
+            "Item": [{"original": "\u30b0\u30e9\u30b9", "translation": "\u676f\u5b50", "info": "\u5f3a\u5236"}],
+            "Skill": [],
+            "Creature": [],
+        }
+        t._glossary_index = rebuild_glossary_index(t.glossary, t.glossary_categories)
+
+        issues = t._find_proofread_issues("\u5f7c\u306f\u30b0\u30e9\u30b9\u3092\u7f6e\u3044\u305f\u3002", "\u4ed6\u653e\u4e0b\u4e86\u73bb\u7483\u676f\u3002")
+
+        self.assertTrue(any("\u30b0\u30e9\u30b9 -> \u676f\u5b50" in issue for issue in issues))
+
+    def test_invalid_glossary_injection_allows_same_translation_when_source_term_absent(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Person": [],
+            "Location": [],
+            "Org": [],
+            "Item": [{"original": "\u30b0\u30e9\u30b9", "translation": "\u676f\u5b50"}],
+            "Skill": [],
+            "Creature": [],
+        }
+        t._glossary_index = rebuild_glossary_index(t.glossary, t.glossary_categories)
+
+        invalid = t._find_invalid_glossary_injections(
+            "\u5f7c\u306f\u30b3\u30c3\u30d7\u3092\u6301\u3063\u305f\u3002",
+            "\u4ed6\u62ff\u8d77\u4e86\u6c34\u676f\u3002",
+            "\u4ed6\u62ff\u8d77\u4e86\u676f\u5b50\u3002",
+        )
+
+        self.assertEqual(invalid, [])
 
     def test_merge_new_terms_into_glossary_keep_old_and_preserve_source(self):
         t = DummyTranslator()

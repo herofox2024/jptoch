@@ -1,0 +1,3 @@
+module components
+Toast 1.0 Toast.qml
+singleton ThemeRegistry 1.0 ThemeRegistry.qml

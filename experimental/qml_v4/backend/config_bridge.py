@@ -82,7 +82,9 @@ _CONFIG_KEYS = [
     "inp", "out", "api_key", "provider", "api_url", "model",
     "extract_glossary", "enable_glossary",
     "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
-    "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone", "theme",
+    "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
+    "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
+    "allow_text_cache_reuse", "theme",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -119,6 +121,9 @@ class ConfigBridge(QObject):
     _enableProofreadChanged = Signal()
     _proofreadGenreChanged = Signal()
     _proofreadToneChanged = Signal()
+    _proofreadProviderChanged = Signal()
+    _proofreadApiKeyChanged = Signal()
+    _proofreadApiUrlChanged = Signal()
     _themeChanged = Signal()
 
     def __init__(self, parent=None):
@@ -141,6 +146,11 @@ class ConfigBridge(QObject):
         self._enable_proofread = True
         self._proofread_genre = "auto"
         self._proofread_tone = "auto"
+        self._proofread_provider = ""
+        self._proofread_api_key = ""
+        self._proofread_api_url = ""
+        self._proofread_model = ""   # P3-⑥: 校对专用模型（空=使用主模型）
+        self._allow_text_cache_reuse = False
         self._theme = "light"
         self._load_from_disk()
 
@@ -164,7 +174,7 @@ class ConfigBridge(QObject):
         data = {}
         for key in _CONFIG_KEYS:
             val = getattr(self, f"_{key}", None)
-            if val is not None and val != "":
+            if val is not None:
                 data[key] = val
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -326,6 +336,43 @@ class ConfigBridge(QObject):
     def proofreadTone(self, val: str):
         if val != self._proofread_tone:
             self._proofread_tone = val; self._proofreadToneChanged.emit()
+
+    @Property(str, notify=_proofreadProviderChanged)
+    def proofreadProvider(self) -> str: return self._proofread_provider
+    @proofreadProvider.setter
+    def proofreadProvider(self, val: str):
+        if val != self._proofread_provider:
+            self._proofread_provider = val; self._proofreadProviderChanged.emit()
+
+    @Property(str, notify=_proofreadApiKeyChanged)
+    def proofreadApiKey(self) -> str: return self._proofread_api_key
+    @proofreadApiKey.setter
+    def proofreadApiKey(self, val: str):
+        if val != self._proofread_api_key:
+            self._proofread_api_key = val; self._proofreadApiKeyChanged.emit()
+
+    @Property(str, notify=_proofreadApiUrlChanged)
+    def proofreadApiUrl(self) -> str: return self._proofread_api_url
+    @proofreadApiUrl.setter
+    def proofreadApiUrl(self, val: str):
+        if val != self._proofread_api_url:
+            self._proofread_api_url = val; self._proofreadApiUrlChanged.emit()
+
+    _proofreadModelChanged = Signal()
+    @Property(str, notify=_proofreadModelChanged)
+    def proofreadModel(self) -> str: return self._proofread_model
+    @proofreadModel.setter
+    def proofreadModel(self, val: str):
+        if val != self._proofread_model:
+            self._proofread_model = val; self._proofreadModelChanged.emit()
+
+    _allowTextCacheReuseChanged = Signal()
+    @Property(bool, notify=_allowTextCacheReuseChanged)
+    def allowTextCacheReuse(self) -> bool: return self._allow_text_cache_reuse
+    @allowTextCacheReuse.setter
+    def allowTextCacheReuse(self, val: bool):
+        if val != self._allow_text_cache_reuse:
+            self._allow_text_cache_reuse = val; self._allowTextCacheReuseChanged.emit()
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

@@ -1,4 +1,4 @@
-﻿﻿<div align="center">
+﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -61,6 +61,10 @@
 - **状态监控**：展示实时进度、已翻译字数、总字数、预计剩余时间、速度、API 次数、Token 和失败数。
 - **EPUB 兼容增强**：对 `body/br` 排版 EPUB、短目录页、Ruby 注音和图片占位文本做了兼容处理。
 - **Windows 安装包**：支持 onedir 瘦身打包，并可通过 Inno Setup 制作安装程序。
+- **Toast 通知 (P0)**：非阻塞浮层消息，操作完成/失败/警告即时反馈。
+- **翻译管线 (P1)**：Pipeline 阶段抽象，风格检测等步骤可独立开关配置。
+- **服务容器 (P1)**：ServiceContainer 依赖注入，分阶段初始化，统一管理后端实例。
+- **运行时主题切换 (P2)**：ThemeRegistry 主题注册表，切换时平滑过渡 + Toast 通知。
 
 ---
 
@@ -231,9 +235,26 @@ V4.0 RC1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 ```text
 .
 ├─ experimental/qml_v4/        # QML/V4.0 RC1 当前候选主线
-│  ├─ main.py                  # V4 启动入口
+│  ├─ main.py                  # V4 启动入口（PySide6 + QML）
 │  ├─ qml/                     # QML 页面与主题
-│  ├─ backend/                 # QML Bridge：配置、翻译、术语表
+│  │  ├─ main.qml              # 主窗口（导航栏、页面切换、主题绑定）
+│  │  ├─ AppPalette.qml        # 全局调色板（Light/Dark/Glass 三态响应式）
+│  │  ├─ pages/                # 5 个功能页面
+│  │  │  ├─ TaskPage.qml       # 任务页（EPUB 拖入、开始/暂停/停止）
+│  │  │  ├─ MonitorPage.qml    # 状态页（进度、统计、校对详情）
+│  │  │  ├─ ApiConfigPage.qml  # API 配置页（供应商、Key、连接测试）
+│  │  │  ├─ GlossaryPage.qml   # 术语表页（CRUD、导入导出、搜索筛选）
+│  │  │  └─ OptionsPage.qml    # 设置页（性能、风格、校对、主题）
+│  │  └─ components/           # 可复用组件
+│  │     ├─ Toast.qml          # Toast 通知浮层（P0 新增）
+│  │     └─ ThemeRegistry.qml  # 主题注册表工具（P2 新增）
+│  ├─ backend/                 # Python-QML 桥接层
+│  │  ├─ config_bridge.py      # 配置桥接（Qt Property → QML 绑定）
+│  │  ├─ translate_bridge.py   # 翻译桥接（QThread Worker + Pipeline）
+│  │  ├─ glossary_bridge.py    # 术语表桥接（QAbstractListModel）
+│  │  ├─ toast_bridge.py       # Toast 信号桥接（P0 新增）
+│  │  ├─ pipeline.py           # 翻译管线阶段抽象（P1 新增）
+│  │  └─ service_container.py  # 服务容器依赖注入（P1 新增）
 │  ├─ assets/                  # V4 图标资源
 │  └─ EPUBTranslator*.spec     # PyInstaller 打包配置
 ├─ ui/qt_app.py                # Qt V3.2.1 回退版 UI
@@ -247,6 +268,116 @@ V4.0 RC1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 ├─ text_utils.py               # 文本可翻译性判断
 ├─ installer/                  # Inno Setup 脚本
 └─ tests/                      # 回归测试
+```
+
+### 架构概览
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                      QML UI 层 (PySide6)                      │
+│  TaskPage  MonitorPage  ApiConfigPage  GlossaryPage  Options  │
+│    │  │        │              │              │           │    │
+├────┼──┼────────┼──────────────┼──────────────┼───────────┼────┤
+│    │  │        │              │              │           │    │
+│    ▼  ▼        ▼              ▼              ▼           ▼    │
+│  TranslateBridge  GlossaryBridge  ConfigBridge  ToastBridge  │
+│  ┌─────────────┐ ┌────────────┐ ┌──────────┐ ┌───────────┐  │
+│  │QThread      │ │QListModel  │ │Qt Props  │ │Signal     │  │
+│  │Worker.run() │ │CRUD        │ │Save/Load │ │info/succ/ │  │
+│  │             │ │            │ │          │ │warn/err   │  │
+│  └──────┬──────┘ └─────┬──────┘ └────┬─────┘ └─────┬─────┘  │
+├─────────┼──────────────┼─────────────┼─────────────┼────────┤
+│         ▼              ▼             ▼             ▼        │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │              Python 业务逻辑层                        │    │
+│  │                                                      │    │
+│  │  ┌─────────────────┐  ┌──────────────────────────┐  │    │
+│  │  │ ServiceContainer│  │  TranslationPipeline     │  │    │
+│  │  │ (P1 新增)       │  │  (P1 新增)               │  │    │
+│  │  │ init_light()    │  │  StyleDetectStage        │  │    │
+│  │  │ init_heavy()    │  │  CacheLookupStage (可选)  │  │    │
+│  │  │ get_translator()│  │  TranslateStage  (可选)  │  │    │
+│  │  └─────────────────┘  │  ProofreadStage  (可选)  │  │    │
+│  │                       └──────────────────────────┘  │    │
+│  │                                                      │    │
+│  │  ┌──────────────────────────────────────────────┐    │    │
+│  │  │           JaZhTranslator (核心引擎)            │    │    │
+│  │  │  translate_batch()                            │    │    │
+│  │  │  ┌─────────────────────────────────────────┐ │    │    │
+│  │  │  │ 缓存查找 → 分批 → API调用(7家LLM)        │ │    │    │
+│  │  │  │ 术语替换 → 质检 → 校对修复 → 术语提取    │ │    │    │
+│  │  │  │ → 进度/统计/校对详情 实时信号发射         │ │    │    │
+│  │  │  └─────────────────────────────────────────┘ │    │    │
+│  │  └──────────────────────────────────────────────┘    │    │
+│  │                                                      │    │
+│  │  ┌──────────────────┐  ┌─────────────────────────┐  │    │
+│  │  │   epub_io.py     │  │   Supporting Modules    │  │    │
+│  │  │  load / save     │  │  style_detector.py      │  │    │
+│  │  │  iter_text_nodes │  │  glossary_store.py      │  │    │
+│  │  │  extract_toc     │  │  cache_store.py         │  │    │
+│  │  └──────────────────┘  └─────────────────────────┘  │    │
+│  └──────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │              外部 API 层                              │    │
+│  │  DeepSeek | Doubao | Sakura | Gemini | GLM | Wenxin │    │
+│  └──────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 翻译流程（从点击到完成）
+
+```
+用户点击"开始翻译"
+    │
+    ▼
+TaskPage.tbridge.startTranslation(cfg)
+    │ Slot("QVariant")
+    ▼
+TranslateBridge._make_config() → 参数校验 → ToastBridge.info("正在加载...")
+    │ 创建 _TranslateWorker + QThread
+    ▼
+_TranslateWorker.run() [QThread 中执行]
+    │
+    ├─ ① EPUB 解析: load_book() → iter_text_nodes() → extract_toc_titles()
+    ├─ ② 文本提取: 遍历 HTML → is_translatable() 筛选 → all_texts[]
+    ├─ ③ 风格检测: StyleDetectStage → detect_novel_style() (P1 管线阶段)
+    ├─ ④ 创建翻译器: JaZhTranslator(provider, model, glossary, proofread...)
+    ├─ ⑤ 预估时间: _estimate_translation_duration()
+    ├─ ⑥ 批量翻译: translator.translate_batch(all_texts)
+    │     └─ 缓存命中 → 分批 → ThreadPoolExecutor → LLM API
+    │         └─ 术语替换 → 质检 → 校对 → 术语提取 → 缓存保存
+    │         └─ 实时信号: progressChanged / statUpdate / itemTranslated / proofreadDetail
+    ├─ ⑦ 结果回写: 译文 → HTML 标签替换
+    ├─ ⑧ 目录翻译: apply_toc_translations()
+    ├─ ⑨ 保存 EPUB: save_book() + 智能文件名
+    └─ ⑩ 完成: finished.emit() → ToastBridge.success("翻译完成!") + TTS 语音
+
+暂停: cancel_event.set() → 当前批次完成后等待 → resumeTranslation() 新线程继续
+停止: cancel_event.set() + discard_cache_writes() → 清理本次缓存
+```
+
+### 信号流向（Python ↔ QML）
+
+```
+Python 端信号                    QML 端接收
+═══════════════                 ═══════════
+progressChanged(completed,total,chars) → MonitorPage 进度条
+statUpdate(10个统计参数)        → MonitorPage 统计面板
+itemTranslated(src,dst)         → MonitorPage 实时译文滚动
+proofreadDetail(7个校对参数)    → MonitorPage 校对详情列表
+proofreadStyleDetected(4个参数) → MonitorPage 风格标识
+statusChanged(msg)              → MonitorPage 状态文字
+finished(out_path)              → TaskPage 按钮恢复
+failed(err)                     → TaskPage 错误提示
+
+ToastBridge.showInfo(msg)       → Toast 蓝色浮层 (P0)
+ToastBridge.showSuccess(msg)    → Toast 绿色浮层 (P0)
+ToastBridge.showWarning(msg)    → Toast 橙色浮层 (P0)
+ToastBridge.showError(msg)      → Toast 红色浮层 (P0)
+
+ConfigBridge.theme              → AppPalette 颜色响应式更新 (P2)
+  └─ onThemeChanged             → Toast 通知 + 保存磁盘
 ```
 
 ---
@@ -340,6 +471,7 @@ QML/PySide6、EPUB 解析、配置加载和 Python 运行时初始化都会增�
 
 - QML/V4 从实验版调整为当前候选主线。
 - README、启动标题、安装包命名统一为 `AI日译中(EPUB)V4.0 RC1`。
+- **架构改造 (P0/P1/P2)**：引入 Toast 通知系统、翻译管线阶段抽象、服务容器依赖注入、运行时主题切换增强。
 - 增加 iOS26 玻璃主题、深色主题修正、导航和状态页视觉优化。
 - 增加启动动画、页面懒加载、术语表延迟加载和重模块延迟导入。
 - 增加停止按钮、暂停恢复续译、状态页预计翻译时长/预计剩余时间。

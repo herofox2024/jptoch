@@ -13,6 +13,8 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
+from backend.toast_bridge import ToastBridge
+
 CANCELLED_RESULT = "__CANCELLED__"
 STOPPED_RESULT = "__STOPPED__"
 def _sanitize_filename(name):
@@ -114,7 +116,6 @@ class _TranslateWorker(QObject):
                 extract_visible_text,
             )
             from text_utils import is_translatable
-            from style_detector import detect_novel_style, resolve_style_selection
 
             book = load_book(cfg["inp"])
             docs = list(iter_text_nodes(book))
@@ -146,22 +147,47 @@ class _TranslateWorker(QObject):
             all_texts.extend(toc_titles)
             toc_indices_end = len(all_texts)
 
-            detected_style = detect_novel_style(
-                title=os.path.basename(cfg["inp"]),
-                toc_titles=toc_titles,
-                samples=all_texts[:80],
+            # ====== 管线方式：风格检测阶段 ======
+            from backend.pipeline import (
+                PipelineContext,
+                StyleDetectStage,
+                TranslationPipeline,
             )
-            proofread_style = resolve_style_selection(
-                cfg.get("proofread_genre", "auto"),
-                cfg.get("proofread_tone", "auto"),
-                detected_style,
+
+            pipeline = TranslationPipeline()
+            pipeline.add_stage(StyleDetectStage(enabled=True))
+
+            ctx = PipelineContext(
+                config=cfg,
+                texts=all_texts,
+                cancel_event=self._cancel_event,
+                extra={
+                    "title": os.path.basename(cfg["inp"]),
+                    "toc_titles": toc_titles,
+                },
             )
-            self.proofreadStyleDetected.emit(
-                proofread_style.display_text,
-                proofread_style.reason,
-                proofread_style.confidence,
-                "auto" if cfg.get("proofread_genre") == "auto" or cfg.get("proofread_tone") == "auto" else "manual",
-            )
+            ctx = pipeline.run(ctx)
+
+            # 发射风格检测信号
+            if ctx.proofread_style:
+                proofread_style = ctx.proofread_style
+                self.proofreadStyleDetected.emit(
+                    proofread_style.display_text,
+                    proofread_style.reason,
+                    proofread_style.confidence,
+                    "auto" if cfg.get("proofread_genre") == "auto" or cfg.get("proofread_tone") == "auto" else "manual",
+                )
+                cfg["proofread_genre"] = proofread_style.genre
+                cfg["proofread_tone"] = proofread_style.tone
+            else:
+                # 风格检测未启用时使用默认值
+                from style_detector import StyleDetectionResult
+                proofread_style = StyleDetectionResult(
+                    genre=cfg.get("proofread_genre", "general"),
+                    tone=cfg.get("proofread_tone", "neutral"),
+                    confidence=0,
+                    reason="",
+                )
 
             translator = JaZhTranslator(
                 api_key=cfg["api_key"],
@@ -180,6 +206,11 @@ class _TranslateWorker(QObject):
                 enable_proofread=cfg["enable_proofread"],
                 proofread_genre=proofread_style.genre,
                 proofread_tone=proofread_style.tone,
+                proofread_model=cfg.get("proofread_model") or None,  # P3-⑥
+                proofread_provider=cfg.get("proofread_provider") or None,
+                proofread_api_key=cfg.get("proofread_api_key") or None,
+                proofread_api_url=cfg.get("proofread_api_url") or None,
+                allow_text_cache_reuse=bool(cfg.get("allow_text_cache_reuse", False)),
             )
             self._translator = translator
             if self._bridge:
@@ -236,6 +267,7 @@ class _TranslateWorker(QObject):
                 progress_callback=on_progress,
                 item_callback=on_item,
                 proofread_callback=on_proofread_detail,
+                context_texts=all_texts,
             )
 
             if self._cancel_event.is_set():
@@ -356,6 +388,64 @@ class _EstimateWorker(QObject):
             self.failed.emit(self._path, str(e))
 
 
+def _collect_translatable_texts(epub_path: str):
+    from epub_io import load_book, iter_text_nodes, extract_toc_titles, extract_visible_text
+    from text_utils import is_translatable
+
+    book = load_book(epub_path)
+    texts = []
+    for _, _, tags in iter_text_nodes(book):
+        for tag in tags:
+            anchors = tag.find_all("a")
+            if len(anchors) > 1:
+                for node in tag.find_all(string=True):
+                    raw = str(node).strip()
+                    if is_translatable(raw):
+                        texts.append(raw)
+                continue
+            text = extract_visible_text(tag)
+            if is_translatable(text):
+                texts.append(text)
+    texts.extend(extract_toc_titles(book))
+    return texts
+
+
+class _ClearBookCacheWorker(QObject):
+    finished = Signal(int, int)
+    failed = Signal(str)
+
+    def __init__(self, config: dict):
+        super().__init__()
+        self._config = config
+
+    def run(self):
+        try:
+            from translator import JaZhTranslator
+
+            cfg = self._config
+            texts = _collect_translatable_texts(cfg["inp"])
+            translator = JaZhTranslator(
+                api_key=cfg.get("api_key") or "cache-clear",
+                provider=cfg.get("provider") or "deepseek",
+                api_url=cfg.get("api_url") or None,
+                model=cfg.get("model") or None,
+                max_workers=1,
+                batch_size=1,
+                max_batch_length=cfg.get("max_batch_length", 800),
+                max_text_size_for_batch=cfg.get("max_text_size_for_batch", 200),
+                api_timeout=cfg.get("api_timeout", 120),
+                enable_glossary=False,
+            )
+            removed = translator.clear_cache_for_texts(
+                texts,
+                include_text_cache=True,
+                all_models=True,
+            )
+            self.finished.emit(removed, len(set(str(text or "").strip() for text in texts if str(text or "").strip())))
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class _TestWorker(QObject):
     result = Signal(str)
 
@@ -403,6 +493,8 @@ class TranslateBridge(QObject):
     connectionResult = Signal(str)
     estimateFinished = Signal(str, int)
     estimateFailed = Signal(str, str)
+    cacheClearFinished = Signal(int, int)
+    cacheClearFailed = Signal(str)
     runtimeCleared = Signal()
 
     _progressValueChanged = Signal()
@@ -482,19 +574,42 @@ class TranslateBridge(QObject):
             "api_timeout": cfg.apiTimeout, "direction": cfg.direction,
             "enable_thinking": cfg.enableThinking, "enable_proofread": cfg.enableProofread,
             "proofread_genre": cfg.proofreadGenre, "proofread_tone": cfg.proofreadTone,
+            "proofread_provider": getattr(cfg, "proofreadProvider", ""),
+            "proofread_api_key": getattr(cfg, "proofreadApiKey", ""),
+            "proofread_api_url": getattr(cfg, "proofreadApiUrl", ""),
+            "proofread_model": getattr(cfg, "proofreadModel", ""),  # P3-⑥
+            "allow_text_cache_reuse": getattr(cfg, "allowTextCacheReuse", False),
         }
 
     @Slot("QVariant")
     def startTranslation(self, cfg):
         config = self._make_config(cfg)
         if not config["inp"] or not os.path.exists(config["inp"]):
-            self.failed.emit("请选择有效的输入 EPUB"); return
+            self.failed.emit("请选择有效的输入 EPUB")
+            ToastBridge.warning("请先选择要翻译的 EPUB 文件")
+            return
         if not config["out"]:
-            self.failed.emit("请填写输出文件路径"); return
+            self.failed.emit("请填写输出文件路径")
+            ToastBridge.warning("请填写输出文件保存路径")
+            return
         if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
-            self.failed.emit("该提供方需要 API Key"); return
+            self.failed.emit("该提供方需要 API Key")
+            ToastBridge.warning("请先在 API 页面配置 API Key")
+            return
         if not config["api_url"] or not config["model"]:
-            self.failed.emit("请填写 Base URL 和模型"); return
+            self.failed.emit("请填写 Base URL 和模型")
+            ToastBridge.warning("请填写 API 地址和模型名称")
+            return
+        proofread_provider = config.get("proofread_provider") or ""
+        if config.get("enable_proofread") and proofread_provider and proofread_provider != config["provider"]:
+            if proofread_provider in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config.get("proofread_api_key"):
+                self.failed.emit("校对供应商需要单独填写 API Key")
+                ToastBridge.warning("请填写校对模型 API Key")
+                return
+            if not config.get("proofread_api_url") or not config.get("proofread_model"):
+                self.failed.emit("请填写校对模型 Base URL 和模型名")
+                ToastBridge.warning("请填写校对模型地址和模型名称")
+                return
 
         self._last_cfg = config
         self._cancel_event.clear()
@@ -503,6 +618,7 @@ class TranslateBridge(QObject):
         self._active_texts = []
         self.busy = True
         self.progressValue = 0.0
+        ToastBridge.info("正在加载 EPUB 并开始翻译...")
 
         worker = _TranslateWorker(config, self._cancel_event)
         worker._bridge = self
@@ -539,17 +655,22 @@ class TranslateBridge(QObject):
                 self.progressValue = 0.0
                 self.runtimeCleared.emit()
                 self.finished.emit(STOPPED_RESULT)
+                ToastBridge.info("翻译已停止")
             else:
                 self.finished.emit(CANCELLED_RESULT)
+                ToastBridge.warning("翻译已取消")
         else:
             self.progressValue = 1.0
             self.finished.emit(out_path)
+            self.playCompletionVoice()
+            ToastBridge.success(f"翻译完成！已保存到: {os.path.basename(out_path)}")
         self._stop_requested = False
 
     @Slot()
     def cancelTranslation(self):
         self._cancel_event.set()
         self.statusChanged.emit("正在取消...")
+        ToastBridge.info("正在取消翻译...")
 
     @Slot()
     def stopTranslation(self):
@@ -570,6 +691,47 @@ class TranslateBridge(QObject):
         self._stop_requested = False
         self._cancel_event.set()
         self.statusChanged.emit("暂停中 — 等待当前请求完成...")
+        ToastBridge.info("翻译已暂停，可切换模型后继续")
+
+    @Slot("QVariant")
+    def clearCurrentBookCache(self, cfg):
+        if self.busy:
+            self.failed.emit("翻译运行中，不能清理缓存")
+            ToastBridge.warning("请先暂停或停止翻译，再清理缓存")
+            return
+        config = self._make_config(cfg)
+        if not config["inp"] or not os.path.exists(config["inp"]):
+            self.cacheClearFailed.emit("请选择有效的输入 EPUB")
+            ToastBridge.warning("请先选择要清理缓存的 EPUB")
+            return
+        if not config["api_url"]:
+            config["api_url"] = "https://api.deepseek.com/chat/completions"
+        if not config["model"]:
+            config["model"] = "deepseek-v4-flash"
+
+        self.statusChanged.emit("正在清理当前 EPUB 缓存...")
+        ToastBridge.info("正在清理当前 EPUB 缓存...")
+
+        worker = _ClearBookCacheWorker(config)
+        thread = QThread(self)
+        self._track_worker_thread(worker, thread)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_cache_clear_finished)
+        worker.failed.connect(self._on_cache_clear_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.start()
+
+    def _on_cache_clear_finished(self, removed, total_texts):
+        self.cacheClearFinished.emit(removed, total_texts)
+        self.statusChanged.emit(f"当前 EPUB 缓存清理完成: 删除 {removed} 条，文本 {total_texts} 条")
+        ToastBridge.success(f"已清理当前 EPUB 缓存: {removed} 条")
+
+    def _on_cache_clear_failed(self, error):
+        self.cacheClearFailed.emit(error)
+        self.statusChanged.emit(f"当前 EPUB 缓存清理失败: {error}")
+        ToastBridge.error("当前 EPUB 缓存清理失败")
 
     @Slot("QVariant")
     def resumeTranslation(self, cfg):
@@ -588,8 +750,15 @@ class TranslateBridge(QObject):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.result.connect(self.connectionResult)
+        worker.result.connect(self._on_connection_result)
         worker.result.connect(thread.quit)
         thread.start()
+
+    def _on_connection_result(self, msg):
+        if msg and "成功" in msg:
+            ToastBridge.success("API 连接测试成功")
+        elif msg:
+            ToastBridge.error("API 连接测试失败")
 
     # --- Estimate chars ---
     @Slot(str)
