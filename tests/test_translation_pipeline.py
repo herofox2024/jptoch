@@ -399,6 +399,35 @@ class TranslatorTests(unittest.TestCase):
         cleaned = DummyTranslator._strip_proofread_explanations(raw, fallback="处理出了bug。")
         self.assertEqual(cleaned, "处理出了bug。")
 
+    def test_proofread_prompt_includes_context_window(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.session = mock.Mock()
+        resp = mock.Mock()
+        resp.status_code = 200
+        resp.raise_for_status = mock.Mock()
+        resp.json.return_value = {
+            "choices": [{"message": {"content": "她笑了。"}}],
+            "usage": {"total_tokens": 10},
+        }
+        t.session.post.return_value = resp
+
+        revised = t._proofread_translation(
+            "彼女は笑った。",
+            "她笑了。",
+            ["译文中疑似残留日文假名"],
+            prev_text="前文：彼女は安心した。",
+            next_text="后文：彼は頷いた。",
+        )
+
+        self.assertEqual(revised, "她笑了。")
+        payload = t.session.post.call_args.kwargs["json"]
+        user_prompt = payload["messages"][1]["content"]
+        self.assertIn("前文上下文", user_prompt)
+        self.assertIn("前文：彼女は安心した。", user_prompt)
+        self.assertIn("后文上下文", user_prompt)
+        self.assertIn("后文：彼は頷いた。", user_prompt)
+
     def test_fast_fail_502_not_swallowed(self):
         t = DummyTranslator()
         t.cancel_event = threading.Event()

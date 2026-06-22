@@ -8,7 +8,30 @@ import ".."
 Page {
     id: taskPage
     padding: 24
-    background: Item {}
+    background: Item {
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+        }
+        Rectangle {
+            width: 360
+            height: 360
+            radius: 180
+            x: parent.width - width * 0.65
+            y: -height * 0.45
+            color: AppPalette.glass ? AppPalette.glassGlowCyan : AppPalette.accentSoft
+            opacity: AppPalette.dark ? 0.16 : 0.24
+        }
+        Rectangle {
+            width: 280
+            height: 280
+            radius: 140
+            x: -width * 0.42
+            y: parent.height - height * 0.58
+            color: AppPalette.glass ? AppPalette.glassGlowAmber : AppPalette.backgroundAlt
+            opacity: AppPalette.dark ? 0.16 : 0.32
+        }
+    }
 
     property var cfg: null
     property var tbridge: null
@@ -324,10 +347,35 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 142
+            Layout.preferredHeight: taskPage.width > 900 ? 298 : 372
             radius: AppPalette.radiusLarge
-            color: AppPalette.accentSoft
+            color: AppPalette.glass ? Qt.rgba(1, 1, 1, 0.48) : AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
+            clip: true
+
+            Rectangle {
+                width: 260
+                height: 260
+                radius: 130
+                anchors.right: parent.right
+                anchors.rightMargin: -96
+                anchors.top: parent.top
+                anchors.topMargin: -112
+                color: AppPalette.accentSoft
+                opacity: 0.45
+            }
+
+            Rectangle {
+                width: 170
+                height: 170
+                radius: 85
+                anchors.left: parent.left
+                anchors.leftMargin: -70
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: -88
+                color: AppPalette.glass ? AppPalette.glassGlowAmber : AppPalette.backgroundAlt
+                opacity: 0.36
+            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -338,6 +386,7 @@ Page {
                     Layout.fillWidth: true
                     spacing: 10
                     Label {
+                        Layout.fillWidth: true
                         text: "准备翻译"
                         color: AppPalette.textColor
                         font.pixelSize: 18
@@ -359,18 +408,18 @@ Page {
                     }
                 }
 
-                RowLayout {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    Layout.preferredHeight: taskPage.width > 900 ? 150 : 224
+                    spacing: 8
 
-                    Button {
+                    TaskActionButton {
                         id: startBtn
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 56
-                        text: taskPage.busy ? "翻译中..." : "开始翻译"
-                        highlighted: true
-                        font.pixelSize: 17
-                        font.weight: Font.DemiBold
+                        Layout.preferredHeight: 64
+                        primary: true
+                        label: taskPage.busy ? "翻译中..." : "开始翻译"
+                        hint: taskPage.readyToStart ? "使用当前模型与参数启动任务" : "请先选择源文件和输出文件"
                         enabled: taskPage.readyToStart && !taskPage.busy
                         onClicked: {
                             if (taskPage.tbridge) {
@@ -380,78 +429,123 @@ Page {
                         }
                     }
 
-                    Button {
-                        id: pauseBtn
+                    RowLayout {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 56
-                        text: "暂停"
-                        enabled: taskPage.busy
-                        font.pixelSize: 15
-                        font.weight: Font.DemiBold
-                        onClicked: { if (taskPage.tbridge) taskPage.tbridge.pauseTranslation() }
-                    }
+                        spacing: 12
 
-                    Button {
-                        id: resumeBtn
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 56
-                        text: "恢复"
-                        enabled: taskPage.readyToStart && !taskPage.busy
-                        font.pixelSize: 15
-                        font.weight: Font.DemiBold
-                        onClicked: {
-                            if (taskPage.tbridge) {
-                                taskPage.tbridge.resumeTranslation(cfg)
-                                taskPage.navigateToStatus()
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: taskPage.width > 760 ? 4 : 2
+                            columnSpacing: 10
+                            rowSpacing: 10
+
+                            TaskActionButton {
+                                id: pauseBtn
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                label: "暂停"
+                                hint: "保留已写入缓存"
+                                enabled: taskPage.busy
+                                onClicked: { if (taskPage.tbridge) taskPage.tbridge.pauseTranslation() }
+                            }
+
+                            TaskActionButton {
+                                id: resumeBtn
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                label: "恢复"
+                                hint: "继续断点任务"
+                                enabled: taskPage.readyToStart && !taskPage.busy
+                                onClicked: {
+                                    if (taskPage.tbridge) {
+                                        taskPage.tbridge.resumeTranslation(cfg)
+                                        taskPage.navigateToStatus()
+                                    }
+                                }
+                            }
+
+                            TaskActionButton {
+                                id: stopBtn
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                label: "停止"
+                                hint: "取消并清空本次缓存"
+                                danger: true
+                                enabled: taskPage.busy
+                                onClicked: {
+                                    if (taskPage.tbridge) {
+                                        taskPage.tbridge.stopTranslation()
+                                    }
+                                }
+                            }
+
+                            TaskActionButton {
+                                id: clearCacheBtn
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                label: "清缓存"
+                                hint: "重新翻译当前书"
+                                enabled: taskPage.readyToStart && !taskPage.busy
+                                onClicked: clearCacheDialog.open()
                             }
                         }
                     }
 
-                    Button {
-                        id: stopBtn
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 56
-                        text: "停止"
-                        enabled: taskPage.busy
-                        font.pixelSize: 15
-                        font.weight: Font.DemiBold
-                        onClicked: {
-                            if (taskPage.tbridge) {
-                                taskPage.tbridge.stopTranslation()
-                            }
-                        }
-                    }
-
-                    Button {
-                        id: clearCacheBtn
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 56
-                        text: "清缓存"
-                        enabled: taskPage.readyToStart && !taskPage.busy
-                        font.pixelSize: 15
-                        font.weight: Font.DemiBold
-                        onClicked: clearCacheDialog.open()
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Label {
-                        Layout.fillWidth: true
-                        text: "暂停会保留已写入缓存的内容，切换模型后点\"恢复\"可续译；停止会取消任务并清空本次已翻译缓存。"
-                        color: AppPalette.mutedText
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 12
-                    }
                     Flow {
-                        Layout.preferredWidth: taskPage.width > 800 ? 340 : 0
-                        spacing: 6
-                        visible: taskPage.width > 800
+                        Layout.fillWidth: true
+                        spacing: 7
                         SummaryChip { title: "模型"; value: taskPage.modelSummary() }
                         SummaryChip { title: "并发"; value: taskPage.valueOrDash(cfg ? cfg.maxWorkers : "") }
                         SummaryChip { title: "批量"; value: taskPage.valueOrDash(cfg ? cfg.batchSize : "") }
                         SummaryChip { title: "单条上限"; value: taskPage.valueOrDash(cfg ? cfg.maxTextSizeForBatch : "") }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 44
+                    Layout.bottomMargin: 2
+                    radius: 22
+                    color: AppPalette.fieldBg
+                    border.color: AppPalette.lineColor
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 10
+                        anchors.topMargin: 6
+                        anchors.bottomMargin: 6
+                        spacing: 10
+                        Rectangle {
+                            Layout.preferredWidth: 8
+                            Layout.preferredHeight: 8
+                            radius: 4
+                            color: taskPage.readyToStart ? AppPalette.successColor : AppPalette.amberColor
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "暂停会保留已写入缓存的内容，切换模型后点“恢复”可续译；停止会取消任务并清空本次已翻译缓存。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.NoWrap
+                            font.pixelSize: 12
+                            maximumLineCount: 1
+                            elide: Text.ElideRight
+                        }
+                        Rectangle {
+                            visible: taskPage.width > 880
+                            Layout.preferredWidth: 104
+                            Layout.preferredHeight: 28
+                            radius: 14
+                            color: taskPage.readyToStart ? AppPalette.accentSoft : AppPalette.cardAlt
+                            border.color: AppPalette.lineColor
+                            Label {
+                                anchors.centerIn: parent
+                                text: taskPage.readyToStart ? "工作台已就绪" : "等待文件"
+                                color: taskPage.readyToStart ? AppPalette.successColor : AppPalette.mutedText
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                        }
                     }
                 }
             }
@@ -466,6 +560,78 @@ Page {
         }
 
         Item { Layout.fillHeight: true }
+    }
+
+    component TaskActionButton: Rectangle {
+        id: actionRoot
+        property string label: ""
+        property string hint: ""
+        property bool primary: false
+        property bool danger: false
+        signal clicked()
+
+        implicitWidth: primary ? 320 : 132
+        implicitHeight: primary ? 64 : 40
+        radius: primary ? 24 : 18
+        color: !enabled
+               ? AppPalette.cardAlt
+               : (primary ? AppPalette.accentColor : (danger ? Qt.rgba(0.80, 0.24, 0.20, AppPalette.glass ? 0.18 : 0.10) : AppPalette.cardBg))
+        border.color: !enabled
+                      ? AppPalette.lineColor
+                      : (primary ? AppPalette.accentColor : (danger ? AppPalette.errorColor : AppPalette.borderColor))
+        border.width: primary ? 0 : 1
+        opacity: enabled ? 1.0 : 0.52
+        scale: actionMouse.containsMouse && enabled ? 1.012 : 1.0
+
+        Behavior on scale {
+            NumberAnimation { duration: 110; easing.type: Easing.OutCubic }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: parent.radius
+            color: "transparent"
+            border.color: actionMouse.containsMouse && actionRoot.enabled ? AppPalette.amberColor : "transparent"
+            border.width: 1
+            opacity: actionMouse.containsMouse ? 0.7 : 0
+        }
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: parent.width - 20
+            spacing: primary ? 5 : 1
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                text: actionRoot.label
+                color: !actionRoot.enabled
+                       ? AppPalette.mutedText
+                       : (actionRoot.primary ? "#ffffff" : (actionRoot.danger ? AppPalette.errorColor : AppPalette.textColor))
+                font.pixelSize: actionRoot.primary ? 18 : 13
+                font.weight: Font.DemiBold
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                visible: actionRoot.hint !== ""
+                text: actionRoot.hint
+                color: actionRoot.primary ? Qt.rgba(1, 1, 1, 0.82) : AppPalette.mutedText
+                font.pixelSize: actionRoot.primary ? 11 : 9
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
+        }
+
+        MouseArea {
+            id: actionMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            enabled: actionRoot.enabled
+            cursorShape: Qt.PointingHandCursor
+            onClicked: actionRoot.clicked()
+        }
     }
 
     FileDialog {
@@ -623,7 +789,7 @@ Page {
         property string value: ""
 
         width: Math.min(240, Math.max(88, chipRow.implicitWidth + 22))
-        height: 30
+        height: 28
         radius: 15
         color: AppPalette.cardBg
         border.color: AppPalette.lineColor

@@ -1017,7 +1017,14 @@ class JaZhTranslator:
         cleaned = re.sub(rf"(?:^|\n)\s*{note_prefix}\s*[:：][\s\S]*$", "", cleaned).strip()
         return cleaned or fallback
 
-    def _proofread_translation(self, src: str, draft: str, issues: List[str]) -> str:
+    def _proofread_translation(
+        self,
+        src: str,
+        draft: str,
+        issues: List[str],
+        prev_text: Optional[str] = None,
+        next_text: Optional[str] = None,
+    ) -> str:
         """Ask the model to fix only detected translation/proper-noun issues."""
         if not bool(getattr(self, "enable_proofread", False)) or not issues:
             return draft
@@ -1025,10 +1032,12 @@ class JaZhTranslator:
         selected_entries = self._select_proofread_glossary_entries(src, max_terms=30)
         glossary_text = self._build_glossary_text(selected_entries)
         system_prompt = self._build_proofread_system_prompt()
+        context_guidance = self._build_context_guidance(prev_text, next_text)
         user_prompt = (
             "【发现的问题】\n"
             + "\n".join(f"- {issue}" for issue in issues)
             + f"\n\n【术语表】\n{glossary_text}\n\n"
+            + (f"{context_guidance}\n\n" if context_guidance else "")
             + f"【日文原文】\n{src}\n\n"
             + f"【中文初译】\n{draft}\n"
             + "\n【术语规则】\n术语只在日文原文中独立命中且符合上下文时才修正；"
@@ -2412,7 +2421,21 @@ JSON 顶层字段：
                     if enable_proofread and i in proofread_issues and i not in suspicious_idx:
                         draft = repaired[i][1]
                         issues = list(proofread_issues[i])
-                        revised = self._proofread_translation(src, draft, issues)
+                        proofread_prev, proofread_next = get_context_for_text(src)
+                        try:
+                            revised = self._proofread_translation(
+                                src,
+                                draft,
+                                issues,
+                                prev_text=proofread_prev,
+                                next_text=proofread_next,
+                            )
+                        except TypeError as exc:
+                            message = str(exc)
+                            if "prev_text" in message or "next_text" in message or "unexpected keyword" in message:
+                                revised = self._proofread_translation(src, draft, issues)
+                            else:
+                                raise
                         if any("日文" in issue or "假名" in issue for issue in issues) and self._has_japanese_residue(revised):
                             try:
                                 fallback_prev, fallback_next = get_context_for_text(src)

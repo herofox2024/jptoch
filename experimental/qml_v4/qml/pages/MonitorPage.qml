@@ -291,7 +291,7 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 238
+            Layout.preferredHeight: 268
             radius: AppPalette.radiusLarge
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
@@ -336,7 +336,7 @@ Page {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    spacing: 12
+                    spacing: 10
 
                     GridLayout {
                         Layout.fillWidth: true
@@ -368,10 +368,11 @@ Page {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 62
+                        Layout.preferredHeight: 90
                         radius: AppPalette.radiusMedium
                         color: AppPalette.cardBg
                         border.color: AppPalette.lineColor
+                        clip: true
 
                         RowLayout {
                             anchors.fill: parent
@@ -387,7 +388,8 @@ Page {
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 2
+                                Layout.fillHeight: true
+                                spacing: 3
 
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -421,6 +423,8 @@ Page {
                                     text: page.promptStyleReasonText()
                                     color: AppPalette.mutedText
                                     font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 2
                                     elide: Text.ElideRight
                                 }
                             }

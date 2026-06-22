@@ -302,24 +302,6 @@ ApplicationWindow {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 56
-                        radius: 18
-                        color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.11)
-                        border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
-
-                        Label {
-                            anchors.fill: parent
-                            anchors.margins: 14
-                            text: "暂停后可切换模型，再恢复续译。"
-                            wrapMode: Text.WordWrap
-                            color: "#d9eee7"
-                            font.pixelSize: 11
-                            opacity: 0.86
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
                         Layout.preferredHeight: 50
                         radius: 18
                         color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.06)

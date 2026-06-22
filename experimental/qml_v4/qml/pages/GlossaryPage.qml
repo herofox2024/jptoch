@@ -154,7 +154,7 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 88
+            Layout.preferredHeight: 104
             radius: AppPalette.radiusLarge
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
@@ -172,21 +172,41 @@ Page {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        TextField {
+                        Rectangle {
                             id: searchField
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 42
-                            placeholderText: "搜索术语、译名、备注或来源..."
-                            selectByMouse: true
-                            leftPadding: 14
-                            rightPadding: 14
-                            background: Rectangle {
-                                radius: 16
-                                color: AppPalette.fieldBg
-                                border.color: searchField.activeFocus ? AppPalette.accentColor : AppPalette.lineColor
-                                border.width: searchField.activeFocus ? 2 : 1
+                            Layout.preferredHeight: 50
+                            radius: 18
+                            color: AppPalette.fieldBg
+                            border.color: searchInput.activeFocus ? AppPalette.accentColor : AppPalette.lineColor
+                            border.width: searchInput.activeFocus ? 2 : 1
+                            property alias text: searchInput.text
+
+                            Label {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 18
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: searchInput.text.length === 0 && !searchInput.activeFocus
+                                text: "搜索术语、译名、备注或来源..."
+                                color: AppPalette.mutedText
+                                font.pixelSize: 13
+                                elide: Text.ElideRight
                             }
-                            onTextChanged: page.applySearch()
+
+                            TextInput {
+                                id: searchInput
+                                anchors.fill: parent
+                                anchors.leftMargin: 18
+                                anchors.rightMargin: 18
+                                verticalAlignment: Text.AlignVCenter
+                                color: AppPalette.textColor
+                                selectedTextColor: "white"
+                                selectionColor: AppPalette.accentColor
+                                font.pixelSize: 14
+                                clip: true
+                                selectByMouse: true
+                                onTextChanged: page.applySearch()
+                            }
                         }
 
                         ComboBox {
