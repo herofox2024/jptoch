@@ -106,7 +106,7 @@ class _TranslateWorker(QObject):
         start_ts = time.time()
         try:
             from bs4 import NavigableString
-            from translator import JaZhTranslator
+            from translator import JaZhTranslator, TranslationIncompleteError
             from epub_io import (
                 load_book,
                 save_book,
@@ -262,13 +262,28 @@ class _TranslateWorker(QObject):
                     draft.strip() != revised.strip(),
                 )
 
-            results = translator.translate_batch(
-                all_texts,
-                progress_callback=on_progress,
-                item_callback=on_item,
-                proofread_callback=on_proofread_detail,
-                context_texts=all_texts,
-            )
+            try:
+                results = translator.translate_batch(
+                    all_texts,
+                    progress_callback=on_progress,
+                    item_callback=on_item,
+                    proofread_callback=on_proofread_detail,
+                    context_texts=all_texts,
+                )
+            except TranslationIncompleteError as e:
+                translator.flush_cache()
+                failed_count = len(e.failed_texts)
+                residue_count = len(e.residue_texts)
+                samples = "\n".join(f"- {text[:120]}" for text in e.failed_texts[:5])
+                message = (
+                    f"翻译未完成：{failed_count} 条未成功翻译，"
+                    f"{residue_count} 条疑似日文残留。"
+                    "已保留成功译文缓存，请降低并发/批量或切换模型后点击恢复续译。"
+                )
+                self.statusChanged.emit(message)
+                self.errorDetail.emit(message + (f"\n样例:\n{samples}" if samples else ""))
+                self.failed.emit(message)
+                return
 
             if self._cancel_event.is_set():
                 self.finished.emit(CANCELLED_RESULT)
@@ -298,6 +313,35 @@ class _TranslateWorker(QObject):
                         continue
                 tag.clear()
                 tag.append(NavigableString(translated))
+
+            hidden_tags = {"rt", "rp", "script", "style", "noscript"}
+            residue_samples = []
+            residue_total = 0
+            for _, soup, _ in docs:
+                root = soup.find("body") or soup
+                for node in root.find_all(string=True):
+                    parent_name = getattr(getattr(node, "parent", None), "name", "")
+                    if parent_name in hidden_tags:
+                        continue
+                    raw = str(node).strip()
+                    if not raw:
+                        continue
+                    if JaZhTranslator._has_japanese_residue(raw):
+                        residue_total += 1
+                        if len(residue_samples) < 8:
+                            residue_samples.append(raw[:120])
+
+            if residue_total:
+                translator.flush_cache()
+                samples = "\n".join(f"- {text}" for text in residue_samples)
+                message = (
+                    f"保存前检查发现 {residue_total} 处疑似日文残留。"
+                    "已阻止保存完成品，请调整参数或切换模型后恢复续译。"
+                )
+                self.statusChanged.emit(message)
+                self.errorDetail.emit(message + (f"\n样例:\n{samples}" if samples else ""))
+                self.failed.emit(message)
+                return
 
             for item, soup, _ in docs:
                 item.set_content(str(soup).encode("utf-8"))
@@ -634,7 +678,7 @@ class TranslateBridge(QObject):
         worker.statUpdate.connect(self.statUpdate)
         worker.errorDetail.connect(self.errorDetail)
         worker.finished.connect(self._on_finished)
-        worker.failed.connect(self.failed)
+        worker.failed.connect(self._on_failed)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         thread.start()
@@ -665,6 +709,20 @@ class TranslateBridge(QObject):
             self.playCompletionVoice()
             ToastBridge.success(f"翻译完成！已保存到: {os.path.basename(out_path)}")
         self._stop_requested = False
+
+    def _on_failed(self, msg):
+        self._active_translator = None
+        self._active_texts = []
+        self.busy = False
+        text = str(msg or "")
+        if text.startswith("翻译未完成"):
+            self._is_paused = True
+            self.statusChanged.emit("翻译未完成，可调整参数或切换模型后恢复续译")
+            ToastBridge.warning("翻译未完成，可恢复续译")
+        else:
+            self._is_paused = False
+            ToastBridge.error("翻译失败")
+        self.failed.emit(text)
 
     @Slot()
     def cancelTranslation(self):

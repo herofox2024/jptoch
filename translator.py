@@ -85,6 +85,26 @@ class FastFailError(RuntimeError):
     """用于标识应立即中断流程的不可恢复错误（如明确配置的 HTTP 502）。"""
 
 
+class TranslationIncompleteError(RuntimeError):
+    """Raised when some texts could not be safely translated."""
+
+    def __init__(
+        self,
+        failed_texts: Optional[List[str]] = None,
+        residue_texts: Optional[List[str]] = None,
+        partial_results: Optional[Dict[str, str]] = None,
+    ):
+        self.failed_texts = list(dict.fromkeys(failed_texts or []))
+        self.residue_texts = list(dict.fromkeys(residue_texts or []))
+        self.partial_results = dict(partial_results or {})
+        message = (
+            f"翻译未完成：{len(self.failed_texts)} 条未成功翻译，"
+            f"{len(self.residue_texts)} 条疑似仍有日文残留。"
+            "已保留成功译文缓存，请降低并发/批量或切换模型后恢复续译。"
+        )
+        super().__init__(message)
+
+
 def get_data_dir() -> Path:
     """获取用户数据目录，用于存储缓存和配置"""
     data_dir = Path.home() / ".epub_translator"
@@ -661,6 +681,8 @@ class JaZhTranslator:
             "proofread_suspicious": 0,
             "proofread_fixed": 0,
             "proofread_rejected": 0,
+            "translation_incomplete": 0,
+            "japanese_residue_remaining": 0,
         }
         logger.info(
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
@@ -766,6 +788,19 @@ class JaZhTranslator:
     def _has_japanese_residue(text: str) -> bool:
         """Detect kana residue in Chinese drafts. Han characters alone are not reliable."""
         return bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", text or ""))
+
+    @classmethod
+    def _is_incomplete_translation(cls, src: str, dst: Optional[str]) -> bool:
+        """Return True when a translation is unsafe to cache or write to EPUB."""
+        source = (src or "").strip()
+        translated = (dst or "").strip()
+        if not translated:
+            return True
+        if cls._has_japanese_residue(translated):
+            return True
+        if source and translated == source and cls._has_japanese_residue(source):
+            return True
+        return False
 
     @staticmethod
     def _is_meaningful_glossary_term(original: str, translation: str) -> bool:
@@ -2257,6 +2292,8 @@ JSON 顶层字段：
         results: Dict[str, str] = {}
         total = len(texts)
         completed = 0
+        failed_texts: Dict[str, str] = {}
+        residue_texts: Dict[str, str] = {}
 
         # 使用实例配置，允许传入覆盖
         effective_batch_size = batch_size if batch_size is not None else self.batch_size
@@ -2264,6 +2301,20 @@ JSON 顶层字段：
         uncached_unique: List[str] = []
         pending_counts: Dict[str, int] = {}
         seen_uncached = set()
+
+        def mark_incomplete(text: str, reason: str, translated: Optional[str] = None) -> None:
+            key = str(text or "")
+            if not key:
+                return
+            failed_texts.setdefault(key, reason)
+            if translated is not None and self._has_japanese_residue(translated):
+                residue_texts.setdefault(key, translated)
+
+        def should_accept_translation(original: str, translated: Optional[str], reason: str = "") -> bool:
+            if self._is_incomplete_translation(original, translated):
+                mark_incomplete(original, reason or "译文为空或仍有日文残留", translated)
+                return False
+            return True
 
         # Phase 1-③: 预翻译计数
         pre_translated = 0
@@ -2275,13 +2326,23 @@ JSON 顶层字段：
                 # ① 模型缓存查找
                 cache_key = self._cache_key(text)
                 if cache_key in self.cache:
-                    results[text] = self.cache[cache_key]
-                    completed += 1
-                    continue
+                    cached_translation = self.cache[cache_key]
+                    if not self._is_incomplete_translation(text, cached_translation):
+                        results[text] = cached_translation
+                        completed += 1
+                        continue
+                    self.cache.pop(cache_key, None)
+                    self._cache_dirty = True
 
                 # ② Phase 1-③: 本地预翻译规则
                 pre_result = self._pre_translate(text)
                 if pre_result is not None:
+                    if self._is_incomplete_translation(text, pre_result):
+                        pending_counts[text] = pending_counts.get(text, 0) + 1
+                        if text not in seen_uncached:
+                            uncached_unique.append(text)
+                            seen_uncached.add(text)
+                        continue
                     results[text] = pre_result
                     # 同步写入模型缓存
                     self.cache[cache_key] = pre_result
@@ -2295,13 +2356,14 @@ JSON 顶层字段：
                 if getattr(self, "allow_text_cache_reuse", False):
                     text_cached = self._lookup_text_cache(text)
                     if text_cached is not None:
-                        results[text] = text_cached
-                        self.cache[cache_key] = text_cached
-                        completed += 1
-                        text_cache_hits += 1
-                        if item_callback:
-                            item_callback(text, text_cached)
-                        continue
+                        if not self._is_incomplete_translation(text, text_cached):
+                            results[text] = text_cached
+                            self.cache[cache_key] = text_cached
+                            completed += 1
+                            text_cache_hits += 1
+                            if item_callback:
+                                item_callback(text, text_cached)
+                            continue
 
                 # ④ 未命中，加入待翻译队列
                 pending_counts[text] = pending_counts.get(text, 0) + 1
@@ -2533,7 +2595,7 @@ JSON 顶层字段：
                         final_parts[idx] = call_translate_chunk(batch[idx], retry_prev, retry_next)
                     except Exception as e:
                         logger.warning(f"单条重试失败 [idx={idx}]: {e}")
-                        final_parts[idx] = batch[idx]  # 兜底：回退原文
+                        final_parts[idx] = None  # 保留为未完成，禁止回写原文
 
                 return repair_batch_quality(batch, list(zip(batch, final_parts)))
 
@@ -2579,6 +2641,8 @@ JSON 顶层字段：
                 try:
                     batch_results = future.result()
                     for original, translated in batch_results:
+                        if not should_accept_translation(original, translated, "批次译文疑似未完成"):
+                            continue
                         if self._should_write_cache():
                             with self._cache_lock:
                                 self.cache[self._cache_key(original)] = translated
@@ -2605,10 +2669,13 @@ JSON 顶层字段：
                         try:
                             fallback_prev, fallback_next = get_context_for_text(text)
                             zh = call_translate_chunk(text, fallback_prev, fallback_next)
+                            if not should_accept_translation(text, zh, "批次失败后的单条重试仍未完成"):
+                                continue
                             results[text] = zh
                         except Exception as e2:
                             logger.error(f"翻译失败: {e2}")
-                            results[text] = text
+                            mark_incomplete(text, f"单条重试失败: {e2}")
+                            continue
                         completed += pending_counts.get(text, 1)
                         if item_callback:
                             item_callback(text, results[text])
@@ -2627,7 +2694,38 @@ JSON 顶层字段：
                 with self._cache_lock:
                     cached = self.cache.get(self._cache_key(text))
                 if cached is not None:
-                    results[text] = cached
+                    if should_accept_translation(text, cached, "最终缓存补全疑似未完成"):
+                        results[text] = cached
+                    else:
+                        with self._cache_lock:
+                            self.cache.pop(self._cache_key(text), None)
+                            self._cache_dirty = True
+            elif not should_accept_translation(text, results.get(text), "最终校验发现译文仍未完成"):
+                results.pop(text, None)
+
+        missing_texts = [text for text in texts if text not in results]
+        for text in missing_texts:
+            mark_incomplete(text, "未返回安全译文")
+
+        if failed_texts or residue_texts:
+            unique_failed = list(dict.fromkeys(failed_texts.keys()))
+            unique_residue = list(dict.fromkeys(residue_texts.keys()))
+            if unique_failed:
+                self._inc_stat("translation_incomplete", len(unique_failed))
+            if unique_residue:
+                self._inc_stat("japanese_residue_remaining", len(unique_residue))
+            sample = " | ".join(unique_failed[:3])
+            logger.error(
+                "翻译未完成：%s 条未成功翻译，%s 条疑似日文残留。样例: %s",
+                len(unique_failed),
+                len(unique_residue),
+                sample or "-",
+            )
+            raise TranslationIncompleteError(
+                failed_texts=unique_failed,
+                residue_texts=unique_residue,
+                partial_results=results,
+            )
 
         if progress_callback and completed < total:
             progress_callback(total, total)

@@ -14,7 +14,7 @@ from ebooklib import ITEM_DOCUMENT
 from epub_io import extract_visible_text, iter_text_nodes
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
-from translator import FastFailError, JaZhTranslator, BatchJsonResult
+from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError
 from glossary_store import rebuild_glossary_index
 
 
@@ -253,6 +253,38 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(res["B"], "ZH:B")
         self.assertEqual(t.cache[t._cache_key("A")], "ZH:A")
         self.assertEqual(t.cache[t._cache_key("B")], "ZH:B")
+
+    def test_translate_batch_does_not_write_original_when_retries_fail(self):
+        t = DummyTranslator()
+        src = "\u5f7c\u5973\u306f\u7b11\u3063\u305f\u3002"
+        t.max_workers = 1
+        t.batch_size = 1
+
+        def fail_translate(*args, **kwargs):
+            raise RuntimeError("rate limited")
+
+        t._translate_chunk = fail_translate  # type: ignore
+
+        with self.assertRaises(TranslationIncompleteError) as ctx:
+            t.translate_batch([src], batch_size=1)
+
+        self.assertIn(src, ctx.exception.failed_texts)
+        self.assertNotIn(src, ctx.exception.partial_results)
+        self.assertNotIn(t._cache_key(src), t.cache)
+        self.assertEqual(t.stats.get("translation_incomplete"), 1)
+
+    def test_translate_batch_ignores_bad_japanese_residue_cache_and_retries(self):
+        t = DummyTranslator()
+        src = "\u5f7c\u5973\u306f\u7b11\u3063\u305f\u3002"
+        t.cache[t._cache_key(src)] = src
+        t.max_workers = 1
+        t.batch_size = 1
+        t._translate_chunk = lambda text, prev_text=None, next_text=None: "\u5979\u7b11\u4e86\u3002"  # type: ignore
+
+        res = t.translate_batch([src], batch_size=1)
+
+        self.assertEqual(res[src], "\u5979\u7b11\u4e86\u3002")
+        self.assertEqual(t.cache[t._cache_key(src)], "\u5979\u7b11\u4e86\u3002")
 
     def test_cache_key_is_model_scoped(self):
         t = DummyTranslator()
