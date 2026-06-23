@@ -462,7 +462,10 @@ class JaZhTranslator:
         if next_text:
             preview = next_text[:self.CONTEXT_PREVIEW_LEN]
             parts.append(f"【后文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】\n{preview}")
-        return "\n\n".join(parts) if parts else ""
+        result = "\n\n".join(parts) if parts else ""
+        if result:
+            logger.debug(f"上下文窗口: 前文={bool(prev_text)}, 后文={bool(next_text)}, 长度={len(result)}")
+        return result
 
     # ---- Phase 2-⑤: 校对分级 ----
     PROOFREAD_SKIP_PATTERNS: List[str] = [
@@ -2396,6 +2399,7 @@ JSON 顶层字段：
         if self.ENABLE_CONTEXT_WINDOW:
             for idx, text in enumerate(context_sequence):
                 text_index_map.setdefault(text, idx)
+            logger.info(f"上下文窗口已启用: {len(text_index_map)} 条文本已索引")
 
         def get_context_for_text(text: str) -> Tuple[Optional[str], Optional[str]]:
             if not self.ENABLE_CONTEXT_WINDOW or not text_index_map:

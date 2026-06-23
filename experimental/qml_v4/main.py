@@ -168,7 +168,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("AI日译中（EPUB）")
-    app.setApplicationDisplayName("AI日译中（EPUB）V4.0 RC1")
+    app.setApplicationDisplayName("AI日译中（EPUB）V4.1")
     app.setOrganizationName("epub-translator")
     if icon_path:
         app.setWindowIcon(QIcon(str(icon_path)))

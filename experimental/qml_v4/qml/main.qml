@@ -13,7 +13,7 @@ ApplicationWindow {
     height: 780
     minimumWidth: 940
     minimumHeight: 640
-    title: "AI日译中（EPUB）V4.0 RC1"
+    title: "AI日译中（EPUB）V4.1"
     font.family: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
 
     readonly property string uiFont: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
@@ -186,14 +186,14 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 0
                 Label {
-                    text: "AI日译中（EPUB）V4.0 RC1"
+                    text: "AI日译中（EPUB）V4.1"
                     color: AppPalette.textColor
                     font.family: appWindow.titleFont
                     font.pixelSize: 19
                     font.weight: Font.DemiBold
                 }
                 Label {
-                    text: "日系小说翻译工作台 · PySide6/QML RC1"
+                    text: "日系小说翻译工作台 · PySide6/QML V4.1"
                     color: AppPalette.mutedText
                     font.pixelSize: 12
                 }
@@ -210,7 +210,7 @@ ApplicationWindow {
                 border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.62) : AppPalette.borderColor
                 Label {
                     anchors.centerIn: parent
-                    text: appWindow.glassMode ? "V4.0 RC1 玻璃" : "V4.0 RC1"
+                    text: appWindow.glassMode ? "V4.1 玻璃" : "V4.1"
                     color: AppPalette.accentColor
                     font.pixelSize: 12
                     font.weight: Font.DemiBold

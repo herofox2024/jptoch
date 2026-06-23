@@ -56,7 +56,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="AI日译中(EPUB)V4.0 RC1",
+    name="AI日译中(EPUB)V4.1",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

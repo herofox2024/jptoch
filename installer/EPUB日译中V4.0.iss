@@ -1,18 +1,18 @@
-#define MyAppName "AI日译中(EPUB) V4.0 RC1"
-#define MyAppVersion "4.0 RC1"
+#define MyAppName "AI日译中(EPUB) V4.1"
+#define MyAppVersion "4.1"
 #define MyAppPublisher "EPUB Translator"
-#define MyAppExeName "AI日译中(EPUB)V4.0 RC1.exe"
+#define MyAppExeName "AI日译中(EPUB)V4.1.exe"
 
 [Setup]
 AppId={{9A4E7C3B-155C-49D3-8D8C-A9B8A7423C40}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\AI日译中(EPUB) V4.0 RC1
+DefaultDirName={localappdata}\Programs\AI日译中(EPUB) V4.1
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist\installer
-OutputBaseFilename=AI日译中(EPUB)V4.0 RC1 单文件安装程序
+OutputBaseFilename=AI日译中(EPUB)V4.1 单文件安装程序
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

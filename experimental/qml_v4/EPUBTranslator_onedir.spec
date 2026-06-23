@@ -57,7 +57,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="AI日译中(EPUB)V4.0 RC1",
+    name="AI日译中(EPUB)V4.1",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -79,5 +79,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="AI日译中(EPUB)V4.0 RC1_onedir",
+    name="AI日译中(EPUB)V4.1_onedir",
 )

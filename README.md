@@ -6,12 +6,12 @@
 
 基于大模型 API 的日文 EPUB 自动翻译工具，面向轻小说、推理小说、科幻小说等日文电子书场景，支持翻译、术语表、缓存续译、译后校对和 Windows 桌面安装包。
 
-![Version](https://img.shields.io/badge/version-V4.0%20RC1-2f6f5f)
+![Version](https://img.shields.io/badge/version-V4.1-2f6f5f)
 ![UI](https://img.shields.io/badge/UI-PySide6%20%2B%20QML-203a43)
 ![Platform](https://img.shields.io/badge/platform-Windows-c47f2c)
-![Status](https://img.shields.io/badge/status-release%20candidate-blue)
+![Status](https://img.shields.io/badge/status-stable-brightgreen)
 
-**当前候选主线：QML/V4.0 RC1**  
+**当前主力版本：QML/V4.1**  
 **稳定回退版：Qt V3.2.1**
 
 </div>
@@ -32,7 +32,7 @@
 | [项目结构](#项目结构) | 当前代码目录和入口文件 |
 | [打包说明](#打包说明) | PyInstaller 和 Inno Setup 打包命令 |
 | [常见问题](#常见问题) | 限流、缓存、目录未翻译、启动慢等问题 |
-| [版本记录](#版本记录) | V4.0 RC1 与历史版本摘要 |
+| [版本记录](#版本记录) | V4.1 与历史版本摘要 |
 
 ---
 
@@ -40,11 +40,11 @@
 
 | 版本 | 入口 | 状态 | 说明 |
 |------|------|------|------|
-| QML/V4.0 RC1 | `experimental/qml_v4/main.py` | 当前候选主线 | 新功能优先进入该版本，已完成真实 EPUB 流程验证 |
+| QML/V4.1 | `experimental/qml_v4/main.py` | 当前主力版本 | P0-P3 架构改造 + 性能优化 |
 | Qt V3.2.1 | `main_qt.py` | 稳定回退版 | 进入维护模式，只修 P0/P1 严重问题 |
 | Tk 旧版 | `app.py` | 冻结兼容 | 仅保留兼容测试或阻断性修复 |
 
-说明：`experimental/qml_v4/` 是历史目录名。V4.0 RC1 阶段暂不改目录，避免影响已有打包脚本、安装脚本和用户路径。
+说明：`experimental/qml_v4/` 是历史目录名。V4.1 阶段暂不改目录，避免影响已有打包脚本、安装脚本和用户路径。
 
 ---
 
@@ -75,12 +75,12 @@
 已打包的 RC1 安装程序位于：
 
 ```text
-dist/installer/AI日译中(EPUB)V4.0 RC1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
 ```
 
 安装后从开始菜单或桌面快捷方式启动即可。
 
-### 方式二：从源码运行 QML/V4.0 RC1
+### 方式二：从源码运行 QML/V4.1
 
 ```powershell
 pip install -r experimental/qml_v4/requirements.txt
@@ -148,7 +148,7 @@ Tk 入口已冻结，不建议日常使用。
 
 ### 性能参数
 
-V4.0 RC1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
+V4.1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 
 | 参数 | 作用 | 建议 |
 |------|------|------|
@@ -234,7 +234,7 @@ V4.0 RC1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 
 ```text
 .
-├─ experimental/qml_v4/        # QML/V4.0 RC1 当前候选主线
+├─ experimental/qml_v4/        # QML/V4.1 当前主力版本
 │  ├─ main.py                  # V4 启动入口（PySide6 + QML）
 │  ├─ qml/                     # QML 页面与主题
 │  │  ├─ main.qml              # 主窗口（导航栏、页面切换、主题绑定）
@@ -393,7 +393,7 @@ python -m PyInstaller experimental\qml_v4\EPUBTranslator_onedir_slim.spec --noco
 输出目录：
 
 ```text
-dist/AI日译中(EPUB)V4.0 RC1_slim/
+dist/AI日译中(EPUB)V4.1_slim/
 ```
 
 ### Inno Setup 安装包
@@ -409,7 +409,7 @@ dist/AI日译中(EPUB)V4.0 RC1_slim/
 输出安装包：
 
 ```text
-dist/installer/AI日译中(EPUB)V4.0 RC1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
 ```
 
 ---
@@ -467,11 +467,11 @@ QML/PySide6、EPUB 解析、配置加载和 Python 运行时初始化都会增�
 
 ## 版本记录
 
-### V4.0 RC1
+### V4.1
 
-- QML/V4 从实验版调整为当前候选主线。
-- README、启动标题、安装包命名统一为 `AI日译中(EPUB)V4.0 RC1`。
-- **架构改造 (P0/P1/P2)**：引入 Toast 通知系统、翻译管线阶段抽象、服务容器依赖注入、运行时主题切换增强。
+- QML/V4 从候选版正式发布为 V4.1 主力版本。
+- **架构改造 (P0/P1/P2/P3)**：Toast 通知、翻译管线、服务容器、主题切换、智能分批、上下文窗口、预翻译规则、文本级缓存、校对分级、双模型流水线、流式处理。
+- README、启动标题、安装包命名统一为 `AI日译中(EPUB)V4.1`。
 - 增加 iOS26 玻璃主题、深色主题修正、导航和状态页视觉优化。
 - 增加启动动画、页面懒加载、术语表延迟加载和重模块延迟导入。
 - 增加停止按钮、暂停恢复续译、状态页预计翻译时长/预计剩余时间。
