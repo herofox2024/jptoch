@@ -36,6 +36,8 @@ Page {
 
     property real startTs: 0
 
+    signal requestManualEdit(string original, string translation)
+
     ListModel { id: proofreadModel }
 
     function isBusy() {
@@ -706,6 +708,11 @@ Page {
                                             title: "校对后译文"
                                             body: revised
                                             tone: "accent"
+                                        }                                        Button {
+                                            Layout.alignment: Qt.AlignRight
+                                            text: "人工修改此条"
+                                            enabled: original && original !== ""
+                                            onClicked: page.requestManualEdit(original, (revised && revised !== "") ? revised : draft)
                                         }
                                     }
                                 }
@@ -979,3 +986,4 @@ Page {
         }
     }
 }
+

@@ -540,6 +540,8 @@ class TranslateBridge(QObject):
     cacheClearFinished = Signal(int, int)
     cacheClearFailed = Signal(str)
     runtimeCleared = Signal()
+    manualTranslationLookup = Signal(str)
+    manualTranslationSaved = Signal(str)
 
     _progressValueChanged = Signal()
     _busyChanged = Signal()
@@ -791,6 +793,72 @@ class TranslateBridge(QObject):
         self.statusChanged.emit(f"当前 EPUB 缓存清理失败: {error}")
         ToastBridge.error("当前 EPUB 缓存清理失败")
 
+    @Slot(str, str)
+    def saveManualTranslation(self, src: str, dst: str):
+        """保存人工修改译文。人工译文下次翻译/恢复续译时最高优先级命中。"""
+        if not src or not dst:
+            self.failed.emit("原文和译文不能为空")
+            return
+        src = src.strip()
+        dst = dst.strip()
+        try:
+            from translator import JaZhTranslator
+
+            if self._active_translator:
+                self._active_translator.save_manual_translation(src, dst)
+            else:
+                translator = JaZhTranslator(api_key="manual", enable_glossary=False)
+                translator.save_manual_translation(src, dst)
+            self.manualTranslationSaved.emit(dst)
+            self.statusChanged.emit("人工修改已保存，下次翻译/恢复续译时优先使用")
+            ToastBridge.success("人工修改已保存")
+        except Exception as e:
+            self.failed.emit(f"保存人工修改失败: {e}")
+            ToastBridge.error("保存人工修改失败")
+
+    @Slot(str)
+    def lookupTranslation(self, src: str):
+        """在人工缓存、文本缓存和模型缓存中查找已有译文。"""
+        if not src:
+            return
+        src = src.strip()
+        try:
+            from translator import JaZhTranslator, get_data_dir
+            import hashlib
+
+            translator = self._active_translator or JaZhTranslator(api_key="manual", enable_glossary=False)
+            manual = translator._lookup_manual_cache(src)
+            if manual:
+                self.manualTranslationLookup.emit(manual)
+                self.statusChanged.emit("已找到人工修改译文")
+                return
+
+            data_dir = get_data_dir()
+            text_cache_path = str(data_dir / "text_cache.json")
+            if os.path.exists(text_cache_path):
+                text_cache = JaZhTranslator._load_json(text_cache_path, {})
+                text_key = JaZhTranslator._cache_digest(src)
+                entry = text_cache.get(text_key)
+                if entry and isinstance(entry, dict):
+                    self.manualTranslationLookup.emit(entry.get("translation", ""))
+                    self.statusChanged.emit("已找到译文（文本缓存）")
+                    return
+
+            cache_path = str(data_dir / "cache.json")
+            if os.path.exists(cache_path):
+                cache = JaZhTranslator._load_json(cache_path, {})
+                digest = hashlib.sha256(src.encode("utf-8")).hexdigest()
+                for key, value in cache.items():
+                    if digest in key:
+                        self.manualTranslationLookup.emit(str(value))
+                        self.statusChanged.emit("已找到译文（模型缓存）")
+                        return
+            self.failed.emit("未找到该原文的缓存译文")
+            self.statusChanged.emit("未找到缓存译文，可以手动输入")
+        except Exception as e:
+            self.failed.emit(f"查找译文失败: {e}")
+            self.statusChanged.emit(f"查找译文失败: {e}")
+
     @Slot("QVariant")
     def resumeTranslation(self, cfg):
         if not self._is_paused:
@@ -883,3 +951,4 @@ class TranslateBridge(QObject):
         from translator import get_data_dir
 
         return str(get_data_dir())
+

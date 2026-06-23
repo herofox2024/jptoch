@@ -41,6 +41,16 @@ Page {
 
     signal navigateToStatus()
 
+    function openManualEdit(src, dst) {
+        manualEditDialog.srcText = (src || "").trim()
+        manualEditDialog.dstText = (dst || "").trim()
+        srcSearchField.text = manualEditDialog.srcText
+        dstEditField.text = manualEditDialog.dstText
+        manualEditStatus.text = ""
+        manualEditDialog.keepPreset = true
+        manualEditDialog.open()
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 18
@@ -435,7 +445,7 @@ Page {
 
                         GridLayout {
                             Layout.fillWidth: true
-                            columns: taskPage.width > 760 ? 4 : 2
+                            columns: taskPage.width > 900 ? 5 : (taskPage.width > 600 ? 3 : 2)
                             columnSpacing: 10
                             rowSpacing: 10
 
@@ -487,6 +497,16 @@ Page {
                                 hint: "重新翻译当前书"
                                 enabled: taskPage.readyToStart && !taskPage.busy
                                 onClicked: clearCacheDialog.open()
+                            }
+
+                            TaskActionButton {
+                                id: manualEditBtn
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                label: "人工修改"
+                                hint: "编辑单条译文"
+                                enabled: !taskPage.busy
+                                onClicked: manualEditDialog.open()
                             }
                         }
                     }
@@ -679,7 +699,7 @@ Page {
             spacing: 10
             Label {
                 Layout.fillWidth: true
-                text: "将清理当前源文件对应的翻译缓存，包括所有模型下的 cache.json 条目和跨模型 text_cache.json 条目。"
+                text: "将清理���前源文件对应的翻译缓存，包括所有模型下的 cache.json 条目和跨模型 text_cache.json 条目。"
                 color: AppPalette.textColor
                 wrapMode: Text.WordWrap
             }
@@ -695,6 +715,106 @@ Page {
         onAccepted: {
             if (taskPage.tbridge) {
                 taskPage.tbridge.clearCurrentBookCache(cfg)
+            }
+        }
+    }
+
+    Dialog {
+        id: manualEditDialog
+        title: "人工修改译文"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        anchors.centerIn: parent
+        width: 640
+
+        property string srcText: ""
+        property string dstText: ""
+        property bool keepPreset: false
+
+        ColumnLayout {
+            width: parent.width - 40
+            spacing: 14
+
+            Label {
+                Layout.fillWidth: true
+                text: "输入日文原文查找已缓存译文，也可以直接填写中文译文。保存后写入人工译文缓存，恢复续译或下次翻译时优先使用，不会直接修改已经生成的 EPUB。"
+                color: AppPalette.mutedText
+                wrapMode: Text.WordWrap
+                font.pixelSize: 12
+            }
+
+            Label {
+                text: "日文原文（必须与 EPUB 中的原文一致）:"
+                color: AppPalette.textColor
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+            }
+            TextField {
+                id: srcSearchField
+                Layout.fillWidth: true
+                placeholderText: "输入日文原文来查找或保存人工译文..."
+                selectByMouse: true
+            }
+
+            Button {
+                text: "查找译文"
+                Layout.alignment: Qt.AlignLeft
+                onClicked: {
+                    manualEditDialog.srcText = srcSearchField.text.trim()
+                    if (taskPage.tbridge && manualEditDialog.srcText) {
+                        taskPage.tbridge.lookupTranslation(manualEditDialog.srcText)
+                    }
+                }
+            }
+
+            Label {
+                text: "中文译文（可直接编辑）:"
+                color: AppPalette.textColor
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+            }
+            TextArea {
+                id: dstEditField
+                Layout.fillWidth: true
+                Layout.preferredHeight: 120
+                placeholderText: '点击"查找译文"后，译文会显示在这里；也可以直接输入人工译文。'
+                wrapMode: TextArea.Wrap
+                selectByMouse: true
+            }
+
+            Label {
+                id: manualEditStatus
+                Layout.fillWidth: true
+                text: ""
+                color: AppPalette.mutedText
+                font.pixelSize: 12
+                visible: text !== ""
+            }
+        }
+
+        onOpened: {
+            if (!keepPreset) {
+                srcSearchField.text = ""
+                dstEditField.text = ""
+                manualEditDialog.srcText = ""
+                manualEditDialog.dstText = ""
+            }
+            keepPreset = false
+            manualEditStatus.text = ""
+        }
+
+        onAccepted: {
+            var src = manualEditDialog.srcText
+            var dst = dstEditField.text.trim()
+            if (!src || !dst) {
+                manualEditStatus.text = "原文和译文不能为空"
+                manualEditStatus.color = AppPalette.errorColor
+                return
+            }
+            if (taskPage.tbridge) {
+                taskPage.tbridge.saveManualTranslation(src, dst)
+                manualEditStatus.text = "已保存，恢复续译或下次翻译时会优先使用"
+                manualEditStatus.color = AppPalette.successColor
             }
         }
     }
@@ -721,6 +841,24 @@ Page {
         function onEstimateFailed(path, err) {
             if (cfg && path === cfg.inp) {
                 estimateLabel.text = "预估字符: 读取失败"
+            }
+        }
+        function onManualTranslationLookup(result) {
+            if (typeof manualEditDialog !== "undefined" && manualEditDialog.visible && result) {
+                dstEditField.text = result
+                manualEditStatus.text = ""
+            }
+        }
+        function onManualTranslationSaved(result) {
+            if (typeof manualEditDialog !== "undefined" && manualEditDialog.visible) {
+                manualEditStatus.text = "已保存，恢复续译或下次翻译时会优先使用"
+                manualEditStatus.color = AppPalette.successColor
+            }
+        }
+        function onFailed(err) {
+            if (typeof manualEditDialog !== "undefined" && manualEditDialog.visible) {
+                manualEditStatus.text = err
+                manualEditStatus.color = AppPalette.errorColor
             }
         }
     }
@@ -814,3 +952,4 @@ Page {
         }
     }
 }
+

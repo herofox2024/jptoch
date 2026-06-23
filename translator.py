@@ -1249,6 +1249,9 @@ class JaZhTranslator:
     _text_cache: Dict[str, Dict[str, Any]] = {}
     _text_cache_loaded = False
     TEXT_CACHE_FILE_NAME = "text_cache.json"
+    _manual_cache: Dict[str, Dict[str, Any]] = {}
+    _manual_cache_loaded = False
+    MANUAL_CACHE_FILE_NAME = "manual_cache.json"
 
     def _load_text_cache(self):
         """加载文本级缓存（跨模型共享）。"""
@@ -1264,6 +1267,50 @@ class JaZhTranslator:
     def _text_cache_key(self, text: str) -> str:
         """纯文本缓存键（不绑定 provider/model）。"""
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _cache_digest(cls, text: str) -> str:
+        return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+
+    def _load_manual_cache(self, force: bool = False):
+        """加载人工修改缓存。人工译文优先级最高，不受跨模型缓存开关影响。"""
+        if self._manual_cache_loaded and not force:
+            return
+        manual_cache_path = str(get_data_dir() / self.MANUAL_CACHE_FILE_NAME)
+        loaded = self._load_json(manual_cache_path, {})
+        self._manual_cache = loaded if isinstance(loaded, dict) else {}
+        self._manual_cache_loaded = True
+        logger.info(f"人工译文缓存已加载: {len(self._manual_cache)} 条记录")
+
+    def _manual_cache_key(self, text: str) -> str:
+        return self._cache_digest(text)
+
+    def _lookup_manual_cache(self, text: str) -> Optional[str]:
+        self._load_manual_cache()
+        entry = self._manual_cache.get(self._manual_cache_key(text))
+        if isinstance(entry, dict):
+            return entry.get("translation")
+        if isinstance(entry, str):
+            return entry
+        return None
+
+    def _flush_manual_cache(self):
+        manual_cache_path = str(get_data_dir() / self.MANUAL_CACHE_FILE_NAME)
+        self._atomic_write_json(manual_cache_path, self._manual_cache)
+
+    def save_manual_translation(self, src: str, dst: str) -> None:
+        """保存人工译文并立即更新内存缓存。"""
+        src = (src or "").strip()
+        dst = (dst or "").strip()
+        if not src or not dst:
+            raise ValueError("原文和译文不能为空")
+        self._load_manual_cache(force=True)
+        self._manual_cache[self._manual_cache_key(src)] = {
+            "source": src,
+            "translation": dst,
+            "updated_at": int(time.time()),
+        }
+        self._flush_manual_cache()
 
     def _lookup_text_cache(self, text: str) -> Optional[str]:
         """查找文本级缓存，返回已验证的译文或 None。"""
@@ -1387,6 +1434,17 @@ class JaZhTranslator:
                 text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
                 self._atomic_write_json(text_cache_path, self._text_cache)
                 removed += text_removed
+
+            self._load_manual_cache(force=True)
+            manual_removed = 0
+            for text in unique_texts:
+                key = self._manual_cache_key(text)
+                if key in self._manual_cache:
+                    self._manual_cache.pop(key, None)
+                    manual_removed += 1
+            if manual_removed:
+                self._flush_manual_cache()
+                removed += manual_removed
         return removed
 
     def _count_glossary_terms(self) -> int:
@@ -2321,13 +2379,25 @@ JSON 顶层字段：
 
         # Phase 1-③: 预翻译计数
         pre_translated = 0
+        manual_cache_hits = 0
         # Phase 1-②: 文本缓存命中计数
         text_cache_hits = 0
 
         with self._cache_lock:
             for text in texts:
-                # ① 模型缓存查找
+                # ① 人工修改缓存优先级最高，不受模型和跨模型缓存开关影响。
                 cache_key = self._cache_key(text)
+                manual_cached = self._lookup_manual_cache(text)
+                if manual_cached is not None and not self._is_incomplete_translation(text, manual_cached):
+                    results[text] = manual_cached
+                    self.cache[cache_key] = manual_cached
+                    completed += 1
+                    manual_cache_hits += 1
+                    if item_callback:
+                        item_callback(text, manual_cached)
+                    continue
+
+                # ② 模型缓存查找
                 if cache_key in self.cache:
                     cached_translation = self.cache[cache_key]
                     if not self._is_incomplete_translation(text, cached_translation):
@@ -2337,7 +2407,7 @@ JSON 顶层字段：
                     self.cache.pop(cache_key, None)
                     self._cache_dirty = True
 
-                # ② Phase 1-③: 本地预翻译规则
+                # ③ Phase 1-③: 本地预翻译规则
                 pre_result = self._pre_translate(text)
                 if pre_result is not None:
                     if self._is_incomplete_translation(text, pre_result):
@@ -2355,7 +2425,7 @@ JSON 顶层字段：
                         item_callback(text, pre_result)
                     continue
 
-                # ③ Phase 1-②: 文本级缓存（跨模型，仅复用已校对译文）
+                # ④ Phase 1-②: 文本级缓存（跨模型，仅复用已校对译文）
                 if getattr(self, "allow_text_cache_reuse", False):
                     text_cached = self._lookup_text_cache(text)
                     if text_cached is not None:
@@ -2368,12 +2438,14 @@ JSON 顶层字段：
                                 item_callback(text, text_cached)
                             continue
 
-                # ④ 未命中，加入待翻译队列
+                # ⑤ 未命中，加入待翻译队列
                 pending_counts[text] = pending_counts.get(text, 0) + 1
                 if text not in seen_uncached:
                     uncached_unique.append(text)
                     seen_uncached.add(text)
 
+        if manual_cache_hits:
+            logger.info(f"人工译文缓存命中: {manual_cache_hits} 条")
         if pre_translated:
             logger.info(f"预翻译命中: {pre_translated} 条")
         if text_cache_hits:

@@ -286,6 +286,25 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(res[src], "\u5979\u7b11\u4e86\u3002")
         self.assertEqual(t.cache[t._cache_key(src)], "\u5979\u7b11\u4e86\u3002")
 
+    def test_manual_cache_has_highest_priority_without_text_cache_reuse(self):
+        t = DummyTranslator()
+        src = "\u5f7c\u5973\u306f\u7b11\u3063\u305f\u3002"
+        t.allow_text_cache_reuse = False
+        t._manual_cache_loaded = True
+        t._manual_cache = {
+            t._manual_cache_key(src): {
+                "source": src,
+                "translation": "\u5979\u5fae\u5fae\u4e00\u7b11\u3002",
+                "updated_at": 1,
+            }
+        }
+        t._translate_chunk = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("should not call api"))  # type: ignore
+
+        res = t.translate_batch([src], batch_size=1)
+
+        self.assertEqual(res[src], "\u5979\u5fae\u5fae\u4e00\u7b11\u3002")
+        self.assertEqual(t.cache[t._cache_key(src)], "\u5979\u5fae\u5fae\u4e00\u7b11\u3002")
+
     def test_cache_key_is_model_scoped(self):
         t = DummyTranslator()
         calls = {"n": 0}

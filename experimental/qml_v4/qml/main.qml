@@ -94,6 +94,16 @@ ApplicationWindow {
         }
     }
 
+    function openManualEditFromMonitor(original, translation) {
+        appWindow.markPageLoaded(0)
+        appWindow.currentPageIndex = 0
+        Qt.callLater(function() {
+            if (taskLoader.item && taskLoader.item.openManualEdit) {
+                taskLoader.item.openManualEdit(original || "", translation || "")
+            }
+        })
+    }
+
     background: Rectangle {
         id: bgRoot
         // 主题过渡：在 color/opacity 变化时添加平滑动画
@@ -364,6 +374,9 @@ ApplicationWindow {
                     sourceComponent: MonitorPage {
                         cfg: appWindow.cfg
                         tbridge: appWindow.tbridge
+                        onRequestManualEdit: function(original, translation) {
+                            appWindow.openManualEditFromMonitor(original, translation)
+                        }
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                 }
