@@ -415,6 +415,53 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(details[0]["revised"], "她笑了。")
         self.assertTrue(details[0]["japanese_residue"])
 
+
+    def test_repeated_japanese_residue_across_different_sentences_skips_repeated_proofread(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.max_workers = 1
+        t.batch_size = 3
+        t.max_batch_length = 200
+        t.max_text_size_for_batch = 100
+        srcs = [
+            "\u5f7c\u5973\u306f\u7b11\u3063\u305f\u3002",
+            "\u5f7c\u5973\u306f\u9814\u3044\u305f\u3002",
+            "\u5f7c\u5973\u306f\u8d70\u3063\u305f\u3002",
+        ]
+        drafts = ["\u5979\u306f\u7b11\u4e86\u3002", "\u5979\u306f\u70b9\u5934\u3002", "\u5979\u306f\u8dd1\u4e86\u3002"]
+        t._call_deepseek_batch_json = lambda batch, max_retries=2, prev_text=None, next_text=None, item_contexts=None: BatchJsonResult(
+            translations=list(drafts),
+            new_terms=[],
+            missing_indices=[],
+            finish_reason="stop",
+        )
+        proofread_calls = []
+        retranslate_calls = []
+        residue_guidance_calls = []
+
+        def fake_proofread(src, draft, issues, **kwargs):
+            proofread_calls.append((src, draft, list(issues)))
+            return "\u5979\u7b11\u4e86\u3002"
+
+        def fake_retranslate(src, prev_text=None, next_text=None, residue_guidance=""):
+            retranslate_calls.append(src)
+            residue_guidance_calls.append(residue_guidance)
+            return "\u91cd\u8bd1\u5b8c\u6210\u3002"
+
+        t._proofread_translation = fake_proofread  # type: ignore
+        t._translate_chunk = fake_retranslate  # type: ignore
+
+        res = t.translate_batch(srcs, batch_size=3)
+
+        self.assertEqual(len(proofread_calls), 1)
+        self.assertEqual(len(retranslate_calls), 2)
+        self.assertEqual(len(residue_guidance_calls), 2)
+        self.assertTrue(all("\u6b8b\u7559\u7247\u6bb5" in guidance for guidance in residue_guidance_calls))
+        self.assertTrue(all("\u5979\u7b11\u4e86\u3002" in guidance for guidance in residue_guidance_calls))
+        self.assertEqual(res[srcs[0]], "\u5979\u7b11\u4e86\u3002")
+        self.assertEqual(res[srcs[1]], "\u91cd\u8bd1\u5b8c\u6210\u3002")
+        self.assertEqual(res[srcs[2]], "\u91cd\u8bd1\u5b8c\u6210\u3002")
+
     def test_proofread_falls_back_to_single_retranslate_when_japanese_remains(self):
         t = DummyTranslator()
         t.enable_proofread = True

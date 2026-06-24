@@ -38,6 +38,17 @@ Page {
 
     signal requestManualEdit(string original, string translation)
 
+    property string detailIndexText: ""
+    property string detailTimeText: ""
+    property string detailReason: ""
+    property string detailJapaneseResidue: ""
+    property string detailGlossaryMismatch: ""
+    property string detailChanged: ""
+    property string detailChangedHint: ""
+    property string detailOriginal: ""
+    property string detailDraft: ""
+    property string detailRevised: ""
+
     ListModel { id: proofreadModel }
 
     function isBusy() {
@@ -80,6 +91,20 @@ Page {
 
     function promptStyleReasonText() {
         return page.proofreadStyleReason || "作品类型和叙事口吻会同时影响初译 Prompt 与译后校对 Prompt。"
+    }
+
+    function openProofreadDetail(indexText, timeText, reason, japaneseResidue, glossaryMismatch, changed, changedHint, original, draft, revised) {
+        page.detailIndexText = indexText || ""
+        page.detailTimeText = timeText || ""
+        page.detailReason = reason || "-"
+        page.detailJapaneseResidue = japaneseResidue || "\u5426"
+        page.detailGlossaryMismatch = glossaryMismatch || "\u5426"
+        page.detailChanged = changed || ""
+        page.detailChangedHint = changedHint || ""
+        page.detailOriginal = original || ""
+        page.detailDraft = draft || ""
+        page.detailRevised = revised || ""
+        proofreadDetailDialog.open()
     }
 
     function appendProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed) {
@@ -695,25 +720,38 @@ Page {
                                         }
 
                                         ReportField {
-                                            title: "原文"
+                                            title: "\u539f\u6587"
                                             body: original
                                             tone: "normal"
+                                            maxLines: 2
                                         }
                                         ReportField {
-                                            title: "初译"
+                                            title: "\u521d\u8bd1"
                                             body: draft
                                             tone: "normal"
+                                            maxLines: 2
                                         }
                                         ReportField {
-                                            title: "校对后译文"
+                                            title: "\u6821\u5bf9\u540e\u8bd1\u6587"
                                             body: revised
                                             tone: "accent"
-                                        }                                        Button {
-                                            Layout.alignment: Qt.AlignRight
-                                            text: "人工修改此条"
-                                            enabled: original && original !== ""
-                                            onClicked: page.requestManualEdit(original, (revised && revised !== "") ? revised : draft)
+                                            maxLines: 2
                                         }
+
+                                        RowLayout {
+                                            Layout.alignment: Qt.AlignRight
+                                            spacing: 8
+                                            Button {
+                                                text: "\u67e5\u770b\u5b8c\u6574\u8be6\u60c5"
+                                                onClicked: page.openProofreadDetail(indexText, timeText, reason, japaneseResidue, glossaryMismatch, changed, changedHint, original, draft, revised)
+                                            }
+                                            Button {
+                                                text: "\u4eba\u5de5\u4fee\u6539\u6b64\u6761"
+                                                enabled: original && original !== ""
+                                                onClicked: page.requestManualEdit(original, (revised && revised !== "") ? revised : draft)
+                                            }
+                                        }
+
                                     }
                                 }
                             }
@@ -937,6 +975,7 @@ Page {
         property string title: ""
         property string body: ""
         property string tone: "normal"
+        property int maxLines: 0
 
         Layout.fillWidth: true
         Layout.preferredHeight: reportText.paintedHeight + reportTitle.implicitHeight + 24
@@ -964,7 +1003,83 @@ Page {
                 text: body && body !== "" ? body : "-"
                 color: tone === "accent" ? AppPalette.accentColor : AppPalette.textColor
                 wrapMode: Text.WordWrap
+                maximumLineCount: maxLines > 0 ? maxLines : 1000000
+                elide: maxLines > 0 ? Text.ElideRight : Text.ElideNone
                 font.pixelSize: 12
+            }
+        }
+    }
+
+    Dialog {
+        id: proofreadDetailDialog
+        title: "\u6821\u5bf9\u5b8c\u6574\u8be6\u60c5 " + page.detailIndexText
+        modal: true
+        standardButtons: Dialog.Close
+        width: Math.min(page.width - 48, 900)
+        height: Math.min(page.height - 60, 680)
+        anchors.centerIn: parent
+
+        contentItem: ScrollView {
+            clip: true
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: proofreadDetailDialog.availableWidth
+                spacing: 12
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: detailHeaderColumn.implicitHeight + 28
+                    radius: AppPalette.radiusMedium
+                    color: AppPalette.surfaceRaised
+                    border.color: AppPalette.lineColor
+
+                    ColumnLayout {
+                        id: detailHeaderColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 8
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.detailTimeText + "  \u00b7  " + page.detailReason
+                            color: AppPalette.textColor
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                        }
+
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            IssueChip { title: page.detailChanged; tone: page.detailChanged === "\u6709\u53d8\u5316" ? "amber" : "accent" }
+                            IssueChip { title: "\u65e5\u6587\u6b8b\u7559: " + page.detailJapaneseResidue; tone: page.detailJapaneseResidue === "\u662f" ? "error" : "neutral" }
+                            IssueChip { title: "\u672f\u8bed\u4e0d\u4e00\u81f4: " + page.detailGlossaryMismatch; tone: page.detailGlossaryMismatch === "\u662f" ? "amber" : "neutral" }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.detailChangedHint
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+
+                ReportField { title: "\u539f\u6587"; body: page.detailOriginal; tone: "normal" }
+                ReportField { title: "\u521d\u8bd1"; body: page.detailDraft; tone: "normal" }
+                ReportField { title: "\u6821\u5bf9\u540e\u8bd1\u6587"; body: page.detailRevised; tone: "accent" }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        text: "\u4eba\u5de5\u4fee\u6539\u6b64\u6761"
+                        enabled: page.detailOriginal !== ""
+                        onClicked: page.requestManualEdit(page.detailOriginal, page.detailRevised !== "" ? page.detailRevised : page.detailDraft)
+                    }
+                }
             }
         }
     }

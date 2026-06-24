@@ -793,6 +793,30 @@ class JaZhTranslator:
         return bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", text or ""))
 
     @staticmethod
+    def _extract_japanese_residue_fragments(text: str) -> List[str]:
+        """Extract repeated kana fragments so proofread can avoid fixing the same residue repeatedly."""
+        if not text:
+            return []
+        fragments = re.findall(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+", text)
+        return [frag for frag in dict.fromkeys(fragments) if frag.strip()]
+
+    @staticmethod
+    def _build_residue_repair_guidance(examples: List[Dict[str, str]]) -> str:
+        """Build a compact in-run hint from successful residue fixes."""
+        if not examples:
+            return ""
+        lines = [
+            "【本书内日文残留修复参考】",
+            "以下是本次翻译中已成功修复过的日文残留示例。遇到类似残留时，请结合当前原文完整翻译成自然中文，不要机械替换，也不要保留假名。",
+        ]
+        for example in examples[:5]:
+            fragment = example.get("fragment", "")
+            draft = example.get("draft", "")
+            revised = example.get("revised", "")
+            lines.append(f"- 残留片段「{fragment}」：错误初译「{draft}」 -> 修正「{revised}」")
+        return "\n".join(lines)
+
+    @staticmethod
     def has_japanese_residue(text: str) -> bool:
         """Public helper for UI/bridge code that must reject untranslated kana residue."""
         return JaZhTranslator._has_japanese_residue(text)
@@ -1701,6 +1725,7 @@ JSON 顶层字段：
         text_separator: Optional[str] = None,
         prev_text: Optional[str] = None,
         next_text: Optional[str] = None,
+        residue_guidance: str = "",
     ) -> SingleChunkResult:
         """
         调用模型 API（单条），支持截断续取。
@@ -1756,10 +1781,12 @@ JSON 顶层字段：
         context_guidance = ""
         if self.ENABLE_CONTEXT_WINDOW and (prev_text or next_text):
             context_guidance = "\n\n" + self._build_context_guidance(prev_text, next_text)
+        residue_guidance_text = f"\n\n{residue_guidance}" if residue_guidance else ""
         user_prompt = (
             f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
             f"请将以下日文翻译为优美流畅的中文：\n{text}"
             f"{context_guidance}"
+            f"{residue_guidance_text}"
         )
 
         headers = {
@@ -1900,10 +1927,12 @@ JSON 顶层字段：
         text_separator: Optional[str] = None,
         prev_text: Optional[str] = None,
         next_text: Optional[str] = None,
+        residue_guidance: str = "",
     ) -> str:
         """向后兼容的包装器，仅返回 content 字符串"""
         result = self._call_deepseek_single(text, max_retries, text_separator,
-                                              prev_text=prev_text, next_text=next_text)
+                                              prev_text=prev_text, next_text=next_text,
+                                              residue_guidance=residue_guidance)
         return result.content
 
     def _call_deepseek_batch_json(
@@ -2200,7 +2229,13 @@ JSON 顶层字段：
 
         return added
 
-    def _translate_chunk(self, text: str, prev_text: Optional[str] = None, next_text: Optional[str] = None) -> str:
+    def _translate_chunk(
+        self,
+        text: str,
+        prev_text: Optional[str] = None,
+        next_text: Optional[str] = None,
+        residue_guidance: str = "",
+    ) -> str:
         """翻译单个文本块（带缓存），可选上下文窗口。"""
         text = text.strip()
         if not text:
@@ -2214,7 +2249,18 @@ JSON 顶层字段：
             if cache_key in self.cache:
                 return self.cache[cache_key]
 
-        zh = self._call_deepseek(text, prev_text=prev_text, next_text=next_text)
+        try:
+            zh = self._call_deepseek(
+                text,
+                prev_text=prev_text,
+                next_text=next_text,
+                residue_guidance=residue_guidance,
+            )
+        except TypeError as exc:
+            message = str(exc)
+            if "residue_guidance" not in message and "unexpected keyword" not in message:
+                raise
+            zh = self._call_deepseek(text, prev_text=prev_text, next_text=next_text)
 
         if self._should_write_cache():
             with self._cache_lock:
@@ -2531,12 +2577,63 @@ JSON 顶层字段：
             next_text = context_sequence[idx + 1] if idx + 1 < len(context_sequence) else None
             return prev_text, next_text
 
-        def call_translate_chunk(text: str, prev_text: Optional[str] = None, next_text: Optional[str] = None) -> str:
+        residue_repair_examples: Dict[str, Dict[str, str]] = {}
+        residue_repair_examples_lock = threading.Lock()
+
+        def get_residue_guidance(fragments: Optional[List[str]]) -> str:
+            if not fragments:
+                return ""
+            with residue_repair_examples_lock:
+                examples = [
+                    residue_repair_examples[fragment]
+                    for fragment in fragments
+                    if fragment in residue_repair_examples
+                ]
+            return self._build_residue_repair_guidance(examples)
+
+        def remember_residue_repair(draft: str, revised: str) -> None:
+            fragments = self._extract_japanese_residue_fragments(draft)
+            if not fragments:
+                return
+            if self._has_japanese_residue(revised):
+                return
+            example_revised = (revised or "").strip()[:160]
+            example_draft = (draft or "").strip()[:160]
+            if not example_revised or not example_draft:
+                return
+            with residue_repair_examples_lock:
+                for fragment in fragments:
+                    residue_repair_examples.setdefault(
+                        fragment,
+                        {
+                            "fragment": fragment,
+                            "draft": example_draft,
+                            "revised": example_revised,
+                        },
+                    )
+
+        def call_translate_chunk(
+            text: str,
+            prev_text: Optional[str] = None,
+            next_text: Optional[str] = None,
+            residue_fragments: Optional[List[str]] = None,
+        ) -> str:
+            residue_guidance = get_residue_guidance(residue_fragments)
             try:
-                return self._translate_chunk(text, prev_text=prev_text, next_text=next_text)
+                return self._translate_chunk(
+                    text,
+                    prev_text=prev_text,
+                    next_text=next_text,
+                    residue_guidance=residue_guidance,
+                )
             except TypeError as exc:
                 # 兼容测试或旧子类 monkeypatch 的 _translate_chunk(text) 签名。
                 message = str(exc)
+                if "residue_guidance" in message or "unexpected keyword" in message:
+                    try:
+                        return self._translate_chunk(text, prev_text=prev_text, next_text=next_text)
+                    except TypeError:
+                        return self._translate_chunk(text)
                 if "prev_text" in message or "next_text" in message or "positional" in message:
                     return self._translate_chunk(text)
                 raise
@@ -2558,6 +2655,9 @@ JSON 顶层字段：
                 return True
             return False
 
+        proofread_residue_fragments_seen: Dict[str, int] = {}
+        proofread_residue_fragments_lock = threading.Lock()
+
         def repair_batch_quality(batch: List[str], pairs: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
             enable_proofread = bool(getattr(self, "enable_proofread", False))
             if len(pairs) <= 1 and not enable_proofread:
@@ -2565,6 +2665,7 @@ JSON 顶层字段：
 
             suspicious_idx = set()
             proofread_issues: Dict[int, List[str]] = {}
+            retranslate_residue_fragments: Dict[int, List[str]] = {}
             outputs = [((dst or "").strip()) for _, dst in pairs]
             dup_counter: Dict[str, int] = {}
             for out in outputs:
@@ -2584,6 +2685,25 @@ JSON 顶层字段：
                         # Phase 2-⑤: 校对分级 — 本地检查通过则跳过 LLM 校对
                         if self._should_skip_proofread(src, clean_dst):
                             logger.debug(f"校对分级跳过 [{i}]: 文本过短或匹配跳过模式")
+                            continue
+                        residue_fragments = self._extract_japanese_residue_fragments(clean_dst)
+                        with proofread_residue_fragments_lock:
+                            repeated_fragments = [
+                                fragment for fragment in residue_fragments
+                                if proofread_residue_fragments_seen.get(fragment, 0) > 0
+                            ]
+                            if not repeated_fragments:
+                                for fragment in residue_fragments:
+                                    proofread_residue_fragments_seen[fragment] = (
+                                        proofread_residue_fragments_seen.get(fragment, 0) + 1
+                                    )
+                        if repeated_fragments:
+                            suspicious_idx.add(i)
+                            retranslate_residue_fragments[i] = repeated_fragments
+                            logger.info(
+                                "重复日文残留转为重译，跳过重复校对: "
+                                + " / ".join(repeated_fragments[:5])
+                            )
                             continue
                         proofread_issues[i] = issues
 
@@ -2625,13 +2745,19 @@ JSON 顶层字段：
                         if any("日文" in issue or "假名" in issue for issue in issues) and self._has_japanese_residue(revised):
                             try:
                                 fallback_prev, fallback_next = get_context_for_text(src)
-                                fallback_revised = call_translate_chunk(src, fallback_prev, fallback_next)
+                                fallback_revised = call_translate_chunk(
+                                    src,
+                                    fallback_prev,
+                                    fallback_next,
+                                    self._extract_japanese_residue_fragments(revised),
+                                )
                                 if fallback_revised:
                                     revised = fallback_revised
                                 issues.append("校对后仍残留日文，已回退单条重译")
                             except Exception as fallback_error:
                                 logger.warning(f"校对后单条重译失败 [{i}]: {fallback_error}")
                         repaired[i] = (src, revised)
+                        remember_residue_repair(draft, revised)
                         self._save_text_cache_entry(src, revised, verified=True)
                         proofread_fixed += 1
                         if proofread_callback:
@@ -2649,7 +2775,15 @@ JSON 顶层字段：
                                 logger.warning(f"译后校对详情回调失败: {callback_error}")
                     else:
                         repair_prev, repair_next = get_context_for_text(src)
-                        repaired[i] = (src, call_translate_chunk(src, repair_prev, repair_next))
+                        repaired[i] = (
+                            src,
+                            call_translate_chunk(
+                                src,
+                                repair_prev,
+                                repair_next,
+                                retranslate_residue_fragments.get(i),
+                            ),
+                        )
                     fixed_count += 1
                 except Exception as e:
                     logger.warning(f"质检重译失败 [{i}]: {e}")
