@@ -203,10 +203,7 @@ Page {
                             onDropped: function(drop) {
                                 dropCard.hovering = false
                                 if (drop.urls.length > 0) {
-                                    var path = drop.urls[0].toString()
-                                    if (path.startsWith("file:///")) path = path.substring(8)
-                                    else if (path.startsWith("file://")) path = path.substring(7)
-                                    path = decodeURIComponent(path)
+                                    var path = FilePathUtils.normalizeFileUrl(drop.urls[0])
                                     taskPage.setInputPath(path)
                                 }
                             }
@@ -661,10 +658,7 @@ Page {
         fileMode: FileDialog.OpenFile
         onAccepted: {
             if (selectedFile) {
-                var p = selectedFile.toString()
-                if (p.startsWith("file:///")) p = p.substring(8)
-                else if (p.startsWith("file://")) p = p.substring(7)
-                p = decodeURIComponent(p)
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
                 taskPage.setInputPath(p)
             }
         }
@@ -677,10 +671,7 @@ Page {
         fileMode: FileDialog.SaveFile
         onAccepted: {
             if (selectedFile) {
-                var p = selectedFile.toString()
-                if (p.startsWith("file:///")) p = p.substring(8)
-                else if (p.startsWith("file://")) p = p.substring(7)
-                p = decodeURIComponent(p)
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
                 if (!p.toLowerCase().endsWith(".epub")) p += ".epub"
                 if (cfg) cfg.out = p
             }

@@ -976,10 +976,7 @@ Page {
         fileMode: FileDialog.SaveFile
         onAccepted: {
             if (selectedFile && page.tbridge) {
-                var p = selectedFile.toString()
-                if (p.startsWith("file:///")) p = p.substring(8)
-                else if (p.startsWith("file://")) p = p.substring(7)
-                p = decodeURIComponent(p)
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
                 if (!p.toLowerCase().endsWith(".zip")) p += ".zip"
                 page.tbridge.exportDiagnostic(p)
             }

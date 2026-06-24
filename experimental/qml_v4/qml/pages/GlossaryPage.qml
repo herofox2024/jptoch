@@ -57,11 +57,22 @@ Page {
         }
     }
 
+    function scheduleSearch() {
+        searchDebounceTimer.restart()
+    }
+
     function ensureLoaded() {
         if (page.loadedOnce || !page.gbridge || !page.gbridge.model) return
         page.statusMessage = "正在加载术语表..."
         page.loadedOnce = true
         page.gbridge.load()
+    }
+
+    Timer {
+        id: searchDebounceTimer
+        interval: 220
+        repeat: false
+        onTriggered: page.applySearch()
     }
 
     Connections {
@@ -205,7 +216,7 @@ Page {
                                 font.pixelSize: 14
                                 clip: true
                                 selectByMouse: true
-                                onTextChanged: page.applySearch()
+                                onTextChanged: page.scheduleSearch()
                             }
                         }
 
@@ -213,14 +224,14 @@ Page {
                             id: categoryCombo
                             Layout.preferredWidth: 148
                             model: ["全部分类", "Person", "Location", "Org", "Item", "Skill", "Creature"]
-                            onCurrentTextChanged: page.applySearch()
+                            onCurrentTextChanged: page.scheduleSearch()
                         }
 
                         ComboBox {
                             id: sourceCombo
                             Layout.preferredWidth: 148
                             model: ["全部来源", "自动提取", "手动添加", "未知来源"]
-                            onCurrentTextChanged: page.applySearch()
+                            onCurrentTextChanged: page.scheduleSearch()
                         }
                     }
 
@@ -402,6 +413,40 @@ Page {
                             }
                         }
                     }
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: Math.min(parent.width - 48, 420)
+                        height: 128
+                        radius: AppPalette.radiusLarge
+                        visible: listView.count === 0
+                        color: AppPalette.surfaceRaised
+                        border.color: AppPalette.borderColor
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            width: parent.width - 36
+                            spacing: 8
+                            Label {
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                text: page.totalCount > 0 ? "没有匹配的术语" : "术语表为空"
+                                color: AppPalette.textColor
+                                font.pixelSize: 17
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                text: page.totalCount > 0
+                                      ? "请调整搜索关键词、分类或来源筛选。"
+                                      : "可以新增术语，或通过“增量导入 JSON”导入已有术语表。"
+                                color: AppPalette.mutedText
+                                font.pixelSize: 12
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -414,10 +459,8 @@ Page {
         fileMode: FileDialog.OpenFile
         onAccepted: {
             if (selectedFile && page.gbridge) {
-                var p = selectedFile.toString()
-                if (p.startsWith("file:///")) p = p.substring(8)
-                else if (p.startsWith("file://")) p = p.substring(7)
-                page.gbridge.importJson(decodeURIComponent(p))
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
+                page.gbridge.importJson(p)
             }
         }
     }
@@ -429,10 +472,7 @@ Page {
         fileMode: FileDialog.SaveFile
         onAccepted: {
             if (selectedFile && page.gbridge) {
-                var p = selectedFile.toString()
-                if (p.startsWith("file:///")) p = p.substring(8)
-                else if (p.startsWith("file://")) p = p.substring(7)
-                p = decodeURIComponent(p)
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
                 if (!p.toLowerCase().endsWith(".json")) p += ".json"
                 page.gbridge.exportJson(p)
             }
@@ -446,10 +486,8 @@ Page {
         fileMode: FileDialog.OpenFile
         onAccepted: {
             if (selectedFile && page.gbridge) {
-                var p = selectedFile.toString()
-                if (p.startsWith("file:///")) p = p.substring(8)
-                else if (p.startsWith("file://")) p = p.substring(7)
-                page.gbridge.restoreBackup(decodeURIComponent(p))
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
+                page.gbridge.restoreBackup(p)
             }
         }
     }

@@ -11,7 +11,7 @@ ApplicationWindow {
     visible: false
     width: 1180
     height: 780
-    minimumWidth: 940
+    minimumWidth: 860
     minimumHeight: 640
     title: "AI日译中（EPUB）V4.1"
     font.family: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
@@ -436,6 +436,12 @@ ApplicationWindow {
 
         Layout.fillWidth: true
         Layout.preferredHeight: 62
+        activeFocusOnTab: true
+
+        function activate() {
+            appWindow.switchPage(navBtn.pageIndex)
+            navBtn.forceActiveFocus()
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -445,8 +451,9 @@ ApplicationWindow {
                    : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.10) : "transparent")
             border.color: navBtn.active
                           ? (appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.72) : AppPalette.amberColor)
-                          : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.18) : "transparent")
-            border.width: navBtn.active || (appWindow.glassMode && navBtn.hovering) ? 1 : 0
+                          : (navBtn.activeFocus ? AppPalette.amberColor : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.18) : "transparent"))
+            border.width: navBtn.active || navBtn.activeFocus || (appWindow.glassMode && navBtn.hovering) ? 1 : 0
+            Behavior on border.color { ColorAnimation { duration: 120 } }
         }
 
         Rectangle {
@@ -519,8 +526,15 @@ ApplicationWindow {
             cursorShape: Qt.PointingHandCursor
             onEntered: navBtn.hovering = true
             onExited: navBtn.hovering = false
-            onClicked: appWindow.switchPage(navBtn.pageIndex)
+            onClicked: navBtn.activate()
         }
+
+        Keys.onReturnPressed: navBtn.activate()
+        Keys.onEnterPressed: navBtn.activate()
+        Keys.onSpacePressed: navBtn.activate()
+        Accessible.role: Accessible.Button
+        Accessible.name: navBtn.label
+        Accessible.description: navBtn.desc
     }
 
     component NavIcon: Item {

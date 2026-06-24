@@ -326,7 +326,7 @@ class _TranslateWorker(QObject):
                     raw = str(node).strip()
                     if not raw:
                         continue
-                    if JaZhTranslator._has_japanese_residue(raw):
+                    if JaZhTranslator.has_japanese_residue(raw):
                         residue_total += 1
                         if len(residue_samples) < 8:
                             residue_samples.append(raw[:120])
@@ -573,6 +573,19 @@ class TranslateBridge(QObject):
         thread.finished.connect(_cleanup)
         return pair
 
+    def _start_worker(self, worker, signal_connections, quit_signals):
+        """Start a QObject worker on QThread and wire common lifetime handling."""
+        thread = QThread(self)
+        self._track_worker_thread(worker, thread)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        for signal, slot in signal_connections:
+            signal.connect(slot)
+        for signal in quit_signals:
+            signal.connect(thread.quit)
+        thread.start()
+        return thread
+
     def _register_active_texts(self, texts, translator):
         self._active_texts = list(texts or [])
         self._active_translator = translator
@@ -584,7 +597,7 @@ class TranslateBridge(QObject):
         if not translator:
             return 0
         try:
-            translator.discard_cache_writes()
+            translator.disable_cache_writes()
             return translator.clear_cache_for_texts(self._active_texts)
         except Exception as e:
             self.errorDetail.emit(f"停止清理缓存失败: {e}")
@@ -668,22 +681,21 @@ class TranslateBridge(QObject):
 
         worker = _TranslateWorker(config, self._cancel_event)
         worker._bridge = self
-        thread = QThread(self)
-        self._track_worker_thread(worker, thread)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progressChanged.connect(self._on_progress)
-        worker.itemTranslated.connect(self.itemTranslated)
-        worker.proofreadDetail.connect(self.proofreadDetail)
-        worker.proofreadStyleDetected.connect(self.proofreadStyleDetected)
-        worker.statusChanged.connect(self.statusChanged)
-        worker.statUpdate.connect(self.statUpdate)
-        worker.errorDetail.connect(self.errorDetail)
-        worker.finished.connect(self._on_finished)
-        worker.failed.connect(self._on_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        thread.start()
+        self._start_worker(
+            worker,
+            [
+                (worker.progressChanged, self._on_progress),
+                (worker.itemTranslated, self.itemTranslated),
+                (worker.proofreadDetail, self.proofreadDetail),
+                (worker.proofreadStyleDetected, self.proofreadStyleDetected),
+                (worker.statusChanged, self.statusChanged),
+                (worker.statUpdate, self.statUpdate),
+                (worker.errorDetail, self.errorDetail),
+                (worker.finished, self._on_finished),
+                (worker.failed, self._on_failed),
+            ],
+            [worker.finished, worker.failed],
+        )
 
     def _on_progress(self, completed, total, total_chars):
         self.progressChanged.emit(completed, total, total_chars)
@@ -773,15 +785,14 @@ class TranslateBridge(QObject):
         ToastBridge.info("正在清理当前 EPUB 缓存...")
 
         worker = _ClearBookCacheWorker(config)
-        thread = QThread(self)
-        self._track_worker_thread(worker, thread)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._on_cache_clear_finished)
-        worker.failed.connect(self._on_cache_clear_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        thread.start()
+        self._start_worker(
+            worker,
+            [
+                (worker.finished, self._on_cache_clear_finished),
+                (worker.failed, self._on_cache_clear_failed),
+            ],
+            [worker.finished, worker.failed],
+        )
 
     def _on_cache_clear_finished(self, removed, total_texts):
         self.cacheClearFinished.emit(removed, total_texts)
@@ -823,36 +834,19 @@ class TranslateBridge(QObject):
             return
         src = src.strip()
         try:
-            from translator import JaZhTranslator, get_data_dir
-            import hashlib
+            from translator import JaZhTranslator
 
             translator = self._active_translator or JaZhTranslator(api_key="manual", enable_glossary=False)
-            manual = translator._lookup_manual_cache(src)
-            if manual:
-                self.manualTranslationLookup.emit(manual)
-                self.statusChanged.emit("已找到人工修改译文")
+            translation, source = translator.lookup_cached_translation(src)
+            if translation:
+                self.manualTranslationLookup.emit(translation)
+                source_labels = {
+                    "manual": "人工修改译文",
+                    "text_cache": "文本缓存译文",
+                    "model_cache": "模型缓存译文",
+                }
+                self.statusChanged.emit("已找到" + source_labels.get(source, "缓存译文"))
                 return
-
-            data_dir = get_data_dir()
-            text_cache_path = str(data_dir / "text_cache.json")
-            if os.path.exists(text_cache_path):
-                text_cache = JaZhTranslator._load_json(text_cache_path, {})
-                text_key = JaZhTranslator._cache_digest(src)
-                entry = text_cache.get(text_key)
-                if entry and isinstance(entry, dict):
-                    self.manualTranslationLookup.emit(entry.get("translation", ""))
-                    self.statusChanged.emit("已找到译文（文本缓存）")
-                    return
-
-            cache_path = str(data_dir / "cache.json")
-            if os.path.exists(cache_path):
-                cache = JaZhTranslator._load_json(cache_path, {})
-                digest = hashlib.sha256(src.encode("utf-8")).hexdigest()
-                for key, value in cache.items():
-                    if digest in key:
-                        self.manualTranslationLookup.emit(str(value))
-                        self.statusChanged.emit("已找到译文（模型缓存）")
-                        return
             self.failed.emit("未找到该原文的缓存译文")
             self.statusChanged.emit("未找到缓存译文，可以手动输入")
         except Exception as e:
@@ -871,14 +865,14 @@ class TranslateBridge(QObject):
     @Slot(str, str, str, int)
     def testConnection(self, api_key, api_url, model, timeout):
         worker = _TestWorker(api_key, api_url, model, timeout)
-        thread = QThread(self)
-        self._track_worker_thread(worker, thread)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.result.connect(self.connectionResult)
-        worker.result.connect(self._on_connection_result)
-        worker.result.connect(thread.quit)
-        thread.start()
+        self._start_worker(
+            worker,
+            [
+                (worker.result, self.connectionResult),
+                (worker.result, self._on_connection_result),
+            ],
+            [worker.result],
+        )
 
     def _on_connection_result(self, msg):
         if msg and "成功" in msg:
@@ -892,15 +886,14 @@ class TranslateBridge(QObject):
         if not inp_path or not os.path.exists(inp_path):
             self.estimateFinished.emit(inp_path, -1); return
         worker = _EstimateWorker(inp_path)
-        thread = QThread(self)
-        self._track_worker_thread(worker, thread)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self.estimateFinished)
-        worker.failed.connect(self.estimateFailed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        thread.start()
+        self._start_worker(
+            worker,
+            [
+                (worker.finished, self.estimateFinished),
+                (worker.failed, self.estimateFailed),
+            ],
+            [worker.finished, worker.failed],
+        )
 
 
     @Slot(str, result=bool)

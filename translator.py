@@ -792,6 +792,11 @@ class JaZhTranslator:
         """Detect kana residue in Chinese drafts. Han characters alone are not reliable."""
         return bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", text or ""))
 
+    @staticmethod
+    def has_japanese_residue(text: str) -> bool:
+        """Public helper for UI/bridge code that must reject untranslated kana residue."""
+        return JaZhTranslator._has_japanese_residue(text)
+
     @classmethod
     def _is_incomplete_translation(cls, src: str, dst: Optional[str]) -> bool:
         """Return True when a translation is unsafe to cache or write to EPUB."""
@@ -1312,6 +1317,35 @@ class JaZhTranslator:
         }
         self._flush_manual_cache()
 
+    def lookup_cached_translation(self, src: str) -> Tuple[Optional[str], str]:
+        """Return cached translation and source label for UI-side manual editing."""
+        src = (src or "").strip()
+        if not src:
+            return None, ""
+
+        manual = self._lookup_manual_cache(src)
+        if manual:
+            return manual, "manual"
+
+        self._load_text_cache()
+        text_entry = self._text_cache.get(self._text_cache_key(src))
+        if isinstance(text_entry, dict) and text_entry.get("translation"):
+            return str(text_entry.get("translation")), "text_cache"
+
+        cache_key = self._cache_key(src)
+        with self._cache_lock:
+            model_cached = self.cache.get(cache_key)
+            if not model_cached:
+                digest = self._cache_digest(src)
+                for key, value in self.cache.items():
+                    if digest in str(key):
+                        model_cached = value
+                        break
+        if model_cached:
+            return str(model_cached), "model_cache"
+
+        return None, ""
+
     def _lookup_text_cache(self, text: str) -> Optional[str]:
         """查找文本级缓存，返回已验证的译文或 None。"""
         self._load_text_cache()
@@ -1346,32 +1380,46 @@ class JaZhTranslator:
         self._atomic_write_json(text_cache_path, self._text_cache)
 
     def _save_cache(self, force: bool = False):
-        """保存缓存到文件，使用延迟写入策略"""
+        """保存缓存到文件，使用延迟写入策略。"""
+        snapshot = None
         with self._cache_lock:
             self._cache_dirty = True
             self._save_counter += 1
 
             if force or self._save_counter >= self.CACHE_SAVE_THRESHOLD:
-                try:
-                    self._atomic_write_json(self.cache_path, self.cache)
-                    self._cache_dirty = False
-                    self._save_counter = 0
-                except IOError as e:
-                    logger.error(f"缓存保存失败: {e}")
+                snapshot = dict(self.cache)
+                self._cache_dirty = False
+                self._save_counter = 0
+
+        if snapshot is None:
+            return
+
+        try:
+            self._atomic_write_json(self.cache_path, snapshot)
+        except IOError as e:
+            with self._cache_lock:
+                self._cache_dirty = True
+            logger.error(f"缓存保存失败: {e}")
 
     def flush_cache(self):
         """强制保存缓存（程序退出或翻译完成时调用）"""
-        if self._cache_dirty:
+        with self._cache_lock:
+            cache_dirty = self._cache_dirty
+        if cache_dirty:
             self._save_cache(force=True)
         self._flush_text_cache()
 
-    def discard_cache_writes(self) -> None:
+    def disable_cache_writes(self) -> None:
         """停止本实例继续写入翻译缓存，用于“停止并清空本次译文”。"""
         flag = getattr(self, "_discard_cache_writes", None)
         if flag is None:
             self._discard_cache_writes = threading.Event()
             flag = self._discard_cache_writes
         flag.set()
+
+    def discard_cache_writes(self) -> None:
+        """Backward-compatible alias for older bridge/test code."""
+        self.disable_cache_writes()
 
     def _should_write_cache(self) -> bool:
         flag = getattr(self, "_discard_cache_writes", None)

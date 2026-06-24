@@ -7,7 +7,7 @@ import json
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, Property, Slot
+from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,24 @@ class ConfigBridge(QObject):
         self._proofread_model = ""   # P3-⑥: 校对专用模型（空=使用主模型）
         self._allow_text_cache_reuse = False
         self._theme = "light"
+        self._autosave_enabled = False
         self._load_from_disk()
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(600)
+        self._save_timer.timeout.connect(self.saveToDisk)
+        self._autosave_enabled = True
+
+    def _schedule_save(self):
+        """Debounce config writes so QML pages do not need per-control saves."""
+        if not getattr(self, "_autosave_enabled", False):
+            return
+        self.configChanged.emit()
+        self._save_timer.start()
+
+    def _emit_changed(self, signal):
+        signal.emit()
+        self._schedule_save()
 
     def _load_from_disk(self):
         path = _config_path()
@@ -212,7 +229,7 @@ class ConfigBridge(QObject):
         self._providerChanged.emit()
         self._apiUrlChanged.emit()
         self._modelChanged.emit()
-        self.configChanged.emit()
+        self._schedule_save()
 
     # --- Properties ---
     @Property(str, notify=_inpChanged)
@@ -220,21 +237,21 @@ class ConfigBridge(QObject):
     @inp.setter
     def inp(self, val: str):
         if val != self._inp:
-            self._inp = val; self._inpChanged.emit()
+            self._inp = val; self._emit_changed(self._inpChanged)
 
     @Property(str, notify=_outChanged)
     def out(self) -> str: return self._out
     @out.setter
     def out(self, val: str):
         if val != self._out:
-            self._out = val; self._outChanged.emit()
+            self._out = val; self._emit_changed(self._outChanged)
 
     @Property(str, notify=_apiKeyChanged)
     def apiKey(self) -> str: return self._api_key
     @apiKey.setter
     def apiKey(self, val: str):
         if val != self._api_key:
-            self._api_key = val; self._apiKeyChanged.emit()
+            self._api_key = val; self._emit_changed(self._apiKeyChanged)
 
     @Property(str, notify=_providerChanged)
     def provider(self) -> str: return self._provider
@@ -244,119 +261,119 @@ class ConfigBridge(QObject):
     @apiUrl.setter
     def apiUrl(self, val: str):
         if val != self._api_url:
-            self._api_url = val; self._apiUrlChanged.emit()
+            self._api_url = val; self._emit_changed(self._apiUrlChanged)
 
     @Property(str, notify=_modelChanged)
     def model(self) -> str: return self._model
     @model.setter
     def model(self, val: str):
         if val != self._model:
-            self._model = val; self._modelChanged.emit()
+            self._model = val; self._emit_changed(self._modelChanged)
 
     @Property(bool, notify=_extractGlossaryChanged)
     def extractGlossary(self) -> bool: return self._extract_glossary
     @extractGlossary.setter
     def extractGlossary(self, val: bool):
         if val != self._extract_glossary:
-            self._extract_glossary = val; self._extractGlossaryChanged.emit()
+            self._extract_glossary = val; self._emit_changed(self._extractGlossaryChanged)
 
     @Property(bool, notify=_enableGlossaryChanged)
     def enableGlossary(self) -> bool: return self._enable_glossary
     @enableGlossary.setter
     def enableGlossary(self, val: bool):
         if val != self._enable_glossary:
-            self._enable_glossary = val; self._enableGlossaryChanged.emit()
+            self._enable_glossary = val; self._emit_changed(self._enableGlossaryChanged)
 
     @Property(int, notify=_maxWorkersChanged)
     def maxWorkers(self) -> int: return self._max_workers
     @maxWorkers.setter
     def maxWorkers(self, val: int):
         if val != self._max_workers:
-            self._max_workers = val; self._maxWorkersChanged.emit()
+            self._max_workers = val; self._emit_changed(self._maxWorkersChanged)
 
     @Property(int, notify=_batchSizeChanged)
     def batchSize(self) -> int: return self._batch_size
     @batchSize.setter
     def batchSize(self, val: int):
         if val != self._batch_size:
-            self._batch_size = val; self._batchSizeChanged.emit()
+            self._batch_size = val; self._emit_changed(self._batchSizeChanged)
 
     @Property(int, notify=_maxBatchLengthChanged)
     def maxBatchLength(self) -> int: return self._max_batch_length
     @maxBatchLength.setter
     def maxBatchLength(self, val: int):
         if val != self._max_batch_length:
-            self._max_batch_length = val; self._maxBatchLengthChanged.emit()
+            self._max_batch_length = val; self._emit_changed(self._maxBatchLengthChanged)
 
     @Property(int, notify=_maxTextSizeForBatchChanged)
     def maxTextSizeForBatch(self) -> int: return self._max_text_size_for_batch
     @maxTextSizeForBatch.setter
     def maxTextSizeForBatch(self, val: int):
         if val != self._max_text_size_for_batch:
-            self._max_text_size_for_batch = val; self._maxTextSizeForBatchChanged.emit()
+            self._max_text_size_for_batch = val; self._emit_changed(self._maxTextSizeForBatchChanged)
 
     @Property(int, notify=_apiTimeoutChanged)
     def apiTimeout(self) -> int: return self._api_timeout
     @apiTimeout.setter
     def apiTimeout(self, val: int):
         if val != self._api_timeout:
-            self._api_timeout = val; self._apiTimeoutChanged.emit()
+            self._api_timeout = val; self._emit_changed(self._apiTimeoutChanged)
 
     @Property(str, notify=_directionChanged)
     def direction(self) -> str: return self._direction
     @direction.setter
     def direction(self, val: str):
         if val != self._direction:
-            self._direction = val; self._directionChanged.emit()
+            self._direction = val; self._emit_changed(self._directionChanged)
 
     @Property(bool, notify=_enableThinkingChanged)
     def enableThinking(self) -> bool: return self._enable_thinking
     @enableThinking.setter
     def enableThinking(self, val: bool):
         if val != self._enable_thinking:
-            self._enable_thinking = val; self._enableThinkingChanged.emit()
+            self._enable_thinking = val; self._emit_changed(self._enableThinkingChanged)
 
     @Property(bool, notify=_enableProofreadChanged)
     def enableProofread(self) -> bool: return self._enable_proofread
     @enableProofread.setter
     def enableProofread(self, val: bool):
         if val != self._enable_proofread:
-            self._enable_proofread = val; self._enableProofreadChanged.emit()
+            self._enable_proofread = val; self._emit_changed(self._enableProofreadChanged)
 
     @Property(str, notify=_proofreadGenreChanged)
     def proofreadGenre(self) -> str: return self._proofread_genre
     @proofreadGenre.setter
     def proofreadGenre(self, val: str):
         if val != self._proofread_genre:
-            self._proofread_genre = val; self._proofreadGenreChanged.emit()
+            self._proofread_genre = val; self._emit_changed(self._proofreadGenreChanged)
 
     @Property(str, notify=_proofreadToneChanged)
     def proofreadTone(self) -> str: return self._proofread_tone
     @proofreadTone.setter
     def proofreadTone(self, val: str):
         if val != self._proofread_tone:
-            self._proofread_tone = val; self._proofreadToneChanged.emit()
+            self._proofread_tone = val; self._emit_changed(self._proofreadToneChanged)
 
     @Property(str, notify=_proofreadProviderChanged)
     def proofreadProvider(self) -> str: return self._proofread_provider
     @proofreadProvider.setter
     def proofreadProvider(self, val: str):
         if val != self._proofread_provider:
-            self._proofread_provider = val; self._proofreadProviderChanged.emit()
+            self._proofread_provider = val; self._emit_changed(self._proofreadProviderChanged)
 
     @Property(str, notify=_proofreadApiKeyChanged)
     def proofreadApiKey(self) -> str: return self._proofread_api_key
     @proofreadApiKey.setter
     def proofreadApiKey(self, val: str):
         if val != self._proofread_api_key:
-            self._proofread_api_key = val; self._proofreadApiKeyChanged.emit()
+            self._proofread_api_key = val; self._emit_changed(self._proofreadApiKeyChanged)
 
     @Property(str, notify=_proofreadApiUrlChanged)
     def proofreadApiUrl(self) -> str: return self._proofread_api_url
     @proofreadApiUrl.setter
     def proofreadApiUrl(self, val: str):
         if val != self._proofread_api_url:
-            self._proofread_api_url = val; self._proofreadApiUrlChanged.emit()
+            self._proofread_api_url = val; self._emit_changed(self._proofreadApiUrlChanged)
 
     _proofreadModelChanged = Signal()
     @Property(str, notify=_proofreadModelChanged)
@@ -364,7 +381,7 @@ class ConfigBridge(QObject):
     @proofreadModel.setter
     def proofreadModel(self, val: str):
         if val != self._proofread_model:
-            self._proofread_model = val; self._proofreadModelChanged.emit()
+            self._proofread_model = val; self._emit_changed(self._proofreadModelChanged)
 
     _allowTextCacheReuseChanged = Signal()
     @Property(bool, notify=_allowTextCacheReuseChanged)
@@ -372,11 +389,11 @@ class ConfigBridge(QObject):
     @allowTextCacheReuse.setter
     def allowTextCacheReuse(self, val: bool):
         if val != self._allow_text_cache_reuse:
-            self._allow_text_cache_reuse = val; self._allowTextCacheReuseChanged.emit()
+            self._allow_text_cache_reuse = val; self._emit_changed(self._allowTextCacheReuseChanged)
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme
     @theme.setter
     def theme(self, val: str):
         if val != self._theme:
-            self._theme = val; self._themeChanged.emit()
+            self._theme = val; self._emit_changed(self._themeChanged)
