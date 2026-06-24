@@ -306,34 +306,47 @@ ApplicationWindow {
 
                 Item { Layout.fillHeight: true }
 
-                ColumnLayout {
+                Rectangle {
                     Layout.fillWidth: true
-                    spacing: 8
+                    Layout.preferredHeight: 108
+                    radius: 20
+                    color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.075)
+                    border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.18) : Qt.rgba(255, 255, 255, 0.10)
+                    clip: true
 
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 50
-                        radius: 18
-                        color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.06)
-                        border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 3
+                        color: AppPalette.amberColor
+                        opacity: 0.85
+                    }
 
-                        ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: 2
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 7
 
-                            Label {
-                                text: "github.com/herofox2024/jptoch"
-                                color: "#b8d8ce"
-                                font.pixelSize: 10
-                                opacity: 0.75
-                            }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "\u9879\u76ee\u4e0e\u8054\u7cfb"
+                            color: "#eefcf8"
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                            opacity: 0.92
+                        }
 
-                            Label {
-                                text: "4284574@qq.com"
-                                color: "#b8d8ce"
-                                font.pixelSize: 10
-                                opacity: 0.65
-                            }
+                        ContactLink {
+                            label: "GitHub"
+                            value: "herofox2024/jptoch"
+                            targetUrl: "https://github.com/herofox2024/jptoch"
+                        }
+
+                        ContactLink {
+                            label: "Email"
+                            value: "42845734@qq.com"
+                            targetUrl: "mailto:42845734@qq.com"
                         }
                     }
                 }
@@ -535,6 +548,71 @@ ApplicationWindow {
         Accessible.role: Accessible.Button
         Accessible.name: navBtn.label
         Accessible.description: navBtn.desc
+    }
+
+    component ContactLink: Rectangle {
+        id: contactLink
+        property string label: ""
+        property string value: ""
+        property string targetUrl: ""
+        property bool hovering: false
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 28
+        radius: 10
+        color: contactLink.hovering || contactLink.activeFocus
+               ? Qt.rgba(1, 1, 1, 0.16)
+               : Qt.rgba(1, 1, 1, 0.07)
+        border.color: contactLink.activeFocus ? AppPalette.amberColor : Qt.rgba(255, 255, 255, 0.10)
+        border.width: contactLink.activeFocus ? 1 : 0
+        activeFocusOnTab: true
+
+        function openTarget() {
+            if (contactLink.targetUrl !== "") {
+                Qt.openUrlExternally(contactLink.targetUrl)
+                contactLink.forceActiveFocus()
+            }
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 9
+            anchors.rightMargin: 9
+            spacing: 6
+
+            Label {
+                text: contactLink.label
+                color: AppPalette.amberColor
+                font.pixelSize: 10
+                font.weight: Font.DemiBold
+                Layout.preferredWidth: 42
+                elide: Text.ElideRight
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: contactLink.value
+                color: "#d7eee8"
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: mouseArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onEntered: contactLink.hovering = true
+            onExited: contactLink.hovering = false
+            onClicked: contactLink.openTarget()
+        }
+
+        Keys.onReturnPressed: contactLink.openTarget()
+        Keys.onEnterPressed: contactLink.openTarget()
+        Keys.onSpacePressed: contactLink.openTarget()
+        Accessible.role: Accessible.Link
+        Accessible.name: contactLink.label + " " + contactLink.value
     }
 
     component NavIcon: Item {
