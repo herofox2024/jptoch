@@ -23,6 +23,12 @@ Page {
     property int statCharSpeed: 0
     property int statTranslatedChars: 0
     property int statTokenTotal: 0
+    property int statDynamicLimitEvents: 0
+    property int statRateLimitEvents: 0
+    property int statDynamicWorkers: 0
+    property int statDynamicBatchSize: 0
+    property int statProofreadBatchRequests: 0
+    property int statProofreadBatchSuccess: 0
     property int statTotalChars: 0
     property string statElapsed: "--:--"
     property string statStatus: "就绪"
@@ -134,8 +140,7 @@ Page {
         proofreadModel.clear()
     }
 
-    function clearRuntimeState(statusText) {
-        page.finishElapsedTimer()
+    function clearRunStats() {
         page.statCompleted = 0
         page.statTotal = 0
         page.statTerms = 0
@@ -146,7 +151,18 @@ Page {
         page.statCharSpeed = 0
         page.statTranslatedChars = 0
         page.statTokenTotal = 0
+        page.statDynamicLimitEvents = 0
+        page.statRateLimitEvents = 0
+        page.statDynamicWorkers = 0
+        page.statDynamicBatchSize = 0
+        page.statProofreadBatchRequests = 0
+        page.statProofreadBatchSuccess = 0
         page.statTotalChars = 0
+    }
+
+    function clearRuntimeState(statusText) {
+        page.finishElapsedTimer()
+        page.clearRunStats()
         page.statElapsed = "--:--"
         page.statStatus = statusText || "已停止，已清空本次译文缓存"
         page.proofreadStyleText = "等待自动识别"
@@ -226,6 +242,15 @@ Page {
             }
         }
 
+        function onQualityStatUpdate(dynamicLimitEvents, rateLimitEvents, dynamicWorkers, dynamicBatchSize, proofreadBatchRequests, proofreadBatchSuccess) {
+            page.statDynamicLimitEvents = dynamicLimitEvents
+            page.statRateLimitEvents = rateLimitEvents
+            page.statDynamicWorkers = dynamicWorkers
+            page.statDynamicBatchSize = dynamicBatchSize
+            page.statProofreadBatchRequests = proofreadBatchRequests
+            page.statProofreadBatchSuccess = proofreadBatchSuccess
+        }
+
         function onItemTranslated(src, dst) {
             rtSrc.text = src
             rtDst.text = dst
@@ -269,6 +294,8 @@ Page {
 
         function onBusyChanged() {
             if (page.isBusy()) {
+                page.clearRunStats()
+                page.clearProofreadDetails()
                 page.startElapsedTimer()
             } else {
                 page.finishElapsedTimer()
@@ -503,6 +530,10 @@ Page {
                     StatCard { title: "新术语"; value: page.statTerms; tone: "amber" }
                     StatCard { title: "文本块"; value: page.statCompleted + " / " + (page.statTotal > 0 ? page.statTotal : "--") }
                     StatCard { title: "Prompt风格"; value: page.proofreadStyleText; tone: "amber" }
+                    StatCard { title: "限流事件"; value: page.statDynamicLimitEvents > 0 ? page.statDynamicLimitEvents : "0"; tone: page.statDynamicLimitEvents > 0 ? "error" : "" }
+                    StatCard { title: "运行并发"; value: page.statDynamicWorkers > 0 ? page.statDynamicWorkers : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
+                    StatCard { title: "运行批量"; value: page.statDynamicBatchSize > 0 ? page.statDynamicBatchSize : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
+                    StatCard { title: "批量校对"; value: page.statProofreadBatchRequests > 0 ? (page.statProofreadBatchSuccess + " / " + page.statProofreadBatchRequests) : "--"; tone: "accent" }
                 }
             }
 

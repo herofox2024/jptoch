@@ -92,6 +92,7 @@ class _TranslateWorker(QObject):
     proofreadStyleDetected = Signal(str, str, int, str)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
+    qualityStatUpdate = Signal(int, int, int, int, int, int)
     errorDetail = Signal(str)
 
     def __init__(self, config: dict, cancel_event: threading.Event):
@@ -237,6 +238,14 @@ class _TranslateWorker(QObject):
                 char_speed = int(translated_chars / elapsed) if elapsed > 0 else 0
                 token_total = int(stats.get("tokens_total", 0))
                 self.statUpdate.emit(completed, total, terms, api_total, fail_count, success_rate, speed, char_speed, translated_chars, token_total)
+                self.qualityStatUpdate.emit(
+                    int(stats.get("dynamic_limit_events", 0)),
+                    int(stats.get("rate_limit_events", 0)),
+                    int(stats.get("dynamic_limit_workers", cfg.get("max_workers") or 0)),
+                    int(stats.get("dynamic_limit_batch_size", cfg.get("batch_size") or 0)),
+                    int(stats.get("proofread_batch_requests", 0)),
+                    int(stats.get("proofread_batch_success", 0)),
+                )
 
             def on_progress(completed, total):
                 self.progressChanged.emit(completed, total, total_chars)
@@ -546,6 +555,7 @@ class TranslateBridge(QObject):
     proofreadStyleDetected = Signal(str, str, int, str)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
+    qualityStatUpdate = Signal(int, int, int, int, int, int)
     finished = Signal(str)
     failed = Signal(str)
     errorDetail = Signal(str)
@@ -705,6 +715,7 @@ class TranslateBridge(QObject):
                 (worker.proofreadStyleDetected, self.proofreadStyleDetected),
                 (worker.statusChanged, self.statusChanged),
                 (worker.statUpdate, self.statUpdate),
+                (worker.qualityStatUpdate, self.qualityStatUpdate),
                 (worker.errorDetail, self.errorDetail),
                 (worker.finished, self._on_finished),
                 (worker.failed, self._on_failed),
