@@ -10,9 +10,13 @@ Page {
     padding: 0
     background: Item {}
     property var cfg: null
+    property var updater: null
 
     property string activePreset: "custom"
     property bool applyingPreset: false
+    property var updateInfo: ({})
+    property string updateStatus: updater ? ("当前版本 V" + updater.currentVersion) : "更新模块未加载"
+    property int updateDownloadPercent: 0
     property var proofreadGenreValues: ["auto", "general", "mystery", "scifi", "fantasy"]
     property var proofreadGenreLabels: ["自动识别（推荐）", "通用小说", "推理小说", "科幻小说", "奇幻小说"]
     property var proofreadToneValues: ["auto", "neutral", "light", "literary"]
@@ -20,6 +24,92 @@ Page {
     property var proofreadProviderValues: ["", "deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"]
     property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Gemini", "智谱 GLM", "文心一言", "自定义"]
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
+    readonly property bool updaterBusy: updater ? (updater.checking || updater.downloading) : false
+
+    Connections {
+        target: page.updater
+        ignoreUnknownSignals: true
+
+        function onCheckStarted() {
+            page.updateDownloadPercent = 0
+            page.updateStatus = "正在检查 GitHub 最新版本..."
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showInfo("正在检查更新")
+            }
+        }
+
+        function onUpdateAvailable(info) {
+            page.updateInfo = info || ({})
+            page.updateStatus = "发现新版本 V" + (page.updateInfo.latestVersion || "")
+                    + "，可下载 " + (page.updateInfo.assetName || "安装包")
+            updateDialog.open()
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showInfo("发现新版本 V" + (page.updateInfo.latestVersion || ""))
+            }
+        }
+
+        function onNoUpdate(info) {
+            page.updateInfo = info || ({})
+            page.updateStatus = "当前已是最新版本 V" + (page.updateInfo.currentVersion || "")
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showSuccess("当前已是最新版本")
+            }
+        }
+
+        function onCheckFailed(message) {
+            page.updateStatus = "检查更新失败：" + message
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showError("检查更新失败")
+            }
+        }
+
+        function onDownloadStarted(fileName) {
+            page.updateDownloadPercent = 0
+            page.updateStatus = "正在下载安装包：" + fileName
+            if (!updateDialog.opened) updateDialog.open()
+        }
+
+        function onDownloadProgress(received, total, percent) {
+            page.updateDownloadPercent = percent
+            if (total > 0) {
+                page.updateStatus = "正在下载：" + percent + "%"
+            } else {
+                page.updateStatus = "正在下载：" + page.formatBytes(received)
+            }
+        }
+
+        function onDownloadFinished(path) {
+            page.updateDownloadPercent = 100
+            page.updateStatus = "下载完成，正在启动安装程序..."
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showSuccess("安装包下载完成")
+            }
+            Qt.callLater(function() {
+                if (page.updater) page.updater.launchInstaller(path)
+            })
+        }
+
+        function onDownloadFailed(message) {
+            page.updateStatus = "下载更新失败：" + message
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showError("下载更新失败")
+            }
+        }
+
+        function onInstallerLaunched(path) {
+            page.updateStatus = "安装程序已启动，当前软件即将退出。"
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showInfo("安装程序已启动")
+            }
+        }
+
+        function onInstallFailed(message) {
+            page.updateStatus = message
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showError("启动安装程序失败")
+            }
+        }
+    }
 
     Flickable {
         id: settingsScroll
@@ -464,7 +554,175 @@ Page {
                 }
             }
 
+            GroupBox {
+                title: "软件更新"
+                Layout.fillWidth: true
+
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 10
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "当前版本：V" + (page.updater ? page.updater.currentVersion : "未知")
+                        color: AppPalette.textColor
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: page.updateStatus
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                    }
+
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        visible: page.updater && page.updater.downloading
+                        from: 0
+                        to: 100
+                        value: page.updateDownloadPercent
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Button {
+                            text: page.updater && page.updater.checking ? "检查中..." : "检查更新"
+                            enabled: page.updater && !page.updaterBusy
+                            onClicked: page.startUpdateCheck()
+                        }
+
+                        Button {
+                            text: "打开发布页"
+                            enabled: page.updater && !page.updater.downloading
+                            onClicked: page.openUpdateRelease()
+                        }
+
+                        Button {
+                            text: page.updater && page.updater.downloading
+                                  ? ("下载中 " + page.updateDownloadPercent + "%")
+                                  : "下载并安装"
+                            highlighted: page.hasInstallerAsset() && page.updateInfo.isNewer
+                            enabled: page.updater
+                                     && page.hasInstallerAsset()
+                                     && page.updateInfo.isNewer
+                                     && !page.updaterBusy
+                            onClicked: page.startUpdateDownload()
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "说明：检查更新不需要登录 GitHub；下载完成后会启动安装程序，并退出当前软件。"
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
             Item { Layout.preferredHeight: 24 }
+        }
+    }
+
+    Dialog {
+        id: updateDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(page.width - 64, 620)
+        title: page.updateInfo && page.updateInfo.isNewer ? "发现新版本" : "软件更新"
+        closePolicy: page.updater && page.updater.downloading ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ColumnLayout {
+            width: updateDialog.width - 48
+            spacing: 12
+
+            Label {
+                Layout.fillWidth: true
+                text: "当前版本 V" + (page.updateInfo.currentVersion || (page.updater ? page.updater.currentVersion : "未知"))
+                      + "，最新版本 V" + (page.updateInfo.latestVersion || "未知")
+                color: AppPalette.textColor
+                font.pixelSize: 15
+                font.weight: Font.DemiBold
+                wrapMode: Text.WordWrap
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: page.hasInstallerAsset()
+                      ? ("安装包：" + page.updateInfo.assetName + "（" + page.updateInfo.assetSizeText + "）")
+                      : "该 Release 没有找到 .exe 安装包，可打开发布页手动查看。"
+                color: AppPalette.mutedText
+                wrapMode: Text.WordWrap
+                font.pixelSize: 12
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 180
+                clip: true
+
+                Label {
+                    width: updateDialog.width - 72
+                    text: page.updateInfo.releaseNotes || "没有发布说明。"
+                    color: AppPalette.textColor
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 12
+                }
+            }
+
+            ProgressBar {
+                Layout.fillWidth: true
+                visible: page.updater && page.updater.downloading
+                from: 0
+                to: 100
+                value: page.updateDownloadPercent
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: page.updater && page.updater.downloading
+                text: page.updateStatus
+                color: AppPalette.mutedText
+                wrapMode: Text.WordWrap
+                font.pixelSize: 12
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+
+                Button {
+                    text: "稍后"
+                    enabled: !(page.updater && page.updater.downloading)
+                    onClicked: updateDialog.close()
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "打开发布页"
+                    enabled: !(page.updater && page.updater.downloading)
+                    onClicked: page.openUpdateRelease()
+                }
+
+                Button {
+                    text: page.updater && page.updater.downloading
+                          ? ("下载中 " + page.updateDownloadPercent + "%")
+                          : "下载并安装"
+                    highlighted: true
+                    enabled: page.updater
+                             && page.hasInstallerAsset()
+                             && !(page.updater && page.updater.downloading)
+                    onClicked: page.startUpdateDownload()
+                }
+            }
         }
     }
 
@@ -496,6 +754,46 @@ Page {
     function markCustom() {
         page.activePreset = "custom"
         presetHint.text = "参数已手动修改，当前为自定义性能参数"
+    }
+
+    function formatBytes(value) {
+        var size = Number(value || 0)
+        if (size <= 0) return "0 B"
+        var units = ["B", "KB", "MB", "GB"]
+        var idx = 0
+        while (size >= 1024 && idx < units.length - 1) {
+            size = size / 1024
+            idx += 1
+        }
+        return (idx === 0 ? Math.round(size) : size.toFixed(1)) + " " + units[idx]
+    }
+
+    function hasInstallerAsset() {
+        return !!(page.updateInfo && page.updateInfo.assetUrl && page.updateInfo.assetName)
+    }
+
+    function startUpdateCheck() {
+        if (!page.updater) {
+            page.updateStatus = "更新模块未加载。"
+            return
+        }
+        page.updater.checkForUpdates()
+    }
+
+    function openUpdateRelease() {
+        if (!page.updater) return
+        var url = page.updateInfo && page.updateInfo.releaseUrl ? page.updateInfo.releaseUrl : page.updater.releasesUrl
+        page.updater.openReleasePage(url)
+    }
+
+    function startUpdateDownload() {
+        if (!page.updater) return
+        if (!page.hasInstallerAsset()) {
+            page.updateStatus = "没有找到可下载的 .exe 安装包，请打开发布页查看。"
+            page.openUpdateRelease()
+            return
+        }
+        page.updater.downloadInstaller(page.updateInfo.assetUrl, page.updateInfo.assetName)
     }
 
     function proofreadGenreIndex(value) {

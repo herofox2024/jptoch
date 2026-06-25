@@ -27,6 +27,7 @@ ApplicationWindow {
     property var cfg: ConfigBridge
     property var tbridge: TranslateBridge
     property var gbridge: GlossaryBridge
+    property var updater: UpdateBridge
     property var toast: typeof ToastBridge !== "undefined" ? ToastBridge : null
     property int currentPageIndex: 0
     property bool taskPageLoaded: true
@@ -431,6 +432,7 @@ ApplicationWindow {
                     opacity: appWindow.currentPageIndex === 4 ? 1 : 0
                     sourceComponent: OptionsPage {
                         cfg: appWindow.cfg
+                        updater: appWindow.updater
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                 }

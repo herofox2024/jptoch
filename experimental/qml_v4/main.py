@@ -214,10 +214,13 @@ def main():
     from backend.translate_bridge import TranslateBridge
     from backend.glossary_bridge import GlossaryBridge
     from backend.toast_bridge import ToastBridge
+    from backend.update_bridge import UpdateBridge
 
     config_bridge = ConfigBridge()
     translate_bridge = TranslateBridge()
     glossary_bridge = GlossaryBridge()
+    toast_bridge = ToastBridge()
+    update_bridge = UpdateBridge()
 
     _set_startup_status(app, splash, "正在加载主界面")
 
@@ -230,12 +233,13 @@ def main():
     ctx.setContextProperty("ConfigBridge", config_bridge)
     ctx.setContextProperty("TranslateBridge", translate_bridge)
     ctx.setContextProperty("GlossaryBridge", glossary_bridge)
+    ctx.setContextProperty("UpdateBridge", update_bridge)
     ctx.setContextProperty("AppDir", str(EXPERIMENT_DIR))
     ctx.setContextProperty("AppFontSans", sans_font)
     ctx.setContextProperty("AppFontTitle", title_font)
     # Keep the old QML property name for compatibility; this is now a stable title font.
     ctx.setContextProperty("AppFontSerif", title_font)
-    ctx.setContextProperty("ToastBridge", ToastBridge())
+    ctx.setContextProperty("ToastBridge", toast_bridge)
 
     qml_dir = EXPERIMENT_DIR / "qml"
     qml_file = qml_dir / "main.qml"
