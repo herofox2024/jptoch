@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -639,6 +640,12 @@ class JaZhTranslator:
         self.max_text_size_for_batch = max_text_size_for_batch
         self.API_TIMEOUT = int(api_timeout)
         self.chunk_size = chunk_size
+        self._dynamic_limit_lock = threading.RLock()
+        self._dynamic_max_workers = max(1, int(max_workers or 1))
+        self._dynamic_batch_size = max(1, int(batch_size or 1))
+        self._dynamic_backoff_until = 0.0
+        self._dynamic_limit_events = 0
+        self._dynamic_success_count = 0
         self.cancel_event = cancel_event or threading.Event()
         self.session = requests.Session()
         # 连接池大小与并发数匹配，避免 "Connection pool is full" 警告
@@ -686,6 +693,12 @@ class JaZhTranslator:
             "proofread_rejected": 0,
             "translation_incomplete": 0,
             "japanese_residue_remaining": 0,
+            "dynamic_limit_events": 0,
+            "rate_limit_events": 0,
+            "dynamic_limit_workers": self._dynamic_max_workers,
+            "dynamic_limit_batch_size": self._dynamic_batch_size,
+            "proofread_batch_requests": 0,
+            "proofread_batch_success": 0,
         }
         logger.info(
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
@@ -761,6 +774,116 @@ class JaZhTranslator:
     def _inc_stat(self, key: str, delta: int = 1):
         with self._stats_lock:
             self.stats[key] = self.stats.get(key, 0) + delta
+
+    def _set_stat(self, key: str, value: int):
+        with self._stats_lock:
+            self.stats[key] = int(value)
+
+    def _ensure_dynamic_limiter(self) -> None:
+        """Lazily initialize runtime throttling state for tests/old subclasses."""
+        if not hasattr(self, "_dynamic_limit_lock"):
+            self._dynamic_limit_lock = threading.RLock()
+        if not hasattr(self, "_dynamic_max_workers"):
+            self._dynamic_max_workers = max(1, int(getattr(self, "max_workers", 1) or 1))
+        if not hasattr(self, "_dynamic_batch_size"):
+            self._dynamic_batch_size = max(1, int(getattr(self, "batch_size", 1) or 1))
+        if not hasattr(self, "_dynamic_backoff_until"):
+            self._dynamic_backoff_until = 0.0
+        if not hasattr(self, "_dynamic_limit_events"):
+            self._dynamic_limit_events = 0
+        if not hasattr(self, "_dynamic_success_count"):
+            self._dynamic_success_count = 0
+
+    @staticmethod
+    def _scale_limit(value: int, factor: float) -> int:
+        return max(1, int(value * factor + 0.999))
+
+    def _current_dynamic_workers(self) -> int:
+        self._ensure_dynamic_limiter()
+        with self._dynamic_limit_lock:
+            return max(1, int(self._dynamic_max_workers))
+
+    def _current_dynamic_batch_size(self) -> int:
+        self._ensure_dynamic_limiter()
+        with self._dynamic_limit_lock:
+            return max(1, int(self._dynamic_batch_size))
+
+    def _record_dynamic_limit_event(self, reason: str, kind: str = "rate") -> None:
+        """Reduce runtime pressure after 429/timeout/format instability."""
+        self._ensure_dynamic_limiter()
+        kind = (kind or "rate").lower()
+        with self._dynamic_limit_lock:
+            old_workers = max(1, int(self._dynamic_max_workers))
+            old_batch = max(1, int(self._dynamic_batch_size))
+            self._dynamic_limit_events += 1
+            if kind == "format":
+                worker_factor = 1.0
+                batch_factor = 0.75
+                backoff_seconds = 1.0
+            elif kind == "timeout":
+                worker_factor = 0.75
+                batch_factor = 0.75
+                backoff_seconds = min(45.0, 2 ** min(self._dynamic_limit_events, 5))
+            else:
+                worker_factor = 0.6
+                batch_factor = 0.7
+                backoff_seconds = min(60.0, 2 ** min(self._dynamic_limit_events, 5))
+
+            new_workers = old_workers if worker_factor >= 1.0 else self._scale_limit(old_workers, worker_factor)
+            new_batch = self._scale_limit(old_batch, batch_factor)
+            self._dynamic_max_workers = max(1, new_workers)
+            self._dynamic_batch_size = max(1, new_batch)
+            self._dynamic_backoff_until = max(
+                float(self._dynamic_backoff_until),
+                time.time() + backoff_seconds + random.uniform(0, 0.5),
+            )
+            self._dynamic_success_count = 0
+
+        self._inc_stat("dynamic_limit_events")
+        if kind in {"rate", "timeout"}:
+            self._inc_stat("rate_limit_events")
+        self._set_stat("dynamic_limit_workers", self._current_dynamic_workers())
+        self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
+        logger.warning(
+            "API 动态限流触发: %s；运行时并发 %s→%s，批量 %s→%s",
+            reason,
+            old_workers,
+            self._current_dynamic_workers(),
+            old_batch,
+            self._current_dynamic_batch_size(),
+        )
+
+    def _record_api_success_event(self) -> None:
+        """Slowly recover dynamic limits after a stable success streak."""
+        self._ensure_dynamic_limiter()
+        with self._dynamic_limit_lock:
+            if time.time() < float(self._dynamic_backoff_until):
+                return
+            base_workers = max(1, int(getattr(self, "max_workers", 1) or 1))
+            base_batch = max(1, int(getattr(self, "batch_size", 1) or 1))
+            if self._dynamic_max_workers >= base_workers and self._dynamic_batch_size >= base_batch:
+                return
+            self._dynamic_success_count += 1
+            if self._dynamic_success_count < 20:
+                return
+            self._dynamic_success_count = 0
+            self._dynamic_max_workers = min(base_workers, int(self._dynamic_max_workers) + 1)
+            self._dynamic_batch_size = min(base_batch, int(self._dynamic_batch_size) + 1)
+
+        self._set_stat("dynamic_limit_workers", self._current_dynamic_workers())
+        self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
+        logger.info(
+            "API 动态限流恢复: 运行时并发=%s，批量=%s",
+            self._current_dynamic_workers(),
+            self._current_dynamic_batch_size(),
+        )
+
+    def _wait_dynamic_backoff(self) -> None:
+        self._ensure_dynamic_limiter()
+        with self._dynamic_limit_lock:
+            wait_seconds = max(0.0, float(self._dynamic_backoff_until) - time.time())
+        if wait_seconds > 0 and self.cancel_event.wait(wait_seconds):
+            raise RuntimeError("翻译已取消")
 
     def _accumulate_usage_tokens(self, data: Dict[str, Any]) -> None:
         """Accumulate usage.total_tokens from OpenAI-compatible responses when present."""
@@ -1167,6 +1290,7 @@ class JaZhTranslator:
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
             try:
+                self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
                 resp = self.session.post(
                     proofread_url,
@@ -1175,6 +1299,8 @@ class JaZhTranslator:
                     timeout=self.API_TIMEOUT,
                 )
                 if resp.status_code == 429:
+                    self._inc_stat("api_requests_failed")
+                    self._record_dynamic_limit_event("校对 HTTP 429", kind="rate")
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     if self.cancel_event.wait(wait_time):
                         raise RuntimeError("翻译已取消")
@@ -1204,12 +1330,194 @@ class JaZhTranslator:
                         + ", ".join(invalid_injections)
                     )
                     return draft
+                self._record_api_success_event()
                 return cleaned
+            except requests.exceptions.Timeout as e:
+                self._inc_stat("api_requests_failed")
+                self._record_dynamic_limit_event("校对请求超时", kind="timeout")
+                logger.warning(f"译后校对超时: {e}")
+                if attempt == 1:
+                    return draft
             except Exception as e:
                 logger.warning(f"译后校对失败: {e}")
                 if attempt == 1:
                     return draft
         return draft
+
+    def _proofread_translations_batch(self, items: List[Dict[str, Any]]) -> Dict[int, str]:
+        """Proofread multiple suspicious translations with one JSON API request."""
+        if not bool(getattr(self, "enable_proofread", False)) or not items:
+            return {}
+
+        prepared: List[Dict[str, Any]] = []
+        allowed_entries_by_idx: Dict[int, List[Dict[str, str]]] = {}
+        draft_by_idx: Dict[int, str] = {}
+        src_by_idx: Dict[int, str] = {}
+
+        for item in items:
+            try:
+                idx = int(item.get("idx"))
+            except (TypeError, ValueError):
+                continue
+            src = str(item.get("src", "") or "").strip()
+            draft = str(item.get("draft", "") or "").strip()
+            issues = [str(issue) for issue in item.get("issues", []) if str(issue).strip()]
+            if not src or not draft or not issues:
+                continue
+
+            selected_entries = self._select_proofread_glossary_entries(src, max_terms=30)
+            allowed_entries_by_idx[idx] = selected_entries
+            src_by_idx[idx] = src
+            draft_by_idx[idx] = draft
+
+            payload_item: Dict[str, Any] = {
+                "idx": idx,
+                "issues": issues,
+                "src": src,
+                "draft": draft,
+            }
+            prev_text = item.get("prev")
+            next_text = item.get("next")
+            if prev_text:
+                payload_item["prev"] = str(prev_text)[:self.CONTEXT_PREVIEW_LEN]
+            if next_text:
+                payload_item["next"] = str(next_text)[:self.CONTEXT_PREVIEW_LEN]
+            if selected_entries:
+                payload_item["glossary"] = [
+                    {
+                        "original": str(entry.get("original", "")),
+                        "translation": str(entry.get("translation", "")),
+                        **({"info": str(entry.get("info", ""))} if entry.get("info") else {}),
+                    }
+                    for entry in selected_entries
+                ]
+            prepared.append(payload_item)
+
+        if not prepared:
+            return {}
+
+        system_prompt = self._build_proofread_system_prompt()
+        user_prompt = (
+            "请逐项校对 JSON 数组中的中文初译，只修复 issues 指出的明确问题。\n"
+            "prev/next 只是上下文参考，不要翻译 prev/next。\n"
+            "术语只在日文原文中独立命中且符合上下文时才修正；如果术语译法会破坏语义，保留初译。\n"
+            "禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
+            "必须只返回 JSON 对象，格式为：{\"items\":[{\"idx\":0,\"revised\":\"修正后的中文译文\"}]}。\n\n"
+            f"【待校对项目】\n{json.dumps(prepared, ensure_ascii=False)}"
+        )
+        proofread_api_key = self.proofread_api_key or self.api_key
+        headers = {
+            "Authorization": f"Bearer {proofread_api_key}",
+            "Content-Type": "application/json",
+        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        proofread_model = self.proofread_model or self.model
+        proofread_url = self._get_proofread_url() if self.proofread_provider else self.api_url
+        active_provider = (self.proofread_provider or self.provider or "").lower()
+        payload = {
+            "model": proofread_model,
+            "messages": messages,
+            "temperature": 0.1,
+        }
+        self._apply_provider_payload_options(payload, self.proofread_provider or self.provider)
+        if active_provider == "deepseek":
+            payload["response_format"] = {"type": "json_object"}
+
+        for attempt in range(2):
+            if self.cancel_event.is_set():
+                raise RuntimeError("翻译已取消")
+            try:
+                self._wait_dynamic_backoff()
+                self._inc_stat("proofread_batch_requests")
+                self._inc_stat("api_requests_total")
+                resp = self.session.post(
+                    proofread_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.API_TIMEOUT,
+                )
+                if resp.status_code == 429:
+                    self._inc_stat("api_requests_failed")
+                    self._record_dynamic_limit_event("批量校对 HTTP 429", kind="rate")
+                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    if self.cancel_event.wait(wait_time):
+                        raise RuntimeError("翻译已取消")
+                    continue
+                if resp.status_code == 502:
+                    logger.warning("批量校对请求遇到 502，回退单条校对")
+                    return {}
+                resp.raise_for_status()
+                data = resp.json()
+                self._accumulate_usage_tokens(data)
+
+                choices = data.get("choices", [])
+                if not choices:
+                    self._record_dynamic_limit_event("批量校对缺少 choices", kind="format")
+                    return {}
+                message = choices[0].get("message", {})
+                raw = (message.get("content", "") or "").strip()
+                obj = self._extract_json_object(raw)
+                if not isinstance(obj, dict):
+                    self._record_dynamic_limit_event("批量校对 JSON 解析失败", kind="format")
+                    return {}
+                arr = obj.get("items") or obj.get("translations")
+                if not isinstance(arr, list):
+                    self._record_dynamic_limit_event("批量校对缺少 items", kind="format")
+                    return {}
+
+                revised_by_idx: Dict[int, str] = {}
+                for result_item in arr:
+                    if not isinstance(result_item, dict):
+                        continue
+                    try:
+                        idx = int(result_item.get("idx"))
+                    except (TypeError, ValueError):
+                        continue
+                    if idx not in draft_by_idx:
+                        continue
+                    revised_raw = (
+                        result_item.get("revised")
+                        or result_item.get("zh")
+                        or result_item.get("translation")
+                        or result_item.get("text")
+                        or ""
+                    )
+                    if not isinstance(revised_raw, str) or not revised_raw.strip():
+                        continue
+                    cleaned = self._strip_proofread_explanations(revised_raw, fallback=draft_by_idx[idx])
+                    invalid_injections = self._find_invalid_glossary_injections(
+                        src_by_idx[idx],
+                        draft_by_idx[idx],
+                        cleaned,
+                        allowed_entries=allowed_entries_by_idx.get(idx, []),
+                    )
+                    if invalid_injections:
+                        self._inc_stat("proofread_rejected")
+                        logger.warning(
+                            "批量校对结果引入未命中术语，已保留初译: "
+                            + ", ".join(invalid_injections)
+                        )
+                        cleaned = draft_by_idx[idx]
+                    revised_by_idx[idx] = cleaned
+
+                if revised_by_idx:
+                    self._inc_stat("proofread_batch_success")
+                    self._record_api_success_event()
+                return revised_by_idx
+            except requests.exceptions.Timeout as e:
+                self._inc_stat("api_requests_failed")
+                self._record_dynamic_limit_event("批量校对请求超时", kind="timeout")
+                logger.warning(f"批量校对超时: {e}")
+                if attempt == 1:
+                    return {}
+            except Exception as e:
+                logger.warning(f"批量校对失败: {e}")
+                if attempt == 1:
+                    return {}
+        return {}
 
     def _send_continuation_request(
         self,
@@ -1240,6 +1548,7 @@ class JaZhTranslator:
         payload["messages"] = continuation_messages
 
         try:
+            self._wait_dynamic_backoff()
             self._inc_stat("api_requests_total")
             resp = self.session.post(
                 self.api_url,
@@ -1248,6 +1557,9 @@ class JaZhTranslator:
                 timeout=self.API_TIMEOUT,
             )
             if resp.status_code in (429, 502):
+                if resp.status_code == 429:
+                    self._inc_stat("api_requests_failed")
+                    self._record_dynamic_limit_event("截断续取 HTTP 429", kind="rate")
                 return "", None  # 优雅降级
             resp.raise_for_status()
             data = resp.json()
@@ -1258,6 +1570,8 @@ class JaZhTranslator:
             message = choices[0].get("message", {})
             additional = message.get("content", "")
             finish_reason = self._get_finish_reason(data)
+            if additional:
+                self._record_api_success_event()
             return (additional or "").strip(), finish_reason
         except Exception as e:
             logger.warning(f"截断续取请求失败: {e}")
@@ -1896,6 +2210,7 @@ JSON 顶层字段：
                 raise RuntimeError("翻译已取消")
 
             try:
+                self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
                 resp = self.session.post(
                     self.api_url,
@@ -1906,6 +2221,7 @@ JSON 顶层字段：
 
                 if resp.status_code == 429:
                     self._inc_stat("api_requests_failed")
+                    self._record_dynamic_limit_event("HTTP 429", kind="rate")
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     logger.warning(f"API 限流，等待 {wait_time:.1f} 秒后重试...")
                     if self.cancel_event.wait(wait_time):
@@ -1921,13 +2237,16 @@ JSON 顶层字段：
 
                 choices = data.get("choices", [])
                 if not choices:
+                    self._record_dynamic_limit_event("API 响应缺少 choices 字段", kind="format")
                     raise KeyError("API 响应缺少 choices 字段")
                 message = choices[0].get("message", {})
                 content = message.get("content", "")
                 if not content:
+                    self._record_dynamic_limit_event("API 响应缺少 content 字段", kind="format")
                     raise KeyError("API 响应缺少 content 字段")
 
                 content = content.strip()
+                self._record_api_success_event()
                 finish_reason = self._get_finish_reason(data)
                 is_truncated = finish_reason == "length"
 
@@ -1973,6 +2292,7 @@ JSON 顶层字段：
 
             except requests.exceptions.Timeout:
                 self._inc_stat("api_requests_failed")
+                self._record_dynamic_limit_event("请求超时", kind="timeout")
                 last_error = "请求超时"
                 logger.warning(f"API 请求超时 (尝试 {attempt + 1}/{max_retries})")
             except requests.exceptions.ConnectionError:
@@ -2081,6 +2401,7 @@ JSON 顶层字段：
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
             try:
+                self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
                 resp = self.session.post(
                     self.api_url,
@@ -2090,6 +2411,7 @@ JSON 顶层字段：
                 )
                 if resp.status_code == 429:
                     self._inc_stat("api_requests_failed")
+                    self._record_dynamic_limit_event("批量 JSON HTTP 429", kind="rate")
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     if self.cancel_event.wait(wait_time):
                         raise RuntimeError("翻译已取消")
@@ -2104,6 +2426,7 @@ JSON 顶层字段：
                 choices = data.get("choices", [])
                 if not choices:
                     self._inc_stat("batch_json_parse_fail")
+                    self._record_dynamic_limit_event("批量 JSON 缺少 choices", kind="format")
                     return BatchJsonResult(
                         translations=None, missing_indices=list(range(len(texts))),
                         finish_reason=self._get_finish_reason(data),
@@ -2112,6 +2435,7 @@ JSON 顶层字段：
                 raw = message.get("content", "")
                 if not raw:
                     self._inc_stat("batch_json_parse_fail")
+                    self._record_dynamic_limit_event("批量 JSON 缺少 content", kind="format")
                     return BatchJsonResult(
                         translations=None, missing_indices=list(range(len(texts))),
                         finish_reason=self._get_finish_reason(data),
@@ -2157,6 +2481,7 @@ JSON 顶层字段：
                 obj = self._extract_json_object(raw)
                 if not isinstance(obj, dict):
                     self._inc_stat("batch_json_parse_fail")
+                    self._record_dynamic_limit_event("批量 JSON 解析失败", kind="format")
                     return BatchJsonResult(
                         translations=None, missing_indices=list(range(len(texts))),
                         finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
@@ -2165,6 +2490,7 @@ JSON 顶层字段：
                 arr = obj.get("translations") or obj.get("items")
                 if not isinstance(arr, list):
                     self._inc_stat("batch_json_parse_fail")
+                    self._record_dynamic_limit_event("批量 JSON 缺少 translations/items", kind="format")
                     return BatchJsonResult(
                         translations=None, missing_indices=list(range(len(texts))),
                         finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
@@ -2199,6 +2525,8 @@ JSON 顶层字段：
                 if not isinstance(raw_terms, list):
                     raw_terms = []
 
+                if valid_indices:
+                    self._record_api_success_event()
                 return BatchJsonResult(
                     translations=out,
                     new_terms=raw_terms,
@@ -2209,6 +2537,18 @@ JSON 顶层字段：
                 )
             except FastFailError:
                 raise
+            except requests.exceptions.Timeout as e:
+                self._inc_stat("api_requests_failed")
+                self._record_dynamic_limit_event("批量 JSON 请求超时", kind="timeout")
+                logger.warning(f"批量翻译请求超时 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    if self.cancel_event.wait(wait_time):
+                        raise RuntimeError("翻译已取消")
+                    continue
+                return BatchJsonResult(
+                    translations=None, missing_indices=list(range(len(texts))),
+                )
             except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
                 logger.warning(f"批量翻译请求失败 (尝试 {attempt + 1}/{max_retries}): {e}")
@@ -2595,6 +2935,7 @@ JSON 顶层字段：
 
         # 使用实例配置，允许传入覆盖
         effective_batch_size = batch_size if batch_size is not None else self.batch_size
+        effective_batch_size = max(1, min(int(effective_batch_size or 1), self._current_dynamic_batch_size()))
 
         ordered_results: List[Optional[str]] = [None] * total
         self._last_ordered_results = ordered_results
@@ -2889,27 +3230,56 @@ JSON 顶层字段：
             repaired = list(pairs)
             fixed_count = 0
             proofread_fixed = 0
+            batch_proofread_revisions: Dict[int, str] = {}
+            proofread_only_idx = sorted(set(proofread_issues) - suspicious_idx)
+            if enable_proofread and len(proofread_only_idx) >= 2:
+                batch_items = []
+                for batch_i in proofread_only_idx:
+                    task_key, src, draft = repaired[batch_i]
+                    proofread_prev, proofread_next = get_context_for_task(task_key)
+                    batch_items.append(
+                        {
+                            "idx": batch_i,
+                            "src": src,
+                            "draft": draft,
+                            "issues": list(proofread_issues[batch_i]),
+                            "prev": proofread_prev,
+                            "next": proofread_next,
+                        }
+                    )
+                try:
+                    batch_proofread_revisions = self._proofread_translations_batch(batch_items)
+                    if batch_proofread_revisions:
+                        logger.info(
+                            f"批量校对完成: {len(batch_proofread_revisions)}/{len(batch_items)} 条"
+                        )
+                except Exception as batch_proofread_error:
+                    logger.warning(f"批量校对失败，回退单条校对: {batch_proofread_error}")
+
             for i in sorted(all_repair_idx):
                 task_key, src, _ = repaired[i]
                 try:
                     if enable_proofread and i in proofread_issues and i not in suspicious_idx:
                         draft = repaired[i][2]
                         issues = list(proofread_issues[i])
-                        proofread_prev, proofread_next = get_context_for_task(task_key)
-                        try:
-                            revised = self._proofread_translation(
-                                src,
-                                draft,
-                                issues,
-                                prev_text=proofread_prev,
-                                next_text=proofread_next,
-                            )
-                        except TypeError as exc:
-                            message = str(exc)
-                            if "prev_text" in message or "next_text" in message or "unexpected keyword" in message:
-                                revised = self._proofread_translation(src, draft, issues)
-                            else:
-                                raise
+                        if i in batch_proofread_revisions:
+                            revised = batch_proofread_revisions[i]
+                        else:
+                            proofread_prev, proofread_next = get_context_for_task(task_key)
+                            try:
+                                revised = self._proofread_translation(
+                                    src,
+                                    draft,
+                                    issues,
+                                    prev_text=proofread_prev,
+                                    next_text=proofread_next,
+                                )
+                            except TypeError as exc:
+                                message = str(exc)
+                                if "prev_text" in message or "next_text" in message or "unexpected keyword" in message:
+                                    revised = self._proofread_translation(src, draft, issues)
+                                else:
+                                    raise
                         if any("日文" in issue or "假名" in issue for issue in issues) and self._has_japanese_residue(revised):
                             try:
                                 fallback_prev, fallback_next = get_context_for_task(task_key)
@@ -3058,77 +3428,102 @@ JSON 顶层字段：
             self._inc_stat("batch_delimiter_success")
             return repair_batch_quality(batch, list(zip(batch, batch_texts, parts)))
 
-        executor = ThreadPoolExecutor(max_workers=self.max_workers)
-        futures = {}
-        try:
-            for batch in batches:
+        executor = ThreadPoolExecutor(max_workers=max(1, self.max_workers))
+        futures: Dict[Any, List[str]] = {}
+        batch_queue = deque(batches)
+
+        def pop_next_dynamic_batch() -> List[str]:
+            batch = list(batch_queue.popleft())
+            dynamic_batch_size = self._current_dynamic_batch_size()
+            if len(batch) > dynamic_batch_size:
+                head = batch[:dynamic_batch_size]
+                tail = batch[dynamic_batch_size:]
+                if tail:
+                    batch_queue.appendleft(tail)
+                return head
+            return batch
+
+        def submit_available_batches() -> None:
+            while batch_queue and len(futures) < self._current_dynamic_workers():
                 if self.cancel_event.is_set():
                     raise RuntimeError("翻译已取消")
+                batch = pop_next_dynamic_batch()
+                if not batch:
+                    continue
                 futures[executor.submit(translate_one_batch, batch)] = batch
 
-            # P3-⑦: 流式处理 — 使用 as_completed 让先完成的批次先回写
-            # 相比 wait(pending, timeout=0.2) 轮询，as_completed 响应更及时
-            pending_futures = set(futures)
-            for future in as_completed(pending_futures):
+        try:
+            submit_available_batches()
+
+            # Runtime throttling requires incremental submission instead of queuing all batches at once.
+            while futures:
                 if self.cancel_event.is_set():
-                    for f in pending_futures:
+                    for f in futures:
                         f.cancel()
                     self._save_cache(force=True)
                     raise RuntimeError("翻译已取消")
 
-                try:
-                    batch_results = future.result()
-                    for task_key, original, translated in batch_results:
-                        if not should_accept_translation(original, translated, "批次译文疑似未完成"):
-                            continue
-                        if self._should_write_cache():
-                            with self._cache_lock:
-                                self.cache[task_key] = translated
-                        # Phase 1-②: 写入文本级缓存（非短文本才写入）
-                        if not self._is_context_cache_text(original):
-                            self._save_text_cache_entry(original, translated, verified=False)
-                        task = pending_tasks.get(task_key, {})
-                        for occurrence_idx in task.get("indices", []):
-                            ordered_results[occurrence_idx] = translated
-                        results.setdefault(original, translated)
-                        completed += pending_counts.get(task_key, 1)
-                        if item_callback:
-                            item_callback(original, translated)
-                        if progress_callback:
-                            progress_callback(completed, total)
-                    if self._should_write_cache():
-                        self._save_cache()
-                except Exception as e:
-                    logger.error(f"批次翻译失败: {e}")
-                    if "502" in str(e):
-                        raise
-                    batch = futures[future]
-                    for task_key in batch:
-                        if self.cancel_event.is_set():
-                            self._save_cache(force=True)
-                            raise RuntimeError("翻译已取消")
-                        text = task_texts[task_key]
-                        try:
-                            fallback_prev, fallback_next = get_context_for_task(task_key)
-                            zh = call_translate_chunk(text, fallback_prev, fallback_next)
-                            if not should_accept_translation(text, zh, "批次失败后的单条重试仍未完成"):
+                done, _ = wait(set(futures), timeout=0.2, return_when=FIRST_COMPLETED)
+                if not done:
+                    submit_available_batches()
+                    continue
+
+                for future in done:
+                    batch = futures.pop(future)
+                    try:
+                        batch_results = future.result()
+                        for task_key, original, translated in batch_results:
+                            if not should_accept_translation(original, translated, "批次译文疑似未完成"):
                                 continue
                             if self._should_write_cache():
                                 with self._cache_lock:
-                                    self.cache[task_key] = zh
+                                    self.cache[task_key] = translated
+                            # Phase 1-②: 写入文本级缓存（非短文本才写入）
+                            if not self._is_context_cache_text(original):
+                                self._save_text_cache_entry(original, translated, verified=False)
                             task = pending_tasks.get(task_key, {})
                             for occurrence_idx in task.get("indices", []):
-                                ordered_results[occurrence_idx] = zh
-                            results.setdefault(text, zh)
-                        except Exception as e2:
-                            logger.error(f"翻译失败: {e2}")
-                            mark_incomplete(text, f"单条重试失败: {e2}")
-                            continue
-                        completed += pending_counts.get(task_key, 1)
-                        if item_callback:
-                            item_callback(text, zh)
-                        if progress_callback:
-                            progress_callback(completed, total)
+                                ordered_results[occurrence_idx] = translated
+                            results.setdefault(original, translated)
+                            completed += pending_counts.get(task_key, 1)
+                            if item_callback:
+                                item_callback(original, translated)
+                            if progress_callback:
+                                progress_callback(completed, total)
+                        if self._should_write_cache():
+                            self._save_cache()
+                    except Exception as e:
+                        logger.error(f"批次翻译失败: {e}")
+                        if "502" in str(e):
+                            raise
+                        for task_key in batch:
+                            if self.cancel_event.is_set():
+                                self._save_cache(force=True)
+                                raise RuntimeError("翻译已取消")
+                            text = task_texts[task_key]
+                            try:
+                                fallback_prev, fallback_next = get_context_for_task(task_key)
+                                zh = call_translate_chunk(text, fallback_prev, fallback_next)
+                                if not should_accept_translation(text, zh, "批次失败后的单条重试仍未完成"):
+                                    continue
+                                if self._should_write_cache():
+                                    with self._cache_lock:
+                                        self.cache[task_key] = zh
+                                task = pending_tasks.get(task_key, {})
+                                for occurrence_idx in task.get("indices", []):
+                                    ordered_results[occurrence_idx] = zh
+                                results.setdefault(text, zh)
+                            except Exception as e2:
+                                logger.error(f"翻译失败: {e2}")
+                                mark_incomplete(text, f"单条重试失败: {e2}")
+                                continue
+                            completed += pending_counts.get(task_key, 1)
+                            if item_callback:
+                                item_callback(text, zh)
+                            if progress_callback:
+                                progress_callback(completed, total)
+
+                submit_available_batches()
         finally:
             executor.shutdown(wait=not self.cancel_event.is_set(), cancel_futures=True)
 

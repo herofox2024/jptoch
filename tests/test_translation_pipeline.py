@@ -456,6 +456,62 @@ class TranslatorTests(unittest.TestCase):
         self.assertTrue(details[0]["japanese_residue"])
 
 
+    def test_batch_proofread_repairs_multiple_suspicious_translations(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.max_workers = 1
+        t.batch_size = 2
+        t.max_batch_length = 100
+        t.max_text_size_for_batch = 100
+        srcs = [
+            "\u5f7c\u5973\u306f\u7b11\u3063\u305f\u3002",
+            "\u5f7c\u5973\u304c\u9814\u3044\u305f\u3002",
+        ]
+        drafts = [
+            "\u5979\u306f\u7b11\u4e86\u3002",
+            "\u5979\u304c\u70b9\u5934\u4e86\u3002",
+        ]
+        t._call_deepseek_batch_json = lambda batch, max_retries=2, prev_text=None, next_text=None, item_contexts=None: BatchJsonResult(
+            translations=list(drafts),
+            new_terms=[],
+            missing_indices=[],
+            finish_reason="stop",
+        )
+        batch_calls = []
+
+        def fake_batch_proofread(items):
+            batch_calls.append(items)
+            return {
+                items[0]["idx"]: "\u5979\u7b11\u4e86\u3002",
+                items[1]["idx"]: "\u5979\u70b9\u4e86\u70b9\u5934\u3002",
+            }
+
+        t._proofread_translations_batch = fake_batch_proofread  # type: ignore
+        t._proofread_translation = mock.Mock(side_effect=AssertionError("single proofread should not run"))
+
+        details = []
+        res = t.translate_batch(srcs, batch_size=2, proofread_callback=details.append)
+
+        self.assertEqual(len(batch_calls), 1)
+        self.assertEqual(len(batch_calls[0]), 2)
+        self.assertEqual(res[srcs[0]], "\u5979\u7b11\u4e86\u3002")
+        self.assertEqual(res[srcs[1]], "\u5979\u70b9\u4e86\u70b9\u5934\u3002")
+        self.assertEqual(len(details), 2)
+        self.assertEqual(t._proofread_translation.call_count, 0)
+
+    def test_dynamic_limiter_reduces_workers_and_batch_size(self):
+        t = DummyTranslator()
+        t.max_workers = 10
+        t.batch_size = 8
+
+        t._record_dynamic_limit_event("HTTP 429", kind="rate")
+
+        self.assertLess(t._current_dynamic_workers(), 10)
+        self.assertLess(t._current_dynamic_batch_size(), 8)
+        self.assertEqual(t.stats["rate_limit_events"], 1)
+        self.assertEqual(t.stats["dynamic_limit_workers"], t._current_dynamic_workers())
+        self.assertEqual(t.stats["dynamic_limit_batch_size"], t._current_dynamic_batch_size())
+
     def test_repeated_japanese_residue_across_different_sentences_skips_repeated_proofread(self):
         t = DummyTranslator()
         t.enable_proofread = True
