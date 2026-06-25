@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -31,6 +31,7 @@
 | [缓存与续译](#缓存与续译) | 暂停、恢复、停止、换模型重译的行为说明 |
 | [项目结构](#项目结构) | 当前代码目录和入口文件 |
 | [打包说明](#打包说明) | PyInstaller 和 Inno Setup 打包命令 |
+| [GitHub 自动发布](#github-自动发布) | 推送版本标签后自动打包并发布安装包 |
 | [常见问题](#常见问题) | 限流、缓存、目录未翻译、启动慢等问题 |
 | [版本记录](#版本记录) | V4.1 与历史版本摘要 |
 
@@ -410,6 +411,45 @@ dist/AI日译中(EPUB)V4.1_slim/
 
 ```text
 dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
+```
+
+---
+
+## GitHub 自动发布
+
+项目已添加 GitHub Actions 工作流：
+
+```text
+.github/workflows/release-qml-v4.yml
+```
+
+触发方式：
+
+- 推送 `v*` 版本标签时，自动在 Windows Runner 上打包 QML/V4.1。
+- 自动生成 onedir 便携压缩包和 Inno Setup 安装程序。
+- 自动创建 GitHub Release，并把 `.exe` 安装包和 `.zip` 便携包挂到 Release 资产里。
+- 手动运行 `workflow_dispatch` 时只上传 Actions 构建产物，不自动发布 Release。
+
+发布新版本示例：
+
+```powershell
+git tag v4.1.0
+git push origin v4.1.0
+```
+
+自动构建流程：
+
+1. 安装 `experimental/qml_v4/requirements.txt` 里的 QML/V4 运行依赖。
+2. 安装 `pyinstaller` 和 `pyinstaller-hooks-contrib`。
+3. 执行 `experimental/qml_v4/EPUBTranslator_onedir_slim.spec` 生成瘦身 onedir。
+4. 通过 Chocolatey 安装 Inno Setup。
+5. 编译 `installer/EPUB日译中V4.0_slim.iss` 生成安装程序。
+6. 上传 `dist/installer/*.exe` 和 `dist/*.zip`。
+
+注意：安装包名称仍由现有 Inno Setup 脚本控制，当前输出为：
+
+```text
+AI日译中(EPUB)V4.1 安装程序.exe
 ```
 
 ---
