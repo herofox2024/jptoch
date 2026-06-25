@@ -233,6 +233,46 @@ class TranslatorTests(unittest.TestCase):
         self.assertIn((2, 3), progress)
         self.assertEqual(progress[-1], (3, 3))
 
+    def test_context_sensitive_short_text_keeps_ordered_results(self):
+        t = DummyTranslator()
+        t.max_workers = 1
+        t.max_batch_length = 1
+
+        def fake_call(text, max_retries=3, text_separator=None, prev_text=None, next_text=None):
+            if text == "え？":
+                if prev_text and "太郎" in prev_text:
+                    return "咦，是太郎？"
+                if prev_text and "花子" in prev_text:
+                    return "咦，是花子？"
+            return "中文旁白"
+
+        t._call_deepseek = fake_call  # type: ignore
+        texts = ["太郎が来た。", "え？", "花子が来た。", "え？"]
+        res = t.translate_batch(texts, batch_size=1, context_texts=texts)
+
+        self.assertEqual(res["え？"], "咦，是太郎？")
+        self.assertEqual(t.last_ordered_results[1], "咦，是太郎？")
+        self.assertEqual(t.last_ordered_results[3], "咦，是花子？")
+
+    def test_glossary_policy_controls_proofread_enforcement(self):
+        t = DummyTranslator()
+        t.glossary = {
+            "Item": [
+                {"original": "グラス", "translation": "杯子", "policy": "reference"},
+                {"original": "サングラス", "translation": "墨镜", "policy": "force"},
+                {"original": "バグ", "translation": "故障", "policy": "ignore"},
+            ]
+        }
+        t._glossary_index = rebuild_glossary_index(t.glossary, t.glossary_categories)
+
+        reference_entries = t._select_proofread_glossary_entries("グラスを置いた。")
+        force_entries = t._select_proofread_glossary_entries("サングラスをかけた。")
+        prompt_entries = t._select_glossary_entries("バグが出た。")
+
+        self.assertEqual(reference_entries, [])
+        self.assertEqual(force_entries[0]["translation"], "墨镜")
+        self.assertEqual(prompt_entries, [])
+
     def test_cancel_event(self):
         t = DummyTranslator()
         t.cancel_event.set()

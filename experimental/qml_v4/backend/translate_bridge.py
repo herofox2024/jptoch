@@ -289,17 +289,30 @@ class _TranslateWorker(QObject):
                 self.finished.emit(CANCELLED_RESULT)
                 return
 
+            ordered_results = getattr(translator, "last_ordered_results", [])
+            if not isinstance(ordered_results, list) or len(ordered_results) != len(all_texts):
+                ordered_results = []
+            ordered_cursor = 0
+
+            def next_translated(original):
+                nonlocal ordered_cursor
+                translated = None
+                if ordered_results and ordered_cursor < len(ordered_results):
+                    translated = ordered_results[ordered_cursor]
+                ordered_cursor += 1
+                return translated or results.get(original)
+
             for record in text_tag_map:
                 mode, _, tag = record[0], record[1], record[2]
                 if mode == "multi_anchor":
                     node_records = record[3]
                     for node, original in node_records:
-                        translated = results.get(original)
+                        translated = next_translated(original)
                         if translated:
                             node.replace_with(NavigableString(translated))
                     continue
                 original = record[3]
-                translated = results.get(original)
+                translated = next_translated(original)
                 if not translated:
                     continue
                 if mode == "single_anchor":
@@ -349,8 +362,9 @@ class _TranslateWorker(QObject):
             toc_translations = {}
             for i in range(toc_indices_start, toc_indices_end):
                 original = all_texts[i]
-                if original in results:
-                    toc_translations[original] = results[original]
+                translated = ordered_results[i] if ordered_results and i < len(ordered_results) else results.get(original)
+                if translated:
+                    toc_translations[original] = translated
 
             if toc_translations:
                 apply_toc_translations(book, toc_translations)
@@ -375,7 +389,8 @@ class _TranslateWorker(QObject):
                     except Exception:
                         pass
                 for title in toc_titles:
-                    tt = results.get(title)
+                    title_index = all_texts.index(title) if title in all_texts else -1
+                    tt = ordered_results[title_index] if ordered_results and title_index >= 0 else results.get(title)
                     if tt:
                         candidates.append(str(tt))
                         break

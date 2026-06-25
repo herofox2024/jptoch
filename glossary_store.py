@@ -5,16 +5,36 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 DEFAULT_GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
 
 
+def normalize_policy(value: Any) -> str:
+    """Normalize glossary enforcement policy: force/reference/ignore or empty default."""
+    raw = str(value or "").strip().lower()
+    if raw in {"force", "forced", "confirm", "confirmed", "strict", "强制", "强制使用", "固定", "已确认"}:
+        return "force"
+    if raw in {"reference", "ref", "weak", "suggestion", "参考", "仅供参考", "弱", "不强制"}:
+        return "reference"
+    if raw in {"ignore", "ignored", "off", "skip", "忽略", "忽略校对", "禁用"}:
+        return "ignore"
+    return ""
+
+
 def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
     normalized: Dict[str, List[Dict[str, str]]] = {c: [] for c in DEFAULT_GLOSSARY_CATEGORIES}
     stats = {"accepted": 0, "skipped": 0, "conflicts": 0}
     seen_by_original: Dict[str, str] = {}
 
-    def _add_entry(src_raw: Any, dst_raw: Any, category: str = "Item", info_raw: Any = "", source_raw: Any = ""):
+    def _add_entry(
+        src_raw: Any,
+        dst_raw: Any,
+        category: str = "Item",
+        info_raw: Any = "",
+        source_raw: Any = "",
+        policy_raw: Any = "",
+    ):
         src = str(src_raw).strip()
         dst = str(dst_raw).strip()
         info = str(info_raw).strip()
         source = str(source_raw).strip()
+        policy = normalize_policy(policy_raw)
         if not src or not dst:
             stats["skipped"] += 1
             return
@@ -32,6 +52,8 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
             entry["info"] = info
         if source:
             entry["source"] = source
+        if policy:
+            entry["policy"] = policy
         normalized[category].append(entry)
         stats["accepted"] += 1
 
@@ -52,7 +74,8 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
                 dst = item.get("translation", item.get("dst", ""))
                 info = item.get("info", "")
                 source = item.get("source", "")
-                _add_entry(src, dst, category=category, info_raw=info, source_raw=source)
+                policy = item.get("policy", item.get("enforcement", ""))
+                _add_entry(src, dst, category=category, info_raw=info, source_raw=source, policy_raw=policy)
         return normalized, stats
 
     for src, value in payload.items():
@@ -60,11 +83,13 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
             dst = value.get("dst", value.get("translation", ""))
             info = value.get("info", "")
             source = value.get("source", "")
+            policy = value.get("policy", value.get("enforcement", ""))
         else:
             dst = value
             info = ""
             source = ""
-        _add_entry(src, dst, category="Item", info_raw=info, source_raw=source)
+            policy = ""
+        _add_entry(src, dst, category="Item", info_raw=info, source_raw=source, policy_raw=policy)
 
     return normalized, stats
 
@@ -97,7 +122,7 @@ def merge_glossaries(
                 stats["skipped"] += 1
                 continue
             new_entry = {"original": src, "translation": dst}
-            for k in ("info", "source"):
+            for k in ("info", "source", "policy"):
                 if k in entry and entry[k]:
                     new_entry[k] = entry[k]
             merged[cat].append(new_entry)
@@ -133,6 +158,7 @@ def clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
         raw_category = item.get("category", item.get("cat", ""))
         info = str(item.get("info", "")).strip()
         source = str(item.get("source", "auto")).strip() or "auto"
+        policy = normalize_policy(item.get("policy", ""))
         if not src or not dst or len(src) < 2 or len(dst) < 2:
             continue
         if src in stop_words or dst in stop_words:
@@ -145,7 +171,10 @@ def clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
-        cleaned.append({"src": src, "dst": dst, "category": category, "info": info, "source": source})
+        cleaned_item = {"src": src, "dst": dst, "category": category, "info": info, "source": source}
+        if policy:
+            cleaned_item["policy"] = policy
+        cleaned.append(cleaned_item)
     return cleaned
 
 
@@ -203,7 +232,7 @@ def has_valid_glossary_match(context_text: str, original: str) -> bool:
 def _iter_glossary_candidates(
     glossary_snapshot: Dict[str, Any],
     categories: List[str],
-) -> Iterable[Tuple[str, str, str]]:
+) -> Iterable[Tuple[str, str, str, str, str]]:
     is_categorized = any(key in glossary_snapshot and isinstance(glossary_snapshot.get(key), list) for key in categories)
     if is_categorized:
         for category in categories:
@@ -216,8 +245,10 @@ def _iter_glossary_candidates(
                 original = str(entry.get("original", entry.get("src", ""))).strip()
                 translation = str(entry.get("translation", entry.get("dst", ""))).strip()
                 source = str(entry.get("source", "")).strip()
+                policy = normalize_policy(entry.get("policy", entry.get("enforcement", "")))
+                info = str(entry.get("info", "")).strip()
                 if original and translation:
-                    yield original, translation, source
+                    yield original, translation, source, policy, info
         return
 
     for k, v in glossary_snapshot.items():
@@ -227,11 +258,15 @@ def _iter_glossary_candidates(
         if isinstance(v, dict):
             translation = str(v.get("dst", v.get("translation", ""))).strip()
             source = str(v.get("source", "")).strip()
+            policy = normalize_policy(v.get("policy", v.get("enforcement", "")))
+            info = str(v.get("info", "")).strip()
         else:
             translation = str(v).strip()
             source = ""
+            policy = ""
+            info = ""
         if translation:
-            yield original, translation, source
+            yield original, translation, source, policy, info
 
 
 def _spans_overlap(a: Tuple[int, int], b: Tuple[int, int]) -> bool:
@@ -240,28 +275,35 @@ def _spans_overlap(a: Tuple[int, int], b: Tuple[int, int]) -> bool:
 
 def _select_matched_candidates(
     context_text: str,
-    candidates: Iterable[Tuple[str, str, str]],
+    candidates: Iterable[Tuple[str, ...]],
     max_terms: int,
 ) -> List[Dict[str, str]]:
     matched = []
     seen_original = set()
-    for original, translation, source in candidates:
+    for candidate in candidates:
+        original = candidate[0] if len(candidate) > 0 else ""
+        translation = candidate[1] if len(candidate) > 1 else ""
+        source = candidate[2] if len(candidate) > 2 else ""
+        policy = candidate[3] if len(candidate) > 3 else ""
+        info = candidate[4] if len(candidate) > 4 else ""
         original = str(original).strip()
         translation = str(translation).strip()
         source = str(source or "").strip()
+        policy = normalize_policy(policy)
+        info = str(info or "").strip()
         if not original or not translation or original in seen_original:
             continue
         spans = find_glossary_match_spans(context_text, original)
         if not spans:
             continue
         seen_original.add(original)
-        matched.append((original, translation, source, spans))
+        matched.append((original, translation, source, policy, info, spans))
 
-    matched.sort(key=lambda item: (-len(item[0]), item[3][0][0], item[0]))
+    matched.sort(key=lambda item: (-len(item[0]), item[5][0][0], item[0]))
 
     selected: List[Dict[str, str]] = []
     selected_spans: List[Tuple[int, int]] = []
-    for original, translation, source, spans in matched:
+    for original, translation, source, policy, info, spans in matched:
         span = next(
             (s for s in spans if not any(_spans_overlap(s, selected_span) for selected_span in selected_spans)),
             None,
@@ -271,6 +313,10 @@ def _select_matched_candidates(
         item = {"original": original, "translation": translation}
         if source:
             item["source"] = source
+        if policy:
+            item["policy"] = policy
+        if info:
+            item["info"] = info
         selected.append(item)
         selected_spans.append(span)
         if len(selected) >= max_terms:
@@ -278,20 +324,22 @@ def _select_matched_candidates(
     return selected
 
 
-def rebuild_glossary_index(glossary: Dict[str, Any], categories: Optional[List[str]] = None) -> Dict[str, List[Tuple[str, str, str]]]:
+def rebuild_glossary_index(glossary: Dict[str, Any], categories: Optional[List[str]] = None) -> Dict[str, List[Tuple[str, str, str, str, str]]]:
     categories = categories or DEFAULT_GLOSSARY_CATEGORIES
-    index: Dict[str, List[Tuple[str, str, str]]] = {}
+    index: Dict[str, List[Tuple[str, str, str, str, str]]] = {}
     seen_original = set()
     is_categorized = any(key in glossary and isinstance(glossary.get(key), list) for key in categories)
 
-    def _add(original: str, translation: str, source: str = "") -> None:
+    def _add(original: str, translation: str, source: str = "", policy: str = "", info: str = "") -> None:
         original = str(original).strip()
         translation = str(translation).strip()
         source = str(source or "").strip()
+        policy = normalize_policy(policy)
+        info = str(info or "").strip()
         if not original or not translation or original in seen_original:
             return
         seen_original.add(original)
-        index.setdefault(original[0], []).append((original, translation, source))
+        index.setdefault(original[0], []).append((original, translation, source, policy, info))
 
     if is_categorized:
         for category in categories:
@@ -305,16 +353,22 @@ def rebuild_glossary_index(glossary: Dict[str, Any], categories: Optional[List[s
                     entry.get("original", entry.get("src", "")),
                     entry.get("translation", entry.get("dst", "")),
                     entry.get("source", ""),
+                    entry.get("policy", entry.get("enforcement", "")),
+                    entry.get("info", ""),
                 )
     else:
         for k, v in glossary.items():
             if isinstance(v, dict):
                 translation = v.get("dst", v.get("translation", ""))
                 source = v.get("source", "")
+                policy = v.get("policy", v.get("enforcement", ""))
+                info = v.get("info", "")
             else:
                 translation = v
                 source = ""
-            _add(k, translation, source)
+                policy = ""
+                info = ""
+            _add(k, translation, source, policy, info)
 
     for entries in index.values():
         entries.sort(key=lambda item: len(item[0]), reverse=True)
@@ -326,24 +380,25 @@ def select_glossary_entries(
     glossary_snapshot: Dict[str, Any],
     categories: List[str],
     max_terms: int,
-    glossary_index: Optional[Dict[str, List[Tuple[str, str, str]]]] = None,
+    glossary_index: Optional[Dict[str, List[Tuple[str, ...]]]] = None,
 ) -> List[Dict[str, str]]:
     context_text = str(context_text or "")
     if not context_text or max_terms <= 0:
         return []
 
     if glossary_index:
-        candidates: List[Tuple[str, str, str]] = []
+        candidates: List[Tuple[str, ...]] = []
         seen_candidate = set()
         for first_char in dict.fromkeys(context_text):
             indexed = glossary_index.get(first_char)
             if not indexed:
                 continue
-            for original, translation, source in indexed:
+            for candidate in indexed:
+                original = candidate[0] if candidate else ""
                 if original in seen_candidate:
                     continue
                 seen_candidate.add(original)
-                candidates.append((original, translation, source))
+                candidates.append(candidate)
         return _select_matched_candidates(context_text, candidates, max_terms)
 
     return _select_matched_candidates(

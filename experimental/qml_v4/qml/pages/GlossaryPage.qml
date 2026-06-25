@@ -331,6 +331,7 @@ Page {
                     TableHeader { w: 104; text: "分类" }
                     TableHeader { w: 240; text: "原文" }
                     TableHeader { w: 240; text: "译文" }
+                    TableHeader { w: 132; text: "应用策略" }
                     TableHeader { w: -1; text: "备注/来源"; last: true }
                 }
 
@@ -404,6 +405,12 @@ Page {
                                 editable: cfg ? cfg.enableGlossary : true
                                 accent: true
                                 onCommit: function(text) { model.translation = text; page.dirty = true; page.refreshStats() }
+                            }
+                            PolicySelector {
+                                w: 132
+                                value: policy || "默认策略"
+                                editable: cfg ? cfg.enableGlossary : true
+                                onCommit: function(text) { model.policy = text; page.dirty = true; page.refreshStats() }
                             }
                             CellEditor {
                                 w: -1
@@ -593,6 +600,35 @@ Page {
             selectedTextColor: "white"
             selectionColor: AppPalette.accentColor
             onEditingFinished: cell.commit(text)
+        }
+    }
+
+    component PolicySelector: Rectangle {
+        id: policyCell
+        property int w: 132
+        property string value: "默认策略"
+        property bool editable: true
+        signal commit(string text)
+
+        Layout.preferredWidth: w > 0 ? w : -1
+        Layout.fillWidth: w < 0
+        Layout.fillHeight: true
+        color: "transparent"
+
+        ComboBox {
+            id: policyCombo
+            anchors.fill: parent
+            anchors.leftMargin: 6
+            anchors.rightMargin: 6
+            anchors.topMargin: 5
+            anchors.bottomMargin: 5
+            enabled: policyCell.editable
+            model: ["默认策略", "强制使用", "仅供参考", "忽略校对"]
+            currentIndex: Math.max(0, model.indexOf(policyCell.value))
+            font.pixelSize: 12
+            onActivated: function(index) {
+                policyCell.commit(model[index])
+            }
         }
     }
 }

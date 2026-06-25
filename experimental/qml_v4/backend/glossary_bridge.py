@@ -39,6 +39,7 @@ ROLE_ORIGINAL = Qt.UserRole + 2
 ROLE_TRANSLATION = Qt.UserRole + 3
 ROLE_NOTE = Qt.UserRole + 4
 ROLE_SOURCE_INDEX = Qt.UserRole + 5
+ROLE_POLICY = Qt.UserRole + 6
 
 
 class GlossaryModel(QAbstractListModel):
@@ -63,6 +64,7 @@ class GlossaryModel(QAbstractListModel):
             ROLE_TRANSLATION: b"translation",
             ROLE_NOTE: b"note",
             ROLE_SOURCE_INDEX: b"sourceIndex",
+            ROLE_POLICY: b"policy",
         }
 
     def data(self, index, role=Qt.DisplayRole):
@@ -79,6 +81,8 @@ class GlossaryModel(QAbstractListModel):
             return row.get("note", "")
         if role == ROLE_SOURCE_INDEX:
             return self._filtered[index.row()][0]
+        if role == ROLE_POLICY:
+            return self._policy_label(row.get("policy", ""))
         if role == Qt.DisplayRole:
             return row.get("original", "")
         return None
@@ -101,6 +105,8 @@ class GlossaryModel(QAbstractListModel):
             row["info"] = info
             row["source"] = source
             row["note"] = self._make_note(info, source)
+        elif role == ROLE_POLICY:
+            row["policy"] = self._policy_value(str(value))
         else:
             return False
         self._all_rows[src_idx] = row
@@ -126,6 +132,28 @@ class GlossaryModel(QAbstractListModel):
             return f"来源：{source}"
         return "未知来源"
 
+    @staticmethod
+    def _policy_value(value: str) -> str:
+        value = str(value or "").strip().lower()
+        if value in {"force", "forced", "强制", "强制使用"}:
+            return "force"
+        if value in {"reference", "ref", "weak", "参考", "仅供参考"}:
+            return "reference"
+        if value in {"ignore", "ignored", "忽略", "忽略校对"}:
+            return "ignore"
+        return ""
+
+    @classmethod
+    def _policy_label(cls, policy: str) -> str:
+        policy = cls._policy_value(policy)
+        if policy == "force":
+            return "强制使用"
+        if policy == "reference":
+            return "仅供参考"
+        if policy == "ignore":
+            return "忽略校对"
+        return "默认策略"
+
     @classmethod
     def _make_note(cls, info: str = "", source: str = "") -> str:
         parts = []
@@ -136,13 +164,22 @@ class GlossaryModel(QAbstractListModel):
         return "；".join(parts)
 
     @classmethod
-    def _make_row(cls, category: str, original: str, translation: str, info: str = "", source: str = "") -> Dict[str, str]:
+    def _make_row(
+        cls,
+        category: str,
+        original: str,
+        translation: str,
+        info: str = "",
+        source: str = "",
+        policy: str = "",
+    ) -> Dict[str, str]:
         return {
             "category": str(category or "Item").strip() or "Item",
             "original": str(original or ""),
             "translation": str(translation or ""),
             "info": str(info or "").strip(),
             "source": str(source or "").strip(),
+            "policy": cls._policy_value(policy),
             "note": cls._make_note(info, source),
         }
 
@@ -187,6 +224,9 @@ class GlossaryModel(QAbstractListModel):
             entry["info"] = info
         if source:
             entry["source"] = source
+        policy = cls._policy_value(row.get("policy", ""))
+        if policy:
+            entry["policy"] = policy
         return category, entry
 
     def load_from_disk(self):
@@ -211,8 +251,9 @@ class GlossaryModel(QAbstractListModel):
                 translation = str(entry.get("translation", "")).strip()
                 info = str(entry.get("info", "")).strip()
                 source = str(entry.get("source", "")).strip()
+                policy = str(entry.get("policy", entry.get("enforcement", ""))).strip()
                 if original and translation:
-                    rows.append(self._make_row(category, original, translation, info, source))
+                    rows.append(self._make_row(category, original, translation, info, source, policy))
         self._all_rows = rows
         self._dirty = False
         self._apply_filter()
@@ -268,7 +309,7 @@ class GlossaryModel(QAbstractListModel):
         }
 
     def add_row(self, category="Item"):
-        self._all_rows.append(self._make_row(category, "", "", "", "manual"))
+        self._all_rows.append(self._make_row(category, "", "", "", "manual", "force"))
         self._dirty = True
         self._apply_filter()
 
@@ -371,8 +412,9 @@ class GlossaryModel(QAbstractListModel):
                 continue
             searchable = " ".join(
                 str(row.get(key, ""))
-                for key in ("category", "original", "translation", "note", "info", "source")
-            ).lower()
+                for key in ("category", "original", "translation", "note", "info", "source", "policy")
+            )
+            searchable = f"{searchable} {self._policy_label(row.get('policy', ''))}".lower()
             if self._query and self._query not in searchable:
                 continue
             filtered.append((row_idx, row))
