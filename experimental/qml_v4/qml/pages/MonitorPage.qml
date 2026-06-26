@@ -599,34 +599,37 @@ Page {
                     ColumnLayout {
                         id: overviewGrid
                         width: parent.availableWidth
-                        readonly property real overviewGap: 8
-                        readonly property real overviewCardWidth: Math.max(
-                            72,
-                            (width - overviewGap * 7) / 8
-                        )
                         spacing: 8
+                        readonly property real gap: 8
+                        readonly property real itemWidth: Math.max(112, Math.floor((width - gap * 7) / 8))
 
                         RowLayout {
-                            spacing: 8
+                            Layout.fillWidth: true
+                            spacing: overviewGrid.gap
 
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "速度"; value: page.statSpeed > 0 ? page.statSpeed + "条/分" : (page.isBusy() ? "0条/分" : "--") }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "字符速度"; value: page.statCharSpeed > 0 ? page.statCharSpeed + "字/秒" : (page.isBusy() ? "0字/秒" : "--"); tone: "accent" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "API 次数"; value: page.statApiTotal > 0 ? page.statApiTotal : "--" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "Token"; value: page.statTokenTotal > 0 ? page.statTokenTotal : "--" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "失败数"; value: page.statFailCount > 0 ? page.statFailCount : "0"; tone: page.statFailCount > 0 ? "error" : "" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "成功率"; value: page.isBusy() && page.statApiTotal === 0 ? "--" : (page.statApiTotal === 0 && page.statCompleted === 0 ? "--" : page.statSuccessRate.toFixed(1) + "%"); tone: "success" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "新术语"; value: page.statTerms; tone: "amber" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "文本块"; value: page.statCompleted + " / " + (page.statTotal > 0 ? page.statTotal : "--") }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "速度"; value: page.statSpeed > 0 ? page.statSpeed + "条/分" : (page.isBusy() ? "0条/分" : "--") }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "字符速度"; value: page.statCharSpeed > 0 ? page.statCharSpeed + "字/秒" : (page.isBusy() ? "0字/秒" : "--"); tone: "accent" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "API 次数"; value: page.statApiTotal > 0 ? page.statApiTotal : "--" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "Token"; value: page.statTokenTotal > 0 ? page.statTokenTotal : "--" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "失败数"; value: page.statFailCount > 0 ? page.statFailCount : "0"; tone: page.statFailCount > 0 ? "error" : "" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "成功率"; value: page.isBusy() && page.statApiTotal === 0 ? "--" : (page.statApiTotal === 0 && page.statCompleted === 0 ? "--" : page.statSuccessRate.toFixed(1) + "%"); tone: "success" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "新术语"; value: page.statTerms; tone: "amber" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "文本块"; value: page.statCompleted + " / " + (page.statTotal > 0 ? page.statTotal : "--") }
                         }
 
                         RowLayout {
-                            spacing: 8
+                            Layout.fillWidth: true
+                            spacing: overviewGrid.gap
 
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "Prompt风格"; value: page.proofreadStyleText; tone: "amber" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "限流事件"; value: page.statDynamicLimitEvents > 0 ? page.statDynamicLimitEvents : "0"; tone: page.statDynamicLimitEvents > 0 ? "error" : "" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "运行并发"; value: page.statDynamicWorkers > 0 ? page.statDynamicWorkers : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "运行批量"; value: page.statDynamicBatchSize > 0 ? page.statDynamicBatchSize : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
-                            StatCard { cardWidth: overviewGrid.overviewCardWidth; title: "批量校对"; value: page.statProofreadBatchRequests > 0 ? (page.statProofreadBatchSuccess + " / " + page.statProofreadBatchRequests) : "--"; tone: "accent" }
+
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "Prompt风格"; value: page.proofreadStyleText; tone: "amber" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "限流事件"; value: page.statDynamicLimitEvents > 0 ? page.statDynamicLimitEvents : "0"; tone: page.statDynamicLimitEvents > 0 ? "error" : "" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "运行并发"; value: page.statDynamicWorkers > 0 ? page.statDynamicWorkers : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "运行批量"; value: page.statDynamicBatchSize > 0 ? page.statDynamicBatchSize : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
+                            StatCard { cardWidth: overviewGrid.itemWidth; title: "批量校对"; value: page.statProofreadBatchRequests > 0 ? (page.statProofreadBatchSuccess + " / " + page.statProofreadBatchRequests) : "--"; tone: "accent" }
+                            Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
+                            Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
+                            Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
                         }
                     }
                 }
@@ -1031,12 +1034,12 @@ Page {
         property string title: ""
         property var value: ""
         property string tone: ""
-        property real cardWidth: 0
+        property real cardWidth: 112
 
-        Layout.fillWidth: false
-        Layout.preferredWidth: cardWidth > 0 ? cardWidth : 72
-        Layout.minimumWidth: 72
-        Layout.preferredHeight: page.width > 760 ? 68 : 64
+        Layout.fillWidth: true
+        Layout.preferredWidth: cardWidth
+        Layout.minimumWidth: 96
+        Layout.preferredHeight: page.width > 760 ? 76 : 70
         radius: AppPalette.radiusMedium
         color: AppPalette.surfaceRaised
         border.color: AppPalette.lineColor
@@ -1066,19 +1069,19 @@ Page {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 10
-            anchors.topMargin: 17
-            spacing: 2
+            anchors.topMargin: 18
+            spacing: 4
             Label {
                 Layout.fillWidth: true
                 text: title
                 color: AppPalette.mutedText
-                font.pixelSize: 9
+                font.pixelSize: 10
                 elide: Text.ElideRight
             }
             Label {
                 text: value !== undefined ? value.toString() : "0"
                 color: parent.parent.toneColor
-                font.pixelSize: page.width > 760 ? 14 : 13
+                font.pixelSize: page.width > 760 ? 15 : 14
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
                 Layout.fillWidth: true
