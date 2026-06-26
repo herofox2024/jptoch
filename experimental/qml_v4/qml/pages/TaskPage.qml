@@ -108,11 +108,19 @@ Page {
                 color: AppPalette.cardBg
                 border.color: dropCard.hovering ? AppPalette.amberColor : AppPalette.borderColor
                 border.width: dropCard.hovering ? 2 : 1
-                scale: dropCard.hovering ? 1.012 : 1.0
+                scale: dropCard.hovering ? 1.02 : 1.0
+                y: dropCard.hovering ? -3 : 0
+                opacity: dropCard.hovering ? 1.0 : 0.98
 
                 property bool hovering: false
 
+                Behavior on y {
+                    NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                }
                 Behavior on scale {
+                    NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                }
+                Behavior on opacity {
                     NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
                 }
 
@@ -167,6 +175,10 @@ Page {
                         color: dropCard.hovering ? AppPalette.accentSoft : AppPalette.fieldBg
                         border.color: dropCard.hovering ? AppPalette.amberColor : AppPalette.lineColor
                         border.width: dropCard.hovering ? 2 : 1
+                        scale: dropCard.hovering ? 1.01 : 1.0
+                        Behavior on scale {
+                            NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                        }
 
                         Rectangle {
                             anchors.fill: parent
@@ -174,8 +186,11 @@ Page {
                             radius: 27
                             color: "transparent"
                             border.color: AppPalette.amberColor
-                            border.width: dropCard.hovering ? 1 : 0
-                            opacity: dropCard.hovering ? 0.45 : 0
+                            border.width: dropCard.hovering ? 2 : 0
+                            opacity: dropCard.hovering ? 0.62 : 0
+                            Behavior on opacity {
+                                NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                            }
                         }
 
                         ColumnLayout {

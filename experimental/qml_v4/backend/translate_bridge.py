@@ -92,7 +92,7 @@ class _TranslateWorker(QObject):
     proofreadStyleDetected = Signal(str, str, int, str)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
-    qualityStatUpdate = Signal(int, int, int, int, int, int)
+    qualityStatUpdate = Signal(int, int, int, int, int, int, int, int, int, int)
     errorDetail = Signal(str)
 
     def __init__(self, config: dict, cancel_event: threading.Event):
@@ -245,6 +245,10 @@ class _TranslateWorker(QObject):
                     int(stats.get("dynamic_limit_batch_size", cfg.get("batch_size") or 0)),
                     int(stats.get("proofread_batch_requests", 0)),
                     int(stats.get("proofread_batch_success", 0)),
+                    int(stats.get("proofread_suspicious", 0)),
+                    int(stats.get("proofread_fixed", 0)),
+                    int(stats.get("quality_retranslate", 0)),
+                    int(stats.get("japanese_residue_remaining", 0)),
                 )
 
             def on_progress(completed, total):
@@ -555,7 +559,7 @@ class TranslateBridge(QObject):
     proofreadStyleDetected = Signal(str, str, int, str)
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
-    qualityStatUpdate = Signal(int, int, int, int, int, int)
+    qualityStatUpdate = Signal(int, int, int, int, int, int, int, int, int, int)
     finished = Signal(str)
     failed = Signal(str)
     errorDetail = Signal(str)

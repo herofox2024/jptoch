@@ -691,6 +691,7 @@ class JaZhTranslator:
             "proofread_suspicious": 0,
             "proofread_fixed": 0,
             "proofread_rejected": 0,
+            "quality_retranslate": 0,
             "translation_incomplete": 0,
             "japanese_residue_remaining": 0,
             "dynamic_limit_events": 0,
@@ -743,33 +744,57 @@ class JaZhTranslator:
 
     @staticmethod
     def _extract_json_object(raw: str) -> Optional[dict]:
-        """从模型返回中提取 JSON 对象，兼容 ```json 代码块与前后文本。"""
+        """从模型返回中提取 JSON，兼容对象、数组、代码块与前后说明文字。"""
         if not raw:
             return None
         text = raw.strip()
-        try:
-            obj = json.loads(text)
-            return obj if isinstance(obj, dict) else None
-        except (json.JSONDecodeError, ValueError):
-            pass
 
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
-        if m:
+        def coerce(value: Any) -> Optional[dict]:
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, list):
+                return {"translations": value, "new_terms": []}
+            return None
+
+        def parse_candidate(candidate: str) -> Optional[dict]:
+            candidate = (candidate or "").strip()
+            if not candidate:
+                return None
             try:
-                obj = json.loads(m.group(1).strip())
-                return obj if isinstance(obj, dict) else None
+                parsed = json.loads(candidate)
+                coerced = coerce(parsed)
+                if coerced is not None:
+                    return coerced
             except (json.JSONDecodeError, ValueError):
                 pass
+            decoder = json.JSONDecoder()
+            for match in re.finditer(r"[\{\[]", candidate):
+                try:
+                    parsed, _ = decoder.raw_decode(candidate[match.start():])
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                coerced = coerce(parsed)
+                if coerced is not None:
+                    return coerced
+            return None
 
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                obj = json.loads(text[start:end + 1].strip())
-                return obj if isinstance(obj, dict) else None
-            except (json.JSONDecodeError, ValueError):
-                return None
+        parsed = parse_candidate(text)
+        if parsed is not None:
+            return parsed
+
+        for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE):
+            parsed = parse_candidate(match.group(1))
+            if parsed is not None:
+                return parsed
         return None
+
+    @staticmethod
+    def _response_snippet(raw: str, limit: int = 240) -> str:
+        """Compact API response content for local diagnostics."""
+        text = re.sub(r"\s+", " ", (raw or "").strip())
+        if len(text) > limit:
+            return text[:limit] + "..."
+        return text
 
     def _inc_stat(self, key: str, delta: int = 1):
         with self._stats_lock:
@@ -793,6 +818,8 @@ class JaZhTranslator:
             self._dynamic_limit_events = 0
         if not hasattr(self, "_dynamic_success_count"):
             self._dynamic_success_count = 0
+        if not hasattr(self, "_dynamic_format_failures"):
+            self._dynamic_format_failures = 0
 
     @staticmethod
     def _scale_limit(value: int, factor: float) -> int:
@@ -817,9 +844,10 @@ class JaZhTranslator:
             old_batch = max(1, int(self._dynamic_batch_size))
             self._dynamic_limit_events += 1
             if kind == "format":
-                worker_factor = 1.0
-                batch_factor = 0.75
-                backoff_seconds = 1.0
+                self._dynamic_format_failures += 1
+                worker_factor = 0.85
+                batch_factor = 0.5
+                backoff_seconds = min(20.0, 1.5 * self._dynamic_format_failures)
             elif kind == "timeout":
                 worker_factor = 0.75
                 batch_factor = 0.75
@@ -831,6 +859,10 @@ class JaZhTranslator:
 
             new_workers = old_workers if worker_factor >= 1.0 else self._scale_limit(old_workers, worker_factor)
             new_batch = self._scale_limit(old_batch, batch_factor)
+            if kind == "format" and (self._dynamic_format_failures >= 3 or old_batch <= 3):
+                # Repeated malformed JSON means batch JSON is not reliable for the current model/run.
+                # Drop to single-item batches; translate_one_batch then uses the normal single-text path.
+                new_batch = 1
             self._dynamic_max_workers = max(1, new_workers)
             self._dynamic_batch_size = max(1, new_batch)
             self._dynamic_backoff_until = max(
@@ -844,8 +876,10 @@ class JaZhTranslator:
             self._inc_stat("rate_limit_events")
         self._set_stat("dynamic_limit_workers", self._current_dynamic_workers())
         self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
+        event_label = "API 动态格式降级触发" if kind == "format" else "API 动态限流触发"
         logger.warning(
-            "API 动态限流触发: %s；运行时并发 %s→%s，批量 %s→%s",
+            "%s: %s；运行时并发 %s→%s，批量 %s→%s",
+            event_label,
             reason,
             old_workers,
             self._current_dynamic_workers(),
@@ -869,6 +903,7 @@ class JaZhTranslator:
             self._dynamic_success_count = 0
             self._dynamic_max_workers = min(base_workers, int(self._dynamic_max_workers) + 1)
             self._dynamic_batch_size = min(base_batch, int(self._dynamic_batch_size) + 1)
+            self._dynamic_format_failures = max(0, int(getattr(self, "_dynamic_format_failures", 0)) - 1)
 
         self._set_stat("dynamic_limit_workers", self._current_dynamic_workers())
         self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
@@ -1461,30 +1496,39 @@ class JaZhTranslator:
                 raw = (message.get("content", "") or "").strip()
                 obj = self._extract_json_object(raw)
                 if not isinstance(obj, dict):
+                    logger.warning("批量校对 JSON 解析失败，响应摘要: %s", self._response_snippet(raw))
                     self._record_dynamic_limit_event("批量校对 JSON 解析失败", kind="format")
                     return {}
                 arr = obj.get("items") or obj.get("translations")
                 if not isinstance(arr, list):
+                    logger.warning("批量校对缺少 items，响应摘要: %s", self._response_snippet(raw))
                     self._record_dynamic_limit_event("批量校对缺少 items", kind="format")
                     return {}
 
                 revised_by_idx: Dict[int, str] = {}
-                for result_item in arr:
-                    if not isinstance(result_item, dict):
-                        continue
-                    try:
-                        idx = int(result_item.get("idx"))
-                    except (TypeError, ValueError):
+                for position, result_item in enumerate(arr):
+                    if isinstance(result_item, str):
+                        idx = position
+                        revised_raw = result_item
+                    elif isinstance(result_item, dict):
+                        try:
+                            idx = int(result_item.get("idx", result_item.get("index", position)))
+                        except (TypeError, ValueError):
+                            continue
+                        revised_raw = (
+                            result_item.get("revised")
+                            or result_item.get("zh")
+                            or result_item.get("translation")
+                            or result_item.get("translated")
+                            or result_item.get("text")
+                            or result_item.get("cn")
+                            or result_item.get("中文")
+                            or ""
+                        )
+                    else:
                         continue
                     if idx not in draft_by_idx:
                         continue
-                    revised_raw = (
-                        result_item.get("revised")
-                        or result_item.get("zh")
-                        or result_item.get("translation")
-                        or result_item.get("text")
-                        or ""
-                    )
                     if not isinstance(revised_raw, str) or not revised_raw.strip():
                         continue
                     cleaned = self._strip_proofread_explanations(revised_raw, fallback=draft_by_idx[idx])
@@ -2481,6 +2525,7 @@ JSON 顶层字段：
                 obj = self._extract_json_object(raw)
                 if not isinstance(obj, dict):
                     self._inc_stat("batch_json_parse_fail")
+                    logger.warning("批量 JSON 解析失败，响应摘要: %s", self._response_snippet(raw))
                     self._record_dynamic_limit_event("批量 JSON 解析失败", kind="format")
                     return BatchJsonResult(
                         translations=None, missing_indices=list(range(len(texts))),
@@ -2490,6 +2535,7 @@ JSON 顶层字段：
                 arr = obj.get("translations") or obj.get("items")
                 if not isinstance(arr, list):
                     self._inc_stat("batch_json_parse_fail")
+                    logger.warning("批量 JSON 缺少 translations/items，响应摘要: %s", self._response_snippet(raw))
                     self._record_dynamic_limit_event("批量 JSON 缺少 translations/items", kind="format")
                     return BatchJsonResult(
                         translations=None, missing_indices=list(range(len(texts))),
@@ -2500,15 +2546,29 @@ JSON 顶层字段：
                 out = [None] * len(texts)
                 valid_indices = set()
 
-                for item in arr:
-                    if not isinstance(item, dict):
-                        continue  # 跳过非 dict 项
-                    idx = item.get("idx")
-                    zh = item.get("zh")
+                for position, item in enumerate(arr):
+                    if isinstance(item, str):
+                        idx = position
+                        zh = item
+                    elif isinstance(item, dict):
+                        idx = item.get("idx", item.get("index", item.get("id", position)))
+                        if isinstance(idx, str) and idx.strip().isdigit():
+                            idx = int(idx.strip())
+                        zh = (
+                            item.get("zh")
+                            or item.get("translation")
+                            or item.get("translated")
+                            or item.get("text")
+                            or item.get("cn")
+                            or item.get("中文")
+                            or item.get("dst")
+                        )
+                    else:
+                        continue
                     if not isinstance(idx, int) or idx < 0 or idx >= len(texts):
-                        continue  # 跳过越界 idx（幻觉）
+                        continue
                     if not isinstance(zh, str) or not zh.strip():
-                        continue  # 跳过空译文
+                        continue
                     out[idx] = zh.strip()
                     valid_indices.add(idx)
 
@@ -3218,6 +3278,8 @@ JSON 顶层字段：
 
             if proofread_issues:
                 self._inc_stat("proofread_suspicious", len(proofread_issues))
+            if suspicious_idx:
+                self._inc_stat("quality_retranslate", len(suspicious_idx))
 
             all_repair_idx = suspicious_idx | set(proofread_issues)
             if not all_repair_idx:
@@ -3430,6 +3492,7 @@ JSON 顶层字段：
 
         executor = ThreadPoolExecutor(max_workers=max(1, self.max_workers))
         futures: Dict[Any, List[str]] = {}
+        future_order = deque()
         batch_queue = deque(batches)
 
         def pop_next_dynamic_batch() -> List[str]:
@@ -3444,16 +3507,42 @@ JSON 顶层字段：
             return batch
 
         def submit_available_batches() -> None:
-            while batch_queue and len(futures) < self._current_dynamic_workers():
+            current_limit = self._current_dynamic_workers()
+            while batch_queue and len(futures) < current_limit:
                 if self.cancel_event.is_set():
                     raise RuntimeError("翻译已取消")
                 batch = pop_next_dynamic_batch()
                 if not batch:
                     continue
-                futures[executor.submit(translate_one_batch, batch)] = batch
+                future = executor.submit(translate_one_batch, batch)
+                futures[future] = batch
+                future_order.append(future)
+                current_limit = self._current_dynamic_workers()
+
+        def trim_excess_futures() -> None:
+            """Cancel queued futures when dynamic concurrency shrinks."""
+            limit = self._current_dynamic_workers()
+            if len(futures) <= limit:
+                return
+            kept = deque()
+            cancelled = 0
+            while future_order and len(futures) > limit:
+                future = future_order.pop()
+                if future.done():
+                    continue
+                if future.cancel():
+                    futures.pop(future, None)
+                    cancelled += 1
+                    continue
+                kept.appendleft(future)
+            while kept:
+                future_order.appendleft(kept.popleft())
+            if cancelled:
+                logger.info(f"动态并发收缩: 已取消 {cancelled} 个排队任务，当前上限={limit}")
 
         try:
             submit_available_batches()
+            trim_excess_futures()
 
             # Runtime throttling requires incremental submission instead of queuing all batches at once.
             while futures:
@@ -3465,10 +3554,12 @@ JSON 顶层字段：
 
                 done, _ = wait(set(futures), timeout=0.2, return_when=FIRST_COMPLETED)
                 if not done:
+                    trim_excess_futures()
                     submit_available_batches()
                     continue
 
                 for future in done:
+                    future_order = deque(f for f in future_order if f is not future)
                     batch = futures.pop(future)
                     try:
                         batch_results = future.result()
@@ -3524,6 +3615,7 @@ JSON 顶层字段：
                                 progress_callback(completed, total)
 
                 submit_available_batches()
+                trim_excess_futures()
         finally:
             executor.shutdown(wait=not self.cancel_event.is_set(), cancel_futures=True)
 

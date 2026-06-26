@@ -188,10 +188,13 @@ def main():
     )
     title_font = _choose_font_family(
         [
+            "Noto Serif CJK SC",
+            "Source Han Serif SC",
+            "Songti SC",
+            "STSong",
             "HarmonyOS Sans SC",
             "Microsoft YaHei UI",
             "Microsoft YaHei",
-            "Noto Sans SC",
             "Noto Sans CJK SC",
         ],
         fallback=sans_font,

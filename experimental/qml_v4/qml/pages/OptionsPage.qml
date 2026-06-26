@@ -111,525 +111,575 @@ Page {
         }
     }
 
-    Flickable {
-        id: settingsScroll
+    ColumnLayout {
         anchors.fill: parent
-        clip: true
-        contentWidth: width
-        contentHeight: settingsColumn.implicitHeight + 48
-        boundsBehavior: Flickable.StopAtBounds
+        anchors.margins: 24
+        spacing: 14
 
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        Label {
+            text: "翻译设置"
+            color: AppPalette.textColor
+            font.family: page.titleFont
+            font.pixelSize: 28
+            font.weight: Font.DemiBold
+        }
 
-        ColumnLayout {
-            id: settingsColumn
-            x: 24
-            y: 24
-            width: Math.max(settingsScroll.width - 48, 640)
-            spacing: 14
-
-            Label {
-                text: "翻译设置"
-                color: AppPalette.textColor
-                font.family: page.titleFont
-                font.pixelSize: 28
-                font.weight: Font.DemiBold
+        TabBar {
+            id: settingsTabs
+            Layout.fillWidth: true
+            background: Rectangle {
+                radius: 18
+                color: AppPalette.cardAlt
+                border.color: AppPalette.lineColor
             }
+            TabButton { text: "性能" }
+            TabButton { text: "风格与校对" }
+            TabButton { text: "缓存" }
+            TabButton { text: "界面" }
+            TabButton { text: "更新" }
+        }
 
-            GroupBox {
-                title: "性能参数"
-                Layout.fillWidth: true
+        StackLayout {
+            id: settingsStack
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            currentIndex: settingsTabs.currentIndex
 
-                GridLayout {
-                    width: parent.width
-                    columns: 2
-                    rowSpacing: 10
-                    columnSpacing: 16
+            SettingsPane {
+                GroupBox {
+                    title: "性能参数"
+                    Layout.fillWidth: true
 
-                    Label { text: "最大并发数" }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Slider {
-                            id: maxWorkersSlider
-                            from: 1
-                            to: 25
-                            value: cfg ? cfg.maxWorkers : 5
+                    GridLayout {
+                        width: parent.width
+                        columns: 2
+                        rowSpacing: 10
+                        columnSpacing: 16
+
+                        Label { text: "最大并发数" }
+                        RowLayout {
                             Layout.fillWidth: true
-                            onMoved: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.maxWorkers = value
-                                    page.markCustom()
+                            Slider {
+                                id: maxWorkersSlider
+                                from: 1
+                                to: 25
+                                value: cfg ? cfg.maxWorkers : 5
+                                Layout.fillWidth: true
+                                onMoved: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.maxWorkers = value
+                                        page.markCustom()
+                                    }
+                                }
+                            }
+                            SpinBox {
+                                id: maxWorkersSpin
+                                from: 1
+                                to: 25
+                                value: cfg ? cfg.maxWorkers : 5
+                                editable: true
+                                onValueChanged: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.maxWorkers = value
+                                        page.markCustom()
+                                    }
                                 }
                             }
                         }
-                        SpinBox {
-                            id: maxWorkersSpin
-                            from: 1
-                            to: 25
-                            value: cfg ? cfg.maxWorkers : 5
-                            editable: true
-                            onValueChanged: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.maxWorkers = value
-                                    page.markCustom()
-                                }
-                            }
-                        }
-                    }
 
-                    Label { text: "批次大小" }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Slider {
-                            id: batchSizeSlider
-                            from: 1
-                            to: 15
-                            value: cfg ? cfg.batchSize : 4
+                        Label { text: "批次大小" }
+                        RowLayout {
                             Layout.fillWidth: true
-                            onMoved: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.batchSize = value
-                                    page.markCustom()
+                            Slider {
+                                id: batchSizeSlider
+                                from: 1
+                                to: 15
+                                value: cfg ? cfg.batchSize : 4
+                                Layout.fillWidth: true
+                                onMoved: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.batchSize = value
+                                        page.markCustom()
+                                    }
+                                }
+                            }
+                            SpinBox {
+                                id: batchSizeSpin
+                                from: 1
+                                to: 15
+                                value: cfg ? cfg.batchSize : 4
+                                editable: true
+                                onValueChanged: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.batchSize = value
+                                        page.markCustom()
+                                    }
                                 }
                             }
                         }
-                        SpinBox {
-                            id: batchSizeSpin
-                            from: 1
-                            to: 15
-                            value: cfg ? cfg.batchSize : 4
-                            editable: true
-                            onValueChanged: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.batchSize = value
-                                    page.markCustom()
-                                }
-                            }
-                        }
-                    }
 
-                    Label { text: "批次最大长度" }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Slider {
-                            id: maxBatchLengthSlider
-                            from: 1
-                            to: 8000
-                            stepSize: 100
-                            value: cfg ? cfg.maxBatchLength : 800
+                        Label { text: "批次最大长度" }
+                        RowLayout {
                             Layout.fillWidth: true
-                            onMoved: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.maxBatchLength = value
-                                    page.markCustom()
+                            Slider {
+                                id: maxBatchLengthSlider
+                                from: 1
+                                to: 8000
+                                stepSize: 100
+                                value: cfg ? cfg.maxBatchLength : 800
+                                Layout.fillWidth: true
+                                onMoved: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.maxBatchLength = value
+                                        page.markCustom()
+                                    }
+                                }
+                            }
+                            SpinBox {
+                                id: maxBatchLengthSpin
+                                from: 1
+                                to: 8000
+                                stepSize: 100
+                                value: cfg ? cfg.maxBatchLength : 800
+                                editable: true
+                                onValueChanged: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.maxBatchLength = value
+                                        page.markCustom()
+                                    }
                                 }
                             }
                         }
-                        SpinBox {
-                            id: maxBatchLengthSpin
-                            from: 1
-                            to: 8000
-                            stepSize: 100
-                            value: cfg ? cfg.maxBatchLength : 800
-                            editable: true
-                            onValueChanged: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.maxBatchLength = value
-                                    page.markCustom()
-                                }
-                            }
-                        }
-                    }
 
-                    Label { text: "单条上限" }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Slider {
-                            id: maxTextSizeSlider
-                            from: 1
-                            to: 1000
-                            value: cfg ? cfg.maxTextSizeForBatch : 200
+                        Label { text: "单条上限" }
+                        RowLayout {
                             Layout.fillWidth: true
-                            onMoved: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.maxTextSizeForBatch = value
-                                    page.markCustom()
+                            Slider {
+                                id: maxTextSizeSlider
+                                from: 1
+                                to: 1000
+                                value: cfg ? cfg.maxTextSizeForBatch : 200
+                                Layout.fillWidth: true
+                                onMoved: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.maxTextSizeForBatch = value
+                                        page.markCustom()
+                                    }
+                                }
+                            }
+                            SpinBox {
+                                id: maxTextSizeSpin
+                                from: 1
+                                to: 1000
+                                value: cfg ? cfg.maxTextSizeForBatch : 200
+                                editable: true
+                                onValueChanged: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.maxTextSizeForBatch = value
+                                        page.markCustom()
+                                    }
                                 }
                             }
                         }
-                        SpinBox {
-                            id: maxTextSizeSpin
-                            from: 1
-                            to: 1000
-                            value: cfg ? cfg.maxTextSizeForBatch : 200
-                            editable: true
-                            onValueChanged: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.maxTextSizeForBatch = value
-                                    page.markCustom()
-                                }
-                            }
-                        }
-                    }
 
-                    Label { text: "API 超时(秒)" }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Slider {
-                            id: apiTimeoutSlider
-                            from: 1
-                            to: 300
-                            value: cfg ? cfg.apiTimeout : 120
+                        Label { text: "API 超时(秒)" }
+                        RowLayout {
                             Layout.fillWidth: true
-                            onMoved: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.apiTimeout = value
-                                    page.markCustom()
+                            Slider {
+                                id: apiTimeoutSlider
+                                from: 1
+                                to: 300
+                                value: cfg ? cfg.apiTimeout : 120
+                                Layout.fillWidth: true
+                                onMoved: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.apiTimeout = value
+                                        page.markCustom()
+                                    }
                                 }
                             }
-                        }
-                        SpinBox {
-                            id: apiTimeoutSpin
-                            from: 1
-                            to: 300
-                            value: cfg ? cfg.apiTimeout : 120
-                            editable: true
-                            onValueChanged: {
-                                if (!page.applyingPreset) {
-                                    if (cfg) cfg.apiTimeout = value
-                                    page.markCustom()
+                            SpinBox {
+                                id: apiTimeoutSpin
+                                from: 1
+                                to: 300
+                                value: cfg ? cfg.apiTimeout : 120
+                                editable: true
+                                onValueChanged: {
+                                    if (!page.applyingPreset) {
+                                        if (cfg) cfg.apiTimeout = value
+                                        page.markCustom()
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            GroupBox {
-                title: "性能预设"
-                Layout.fillWidth: true
+                GroupBox {
+                    title: "性能预设"
+                    Layout.fillWidth: true
 
-                ColumnLayout {
-                    width: parent.width
-                    spacing: 8
-
-                    Flow {
-                        Layout.fillWidth: true
+                    ColumnLayout {
                         width: parent.width
                         spacing: 8
 
-                        Repeater {
-                            model: [
-                                { key: "default", label: "默认" },
-                                { key: "balanced", label: "适中" },
-                                { key: "extreme", label: "极端" },
-                                { key: "glm_free", label: "智谱免费版" },
-                                { key: "gemini_free", label: "Gemini 免费版" },
-                                { key: "deepseek_paid", label: "DeepSeek 付费版" }
-                            ]
-                            Button {
-                                text: modelData.label
-                                checkable: true
-                                checked: page.activePreset === modelData.key
-                                onClicked: page.applyPreset(modelData.key)
-                            }
-                        }
-                    }
-
-                    Label {
-                        id: presetHint
-                        text: "点击上方预设应用推荐参数"
-                        font.pixelSize: 12
-                        color: AppPalette.mutedText
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-                }
-            }
-
-            GroupBox {
-                title: "阅读方向"
-                Layout.fillWidth: true
-
-                RowLayout {
-                    RadioButton {
-                        text: "中文习惯"
-                        checked: cfg ? cfg.direction === "zh" : true
-                        onClicked: { if (cfg) cfg.direction = "zh" }
-                    }
-                    RadioButton {
-                        text: "保持原版"
-                        checked: cfg ? cfg.direction === "ja" : false
-                        onClicked: { if (cfg) cfg.direction = "ja" }
-                    }
-                }
-            }
-
-            GroupBox {
-                title: "翻译与校对 Prompt 风格"
-                Layout.fillWidth: true
-
-                ColumnLayout {
-                    width: parent.width
-                    spacing: 10
-
-                    CheckBox {
-                        text: "启用译后校对"
-                        checked: cfg ? cfg.enableProofread : true
-                        onCheckedChanged: {
-                            if (cfg) {
-                                cfg.enableProofread = checked
-                                cfg.saveToDisk()
-                            }
-                        }
-                    }
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        columns: page.width > 820 ? 4 : 2
-                        rowSpacing: 8
-                        columnSpacing: 12
-
-                        Label { text: "作品类型" }
-                        ComboBox {
-                            id: proofreadGenreCombo
+                        Flow {
                             Layout.fillWidth: true
-                            model: page.proofreadGenreLabels
-                            currentIndex: page.proofreadGenreIndex(cfg ? cfg.proofreadGenre : "auto")
-                            onActivated: function(index) {
-                                if (cfg) {
-                                    cfg.proofreadGenre = page.proofreadGenreValue(index)
-                                    cfg.saveToDisk()
+                            width: parent.width
+                            spacing: 8
+
+                            Repeater {
+                                model: [
+                                    { key: "default", label: "默认" },
+                                    { key: "balanced", label: "适中" },
+                                    { key: "extreme", label: "极端" },
+                                    { key: "glm_free", label: "智谱免费版" },
+                                    { key: "gemini_free", label: "Gemini 免费版" },
+                                    { key: "deepseek_paid", label: "DeepSeek 付费版" }
+                                ]
+                                Button {
+                                    text: modelData.label
+                                    checkable: true
+                                    checked: page.activePreset === modelData.key
+                                    onClicked: page.applyPreset(modelData.key)
                                 }
                             }
                         }
 
-                        Label { text: "叙事口吻" }
-                        ComboBox {
-                            id: proofreadToneCombo
-                            Layout.fillWidth: true
-                            model: page.proofreadToneLabels
-                            currentIndex: page.proofreadToneIndex(cfg ? cfg.proofreadTone : "auto")
-                            onActivated: function(index) {
-                                if (cfg) {
-                                    cfg.proofreadTone = page.proofreadToneValue(index)
-                                    cfg.saveToDisk()
-                                }
-                            }
-                        }
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: "作品类型和叙事口吻会影响初译 Prompt；启用译后校对后，也会影响校对 Prompt。自动识别会在开始翻译后根据书名、目录和样本文本生成结果，识别不确定时回退到“通用小说 + 中性口吻”。"
-                        color: AppPalette.mutedText
-                        font.pixelSize: 12
-                        wrapMode: Text.WordWrap
-                    }
-                }
-            }
-
-            GroupBox {
-                title: "界面与推理"
-                Layout.fillWidth: true
-
-                Flow {
-                    width: parent.width
-                    spacing: 16
-
-                    Label { text: "主题:" }
-                    ComboBox {
-                        model: ThemeRegistry.labels()
-                        currentIndex: ThemeRegistry.indexFromName(cfg ? cfg.theme : "light")
-                        onActivated: function(index) {
-                            var name = ThemeRegistry.nameFromIndex(index)
-                            if (cfg) cfg.theme = name
-                        }
-                    }
-                    CheckBox {
-                        text: "开启深度思考"
-                        checked: cfg ? cfg.enableThinking : false
-                        onCheckedChanged: { if (cfg) cfg.enableThinking = checked }
-                    }
-                }
-            }
-
-            GroupBox {
-                title: "校对模型与缓存"
-                Layout.fillWidth: true
-
-                ColumnLayout {
-                    width: parent.width
-                    spacing: 10
-
-                    Label {
-                        text: "校对可使用独立供应商和模型。跨模型缓存只复用已经过校对的译文，避免换模型时误用未验证旧译文。"
-                        color: AppPalette.mutedText
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 12
-                        Layout.fillWidth: true
-                    }
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        columns: page.width > 820 ? 4 : 2
-                        rowSpacing: 8
-                        columnSpacing: 12
-
                         Label {
-                            text: "校对供应商"
-                        }
-                        ComboBox {
-                            id: proofreadProviderCombo
+                            id: presetHint
+                            text: "点击上方预设应用推荐参数"
+                            font.pixelSize: 12
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
                             Layout.fillWidth: true
-                            model: page.proofreadProviderLabels
-                            currentIndex: page.proofreadProviderIndex(cfg ? cfg.proofreadProvider : "")
-                            onActivated: function(index) {
-                                if (!cfg) return
-                                var provider = page.proofreadProviderValue(index)
-                                cfg.proofreadProvider = provider
-                                if (provider === "") {
-                                    cfg.proofreadApiUrl = ""
-                                    cfg.proofreadModel = ""
-                                } else {
-                                    var defaults = cfg.getProviderDefaults(provider)
-                                    cfg.proofreadApiUrl = defaults.url || ""
-                                    cfg.proofreadModel = defaults.model || ""
-                                }
-                                cfg.saveToDisk()
-                            }
-                        }
-
-                        Label {
-                            text: "校对 API Key"
-                        }
-                        TextField {
-                            id: proofreadApiKeyField
-                            Layout.fillWidth: true
-                            placeholderText: "留空则使用翻译 API Key"
-                            text: cfg ? cfg.proofreadApiKey : ""
-                            echoMode: TextInput.Password
-                            selectByMouse: true
-                            onTextChanged: { if (cfg) cfg.proofreadApiKey = text }
-                            onEditingFinished: { if (cfg) cfg.saveToDisk() }
-                        }
-
-                        Label {
-                            text: "校对 Base URL"
-                        }
-                        TextField {
-                            id: proofreadApiUrlField
-                            Layout.fillWidth: true
-                            placeholderText: "留空则使用翻译 Base URL"
-                            text: cfg ? cfg.proofreadApiUrl : ""
-                            selectByMouse: true
-                            onTextChanged: { if (cfg) cfg.proofreadApiUrl = text }
-                            onEditingFinished: { if (cfg) cfg.saveToDisk() }
-                        }
-
-                        Label {
-                            text: "校对模型名"
-                        }
-                        TextField {
-                            id: proofreadModelField
-                            Layout.fillWidth: true
-                            placeholderText: "留空则使用翻译模型"
-                            text: cfg ? cfg.proofreadModel : ""
-                            selectByMouse: true
-                            onTextChanged: { if (cfg) cfg.proofreadModel = text }
-                            onEditingFinished: { if (cfg) cfg.saveToDisk() }
-                        }
-                    }
-
-                    CheckBox {
-                        text: "允许跨模型复用已校对译文缓存"
-                        checked: cfg ? cfg.allowTextCacheReuse : false
-                        onCheckedChanged: {
-                            if (cfg) {
-                                cfg.allowTextCacheReuse = checked
-                                cfg.saveToDisk()
-                            }
                         }
                     }
                 }
             }
 
-            GroupBox {
-                title: "软件更新"
-                Layout.fillWidth: true
-
-                ColumnLayout {
-                    width: parent.width
-                    spacing: 10
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: "当前版本：V" + (page.updater ? page.updater.currentVersion : "未知")
-                        color: AppPalette.textColor
-                        font.pixelSize: 14
-                        font.weight: Font.DemiBold
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: page.updateStatus
-                        color: AppPalette.mutedText
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 12
-                    }
-
-                    ProgressBar {
-                        Layout.fillWidth: true
-                        visible: page.updater && page.updater.downloading
-                        from: 0
-                        to: 100
-                        value: page.updateDownloadPercent
-                    }
+            SettingsPane {
+                GroupBox {
+                    title: "阅读方向"
+                    Layout.fillWidth: true
 
                     RowLayout {
-                        Layout.fillWidth: true
+                        RadioButton {
+                            text: "中文习惯"
+                            checked: cfg ? cfg.direction === "zh" : true
+                            onClicked: { if (cfg) cfg.direction = "zh" }
+                        }
+                        RadioButton {
+                            text: "保持原版"
+                            checked: cfg ? cfg.direction === "ja" : false
+                            onClicked: { if (cfg) cfg.direction = "ja" }
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: "翻译与校对 Prompt 风格"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
                         spacing: 10
 
-                        Button {
-                            text: page.updater && page.updater.checking ? "检查中..." : "检查更新"
-                            enabled: page.updater && !page.updaterBusy
-                            onClicked: page.startUpdateCheck()
+                        CheckBox {
+                            text: "启用译后校对"
+                            checked: cfg ? cfg.enableProofread : true
+                            onCheckedChanged: {
+                                if (cfg) {
+                                    cfg.enableProofread = checked
+                                    cfg.saveToDisk()
+                                }
+                            }
                         }
 
-                        Button {
-                            text: "打开发布页"
-                            enabled: page.updater && !page.updater.downloading
-                            onClicked: page.openUpdateRelease()
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: page.width > 820 ? 4 : 2
+                            rowSpacing: 8
+                            columnSpacing: 12
+
+                            Label { text: "作品类型" }
+                            ComboBox {
+                                id: proofreadGenreCombo
+                                Layout.fillWidth: true
+                                model: page.proofreadGenreLabels
+                                currentIndex: page.proofreadGenreIndex(cfg ? cfg.proofreadGenre : "auto")
+                                onActivated: function(index) {
+                                    if (cfg) {
+                                        cfg.proofreadGenre = page.proofreadGenreValue(index)
+                                        cfg.saveToDisk()
+                                    }
+                                }
+                            }
+
+                            Label { text: "叙事口吻" }
+                            ComboBox {
+                                id: proofreadToneCombo
+                                Layout.fillWidth: true
+                                model: page.proofreadToneLabels
+                                currentIndex: page.proofreadToneIndex(cfg ? cfg.proofreadTone : "auto")
+                                onActivated: function(index) {
+                                    if (cfg) {
+                                        cfg.proofreadTone = page.proofreadToneValue(index)
+                                        cfg.saveToDisk()
+                                    }
+                                }
+                            }
                         }
 
-                        Button {
-                            text: page.updater && page.updater.downloading
-                                  ? ("下载中 " + page.updateDownloadPercent + "%")
-                                  : "下载并安装"
-                            highlighted: page.hasInstallerAsset() && page.updateInfo.isNewer
-                            enabled: page.updater
-                                     && page.hasInstallerAsset()
-                                     && page.updateInfo.isNewer
-                                     && !page.updaterBusy
-                            onClicked: page.startUpdateDownload()
+                        Label {
+                            Layout.fillWidth: true
+                            text: "作品类型和叙事口吻会影响初译 Prompt；启用译后校对后，也会影响校对 Prompt。自动识别会在开始翻译后根据书名、目录和样本文本生成结果，识别不确定时回退到“通用小说 + 中性口吻”。"
+                            color: AppPalette.mutedText
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
                         }
-
-                        Item { Layout.fillWidth: true }
                     }
+                }
 
-                    Label {
-                        Layout.fillWidth: true
-                        text: "说明：检查更新不需要登录 GitHub；下载完成后会启动安装程序，并退出当前软件。"
-                        color: AppPalette.mutedText
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 12
+                GroupBox {
+                    title: "校对模型"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 10
+
+                        Label {
+                            text: "校对可使用独立供应商和模型。跨模型缓存只复用已经过校对的译文，避免换模型时误用未验证旧译文。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: page.width > 820 ? 4 : 2
+                            rowSpacing: 8
+                            columnSpacing: 12
+
+                            Label {
+                                text: "校对供应商"
+                            }
+                            ComboBox {
+                                id: proofreadProviderCombo
+                                Layout.fillWidth: true
+                                model: page.proofreadProviderLabels
+                                currentIndex: page.proofreadProviderIndex(cfg ? cfg.proofreadProvider : "")
+                                onActivated: function(index) {
+                                    if (!cfg) return
+                                    var provider = page.proofreadProviderValue(index)
+                                    cfg.proofreadProvider = provider
+                                    if (provider === "") {
+                                        cfg.proofreadApiUrl = ""
+                                        cfg.proofreadModel = ""
+                                    } else {
+                                        var defaults = cfg.getProviderDefaults(provider)
+                                        cfg.proofreadApiUrl = defaults.url || ""
+                                        cfg.proofreadModel = defaults.model || ""
+                                    }
+                                    cfg.saveToDisk()
+                                }
+                            }
+
+                            Label {
+                                text: "校对 API Key"
+                            }
+                            TextField {
+                                id: proofreadApiKeyField
+                                Layout.fillWidth: true
+                                placeholderText: "留空则使用翻译 API Key"
+                                text: cfg ? cfg.proofreadApiKey : ""
+                                echoMode: TextInput.Password
+                                selectByMouse: true
+                                onTextChanged: { if (cfg) cfg.proofreadApiKey = text }
+                                onEditingFinished: { if (cfg) cfg.saveToDisk() }
+                            }
+
+                            Label {
+                                text: "校对 Base URL"
+                            }
+                            TextField {
+                                id: proofreadApiUrlField
+                                Layout.fillWidth: true
+                                placeholderText: "留空则使用翻译 Base URL"
+                                text: cfg ? cfg.proofreadApiUrl : ""
+                                selectByMouse: true
+                                onTextChanged: { if (cfg) cfg.proofreadApiUrl = text }
+                                onEditingFinished: { if (cfg) cfg.saveToDisk() }
+                            }
+
+                            Label {
+                                text: "校对模型名"
+                            }
+                            TextField {
+                                id: proofreadModelField
+                                Layout.fillWidth: true
+                                placeholderText: "留空则使用翻译模型"
+                                text: cfg ? cfg.proofreadModel : ""
+                                selectByMouse: true
+                                onTextChanged: { if (cfg) cfg.proofreadModel = text }
+                                onEditingFinished: { if (cfg) cfg.saveToDisk() }
+                            }
+                        }
                     }
                 }
             }
 
-            Item { Layout.preferredHeight: 24 }
+            SettingsPane {
+                GroupBox {
+                    title: "缓存策略"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 10
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "跨模型缓存只复用已经过校对的译文。需要重新用新模型翻译当前 EPUB 时，请到任务页使用“清理当前 EPUB 缓存”。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        CheckBox {
+                            text: "允许跨模型复用已校对译文缓存"
+                            checked: cfg ? cfg.allowTextCacheReuse : false
+                            onCheckedChanged: {
+                                if (cfg) {
+                                    cfg.allowTextCacheReuse = checked
+                                    cfg.saveToDisk()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            SettingsPane {
+                GroupBox {
+                    title: "界面与推理"
+                    Layout.fillWidth: true
+
+                    Flow {
+                        width: parent.width
+                        spacing: 16
+
+                        Label { text: "主题:" }
+                        ComboBox {
+                            model: ThemeRegistry.labels()
+                            currentIndex: ThemeRegistry.indexFromName(cfg ? cfg.theme : "light")
+                            onActivated: function(index) {
+                                var name = ThemeRegistry.nameFromIndex(index)
+                                if (cfg) cfg.theme = name
+                            }
+                        }
+                        CheckBox {
+                            text: "开启深度思考"
+                            checked: cfg ? cfg.enableThinking : false
+                            onCheckedChanged: { if (cfg) cfg.enableThinking = checked }
+                        }
+                    }
+                }
+            }
+
+            SettingsPane {
+                GroupBox {
+                    title: "软件更新"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 10
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "当前版本：V" + (page.updater ? page.updater.currentVersion : "未知")
+                            color: AppPalette.textColor
+                            font.pixelSize: 14
+                            font.weight: Font.DemiBold
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.updateStatus
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        ProgressBar {
+                            Layout.fillWidth: true
+                            visible: page.updater && page.updater.downloading
+                            from: 0
+                            to: 100
+                            value: page.updateDownloadPercent
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            Button {
+                                text: page.updater && page.updater.checking ? "检查中..." : "检查更新"
+                                enabled: page.updater && !page.updaterBusy
+                                onClicked: page.startUpdateCheck()
+                            }
+
+                            Button {
+                                text: "打开发布页"
+                                enabled: page.updater && !page.updater.downloading
+                                onClicked: page.openUpdateRelease()
+                            }
+
+                            Button {
+                                text: page.updater && page.updater.downloading
+                                      ? ("下载中 " + page.updateDownloadPercent + "%")
+                                      : "下载并安装"
+                                highlighted: page.hasInstallerAsset() && page.updateInfo.isNewer
+                                enabled: page.updater
+                                         && page.hasInstallerAsset()
+                                         && page.updateInfo.isNewer
+                                         && !page.updaterBusy
+                                onClicked: page.startUpdateDownload()
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "说明：检查更新不需要登录 GitHub；下载完成后会启动安装程序，并退出当前软件。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+            }
         }
     }
+
+    component SettingsPane: ScrollView {
+        id: pane
+        default property alias paneChildren: paneColumn.data
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+        ColumnLayout {
+            id: paneColumn
+            width: Math.max(0, pane.availableWidth)
+            spacing: 14
+        }
+    }
+
 
     Dialog {
         id: updateDialog
