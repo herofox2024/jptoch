@@ -316,6 +316,13 @@ class JaZhTranslator:
     API_TIMEOUT = 120  # API 请求超时时间（秒）
     MAX_RETRIES = 3  # API 请求最大重试次数
     MAX_CONTINUATIONS = 2  # finish_reason=length 时最大续取次数
+    JAPANESE_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
+    JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
+    # 允许中文译文中的字形描述，例如“コ”字形、コ字型、ロの字形。
+    # 这些是形状标记，不是未翻译日文残留；更长的假名片段仍会被检测。
+    ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
+        r"[「『“\"'（(【\[]?\s*[\u30a0-\u30ff\uff66-\uff9f]\s*[」』”\"'）)】\]]?\s*(?:の\s*)?(?:字形|字型|字状|形|型|状|字)"
+    )
 
     # ---- Phase 1-③: 本地预翻译规则表（高频短句直接替换，跳过 API）----
     PRE_TRANSLATE_RULES: Dict[str, str] = {
@@ -948,15 +955,24 @@ class JaZhTranslator:
     @staticmethod
     def _has_japanese_residue(text: str) -> bool:
         """Detect kana residue in Chinese drafts. Han characters alone are not reliable."""
-        return bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff]", text or ""))
+        stripped = JaZhTranslator._strip_allowed_japanese_notation(text or "")
+        return bool(JaZhTranslator.JAPANESE_KANA_RE.search(stripped))
 
     @staticmethod
     def _extract_japanese_residue_fragments(text: str) -> List[str]:
         """Extract repeated kana fragments so proofread can avoid fixing the same residue repeatedly."""
         if not text:
             return []
-        fragments = re.findall(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+", text)
+        stripped = JaZhTranslator._strip_allowed_japanese_notation(text)
+        fragments = JaZhTranslator.JAPANESE_KANA_FRAGMENT_RE.findall(stripped)
         return [frag for frag in dict.fromkeys(fragments) if frag.strip()]
+
+    @staticmethod
+    def _strip_allowed_japanese_notation(text: str) -> str:
+        """Ignore isolated kana used as Chinese shape notation, such as “コ”字形."""
+        if not text:
+            return ""
+        return JaZhTranslator.ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", text)
 
     @staticmethod
     def _build_residue_repair_guidance(examples: List[Dict[str, str]]) -> str:
