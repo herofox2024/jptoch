@@ -426,6 +426,14 @@ class JaZhTranslator:
     JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
     JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]]")
     JAPANESE_SINGLE_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\uff66-\uff9f]$")
+    JAPANESE_O_NAME_PREFIX_RE = re.compile(r"お[\u3400-\u9fff々]{1,3}(?![\u3400-\u9fff々])")
+    JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
+        "茶", "金", "酒", "湯", "水", "米", "菓子", "店", "客", "宅", "礼",
+        "話", "願", "詫", "前", "母", "父", "兄", "姉", "祖母", "祖父",
+        "嬢", "姫", "寺", "盆", "祭", "守", "札", "膳", "椀", "箸",
+        "上", "役", "家", "国", "城", "蔵", "手", "腹", "目", "顔", "心",
+        "足", "口", "腰", "命",
+    }
     JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
     _japanese_residue_allowlist_cache: Optional[Dict[str, Any]] = None
     _japanese_residue_allowlist_mtime: Optional[float] = None
@@ -806,6 +814,7 @@ class JaZhTranslator:
             "batch_fallback": 0,
             "batch_split_mismatch": 0,
             "batch_json_parse_fail": 0,
+            "batch_json_lenient_success": 0,
             "truncation_continuation": 0,
             "glossary_new_terms_added": 0,
             "proofread_suspicious": 0,
@@ -820,6 +829,7 @@ class JaZhTranslator:
             "dynamic_limit_batch_size": self._dynamic_batch_size,
             "proofread_batch_requests": 0,
             "proofread_batch_success": 0,
+            "proofread_batch_lenient_success": 0,
         }
         logger.info(
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
@@ -869,12 +879,28 @@ class JaZhTranslator:
             return None
         text = raw.strip()
 
-        def coerce(value: Any) -> Optional[dict]:
+        def looks_like_translation_list(value: Any) -> bool:
+            if not isinstance(value, list) or not value:
+                return False
+            for item in value[:3]:
+                if isinstance(item, str):
+                    return True
+                if isinstance(item, dict) and (
+                    any(key in item for key in ("zh", "translation", "translated", "text", "cn", "中文", "dst", "revised"))
+                    or any(key in item for key in ("idx", "index", "id"))
+                ):
+                    return True
+            return False
+
+        def coerce(value: Any, allow_list: bool = True) -> Optional[dict]:
             if isinstance(value, dict):
                 return value
-            if isinstance(value, list):
+            if allow_list and looks_like_translation_list(value):
                 return {"translations": value, "new_terms": []}
             return None
+
+        def is_batch_container(value: Optional[dict]) -> bool:
+            return isinstance(value, dict) and any(key in value for key in ("translations", "items", "new_terms"))
 
         def parse_candidate(candidate: str) -> Optional[dict]:
             candidate = (candidate or "").strip()
@@ -882,21 +908,30 @@ class JaZhTranslator:
                 return None
             try:
                 parsed = json.loads(candidate)
-                coerced = coerce(parsed)
+                coerced = coerce(parsed, allow_list=True)
                 if coerced is not None:
                     return coerced
             except (json.JSONDecodeError, ValueError):
                 pass
             decoder = json.JSONDecoder()
+            fallback = None
             for match in re.finditer(r"[\{\[]", candidate):
                 try:
                     parsed, _ = decoder.raw_decode(candidate[match.start():])
                 except (json.JSONDecodeError, ValueError):
                     continue
-                coerced = coerce(parsed)
-                if coerced is not None:
+                allow_list = True
+                if isinstance(parsed, list):
+                    prefix = candidate[max(0, match.start() - 40):match.start()]
+                    allow_list = match.start() == 0 or bool(
+                        re.search(r'"(?:translations|items)"\s*:\s*$', prefix)
+                    )
+                coerced = coerce(parsed, allow_list=allow_list)
+                if is_batch_container(coerced):
                     return coerced
-            return None
+                if fallback is None:
+                    fallback = coerced
+            return fallback if is_batch_container(fallback) else None
 
         parsed = parse_candidate(text)
         if parsed is not None:
@@ -907,6 +942,62 @@ class JaZhTranslator:
             if parsed is not None:
                 return parsed
         return None
+
+    @staticmethod
+    def _extract_lenient_indexed_items(raw: str, value_keys: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Best-effort parser for model outputs that look like JSON but contain unescaped quotes."""
+        if not raw:
+            return []
+        text = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text).strip()
+        value_keys = value_keys or ["zh", "translation", "translated", "text", "cn", "中文", "dst", "revised"]
+        idx_matches = list(re.finditer(r'"(?:idx|index|id)"\s*:\s*"?(\d+)"?', text))
+        if not idx_matches:
+            return []
+
+        def extract_value(chunk: str) -> Optional[str]:
+            key_pattern = "|".join(re.escape(key) for key in value_keys)
+            key_match = re.search(rf'"(?:{key_pattern})"\s*:', chunk)
+            if not key_match:
+                return None
+            pos = key_match.end()
+            while pos < len(chunk) and chunk[pos].isspace():
+                pos += 1
+            if pos >= len(chunk):
+                return None
+            if chunk[pos] == '"':
+                start = pos + 1
+                tail = chunk[start:]
+                end_match = re.search(
+                    r'"\s*(?:,\s*"(?:idx|index|id|new_terms|src|dst|category)"\s*:|\}\s*,?\s*(?:\{|\]|,?\s*"new_terms"|$))',
+                    tail,
+                    flags=re.DOTALL,
+                )
+                if end_match:
+                    value = tail[:end_match.start()]
+                else:
+                    last_quote = tail.rfind('"')
+                    value = tail[:last_quote] if last_quote >= 0 else tail
+            else:
+                end_match = re.search(r"\s*(?:,\s*\"|\}\s*,?\s*(?:\{|\]|$))", chunk[pos:], flags=re.DOTALL)
+                value = chunk[pos:pos + end_match.start()] if end_match else chunk[pos:]
+            value = value.strip()
+            if not value:
+                return None
+            return value.replace('\\"', '"').replace("\\n", "\n")
+
+        items: List[Dict[str, Any]] = []
+        for pos, match in enumerate(idx_matches):
+            idx = int(match.group(1))
+            chunk_start = text.rfind("{", 0, match.start())
+            if chunk_start < 0:
+                chunk_start = match.start()
+            next_start = idx_matches[pos + 1].start() if pos + 1 < len(idx_matches) else len(text)
+            chunk = text[chunk_start:next_start]
+            value = extract_value(chunk)
+            if value is not None:
+                items.append({"idx": idx, "zh": value})
+        return items
 
     @staticmethod
     def _response_snippet(raw: str, limit: int = 240) -> str:
@@ -1077,8 +1168,45 @@ class JaZhTranslator:
         if not text:
             return []
         stripped = JaZhTranslator._strip_allowed_japanese_notation(text)
-        fragments = JaZhTranslator.JAPANESE_KANA_FRAGMENT_RE.findall(stripped)
+        fragments = JaZhTranslator.JAPANESE_O_NAME_PREFIX_RE.findall(stripped)
+        fragments.extend(JaZhTranslator.JAPANESE_KANA_FRAGMENT_RE.findall(stripped))
         return [frag for frag in dict.fromkeys(fragments) if frag.strip()]
+
+    @classmethod
+    def _postprocess_translation(cls, src: str, dst: Optional[str]) -> str:
+        """Apply conservative local cleanups before residue checks and cache writes."""
+        translated = str(dst or "").strip()
+        if not translated:
+            return ""
+        return cls._repair_japanese_o_name_prefix_residue(src, translated)
+
+    @classmethod
+    def _repair_japanese_o_name_prefix_residue(cls, src: str, dst: str) -> str:
+        """Convert likely Japanese female-name prefixes left by the model, e.g. お仲 -> 阿仲."""
+        source = str(src or "")
+        translated = str(dst or "")
+        if "お" not in source or "お" not in translated:
+            return translated
+
+        def source_has_name_context(literal: str) -> bool:
+            escaped = re.escape(literal)
+            if re.search(rf"{escaped}という(?:女|男|娘|人|者)?", source):
+                return True
+            if re.search(rf"{escaped}(?:は|が|を|に|へ|と|の|、|。|」|』|$)", source):
+                return True
+            return False
+
+        for match in cls.JAPANESE_O_NAME_PREFIX_RE.finditer(source):
+            literal = match.group(0)
+            stem = literal[1:]
+            if stem in cls.JAPANESE_O_PREFIX_NON_PERSON_STEMS:
+                continue
+            if literal not in translated:
+                continue
+            if not source_has_name_context(literal):
+                continue
+            translated = translated.replace(literal, "阿" + stem)
+        return translated
 
     @staticmethod
     def _strip_allowed_japanese_notation(text: str) -> str:
@@ -1223,7 +1351,7 @@ class JaZhTranslator:
     def _is_incomplete_translation(cls, src: str, dst: Optional[str]) -> bool:
         """Return True when a translation is unsafe to cache or write to EPUB."""
         source = (src or "").strip()
-        translated = (dst or "").strip()
+        translated = cls._postprocess_translation(source, dst)
         if not translated:
             return True
         if cls._has_japanese_residue(translated):
@@ -1736,14 +1864,32 @@ class JaZhTranslator:
                 raw = (message.get("content", "") or "").strip()
                 obj = self._extract_json_object(raw)
                 if not isinstance(obj, dict):
-                    logger.warning("批量校对 JSON 解析失败，响应摘要: %s", self._response_snippet(raw))
-                    self._record_dynamic_limit_event("批量校对 JSON 解析失败", kind="format")
-                    return {}
+                    lenient_items = self._extract_lenient_indexed_items(
+                        raw,
+                        value_keys=["revised", "zh", "translation", "translated", "text", "cn", "中文"],
+                    )
+                    if lenient_items:
+                        obj = {"items": lenient_items}
+                        self._inc_stat("proofread_batch_lenient_success")
+                        logger.info("批量校对 JSON 宽松解析成功: %s/%s 条", len(lenient_items), len(prepared))
+                    else:
+                        logger.warning("批量校对 JSON 解析失败，响应摘要: %s", self._response_snippet(raw))
+                        self._record_dynamic_limit_event("批量校对 JSON 解析失败", kind="format")
+                        return {}
                 arr = obj.get("items") or obj.get("translations")
                 if not isinstance(arr, list):
-                    logger.warning("批量校对缺少 items，响应摘要: %s", self._response_snippet(raw))
-                    self._record_dynamic_limit_event("批量校对缺少 items", kind="format")
-                    return {}
+                    lenient_items = self._extract_lenient_indexed_items(
+                        raw,
+                        value_keys=["revised", "zh", "translation", "translated", "text", "cn", "中文"],
+                    )
+                    if lenient_items:
+                        arr = lenient_items
+                        self._inc_stat("proofread_batch_lenient_success")
+                        logger.info("批量校对 JSON 宽松解析补全 items: %s/%s 条", len(lenient_items), len(prepared))
+                    else:
+                        logger.warning("批量校对缺少 items，响应摘要: %s", self._response_snippet(raw))
+                        self._record_dynamic_limit_event("批量校对缺少 items", kind="format")
+                        return {}
 
                 revised_by_idx: Dict[int, str] = {}
                 for position, result_item in enumerate(arr):
@@ -2764,23 +2910,36 @@ JSON 顶层字段：
                 # P0-A: 部分成功校验（替代全有全无）
                 obj = self._extract_json_object(raw)
                 if not isinstance(obj, dict):
-                    self._inc_stat("batch_json_parse_fail")
-                    logger.warning("批量 JSON 解析失败，响应摘要: %s", self._response_snippet(raw))
-                    self._record_dynamic_limit_event("批量 JSON 解析失败", kind="format")
-                    return BatchJsonResult(
-                        translations=None, missing_indices=list(range(len(texts))),
-                        finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
-                    )
+                    lenient_items = self._extract_lenient_indexed_items(raw)
+                    if lenient_items:
+                        obj = {"translations": lenient_items, "new_terms": []}
+                        self._inc_stat("batch_json_lenient_success")
+                        logger.info("批量 JSON 宽松解析成功: %s/%s 条", len(lenient_items), len(texts))
+                    else:
+                        self._inc_stat("batch_json_parse_fail")
+                        logger.warning("批量 JSON 解析失败，响应摘要: %s", self._response_snippet(raw))
+                        self._record_dynamic_limit_event("批量 JSON 解析失败", kind="format")
+                        return BatchJsonResult(
+                            translations=None, missing_indices=list(range(len(texts))),
+                            finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
+                        )
 
                 arr = obj.get("translations") or obj.get("items")
                 if not isinstance(arr, list):
-                    self._inc_stat("batch_json_parse_fail")
-                    logger.warning("批量 JSON 缺少 translations/items，响应摘要: %s", self._response_snippet(raw))
-                    self._record_dynamic_limit_event("批量 JSON 缺少 translations/items", kind="format")
-                    return BatchJsonResult(
-                        translations=None, missing_indices=list(range(len(texts))),
-                        finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
-                    )
+                    lenient_items = self._extract_lenient_indexed_items(raw)
+                    if lenient_items:
+                        arr = lenient_items
+                        obj = {"translations": arr, "new_terms": []}
+                        self._inc_stat("batch_json_lenient_success")
+                        logger.info("批量 JSON 宽松解析补全 translations: %s/%s 条", len(lenient_items), len(texts))
+                    else:
+                        self._inc_stat("batch_json_parse_fail")
+                        logger.warning("批量 JSON 缺少 translations/items，响应摘要: %s", self._response_snippet(raw))
+                        self._record_dynamic_limit_event("批量 JSON 缺少 translations/items", kind="format")
+                        return BatchJsonResult(
+                            translations=None, missing_indices=list(range(len(texts))),
+                            finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
+                        )
 
                 # 逐条校验 idx，跳过无效项（防幻觉），保留有效项
                 out = [None] * len(texts)
@@ -3276,6 +3435,7 @@ JSON 顶层字段：
                 seen_uncached.add(key)
 
         def remember_completed(idx: int, text: str, translated: str) -> None:
+            translated = self._postprocess_translation(text, translated)
             ordered_results[idx] = translated
             results.setdefault(text, translated)
 
@@ -3283,15 +3443,18 @@ JSON 顶层字段：
             key = str(text or "")
             if not key:
                 return
+            if translated is not None:
+                translated = self._postprocess_translation(key, translated)
             failed_texts.setdefault(key, reason)
             if translated is not None and self._has_japanese_residue(translated):
                 residue_texts.setdefault(key, translated)
 
-        def should_accept_translation(original: str, translated: Optional[str], reason: str = "") -> bool:
-            if self._is_incomplete_translation(original, translated):
-                mark_incomplete(original, reason or "译文为空或仍有日文残留", translated)
-                return False
-            return True
+        def accept_translation(original: str, translated: Optional[str], reason: str = "") -> Optional[str]:
+            cleaned = self._postprocess_translation(original, translated)
+            if self._is_incomplete_translation(original, cleaned):
+                mark_incomplete(original, reason or "译文为空或仍有日文残留", cleaned)
+                return None
+            return cleaned
 
         # Phase 1-③: 预翻译计数
         pre_translated = 0
@@ -3304,6 +3467,8 @@ JSON 顶层字段：
                 # ① 人工修改缓存优先级最高，不受模型和跨模型缓存开关影响。
                 cache_key = task_key_for(text, idx)
                 manual_cached = self._lookup_manual_cache(text)
+                if manual_cached is not None:
+                    manual_cached = self._postprocess_translation(text, manual_cached)
                 if manual_cached is not None and not self._is_incomplete_translation(text, manual_cached):
                     remember_completed(idx, text, manual_cached)
                     self.cache[cache_key] = manual_cached
@@ -3315,8 +3480,11 @@ JSON 顶层字段：
 
                 # ② 模型缓存查找
                 if cache_key in self.cache:
-                    cached_translation = self.cache[cache_key]
+                    cached_translation = self._postprocess_translation(text, self.cache[cache_key])
                     if not self._is_incomplete_translation(text, cached_translation):
+                        if self.cache.get(cache_key) != cached_translation:
+                            self.cache[cache_key] = cached_translation
+                            self._cache_dirty = True
                         remember_completed(idx, text, cached_translation)
                         completed += 1
                         continue
@@ -3326,6 +3494,7 @@ JSON 顶层字段：
                 # ③ Phase 1-③: 本地预翻译规则
                 pre_result = self._pre_translate(text)
                 if pre_result is not None:
+                    pre_result = self._postprocess_translation(text, pre_result)
                     if self._is_incomplete_translation(text, pre_result):
                         add_pending_task(text, idx)
                         continue
@@ -3342,6 +3511,7 @@ JSON 顶层字段：
                 if getattr(self, "allow_text_cache_reuse", False) and not self._is_context_cache_text(text):
                     text_cached = self._lookup_text_cache(text)
                     if text_cached is not None:
+                        text_cached = self._postprocess_translation(text, text_cached)
                         if not self._is_incomplete_translation(text, text_cached):
                             remember_completed(idx, text, text_cached)
                             self.cache[cache_key] = text_cached
@@ -3468,6 +3638,10 @@ JSON 顶层字段：
 
         def repair_batch_quality(batch_keys: List[str], pairs: List[Tuple[str, str, str]]) -> List[Tuple[str, str, str]]:
             enable_proofread = bool(getattr(self, "enable_proofread", False))
+            pairs = [
+                (task_key, src, self._postprocess_translation(src, dst))
+                for task_key, src, dst in pairs
+            ]
             if len(pairs) <= 1 and not enable_proofread:
                 return pairs
 
@@ -3582,6 +3756,7 @@ JSON 顶层字段：
                                     revised = self._proofread_translation(src, draft, issues)
                                 else:
                                     raise
+                        revised = self._postprocess_translation(src, revised)
                         if any("日文" in issue or "假名" in issue for issue in issues) and self._has_japanese_residue(revised):
                             try:
                                 fallback_prev, fallback_next = get_context_for_task(task_key)
@@ -3592,7 +3767,7 @@ JSON 顶层字段：
                                     self._extract_japanese_residue_fragments(revised),
                                 )
                                 if fallback_revised:
-                                    revised = fallback_revised
+                                    revised = self._postprocess_translation(src, fallback_revised)
                                 issues.append("校对后仍残留日文，已回退单条重译")
                             except Exception as fallback_error:
                                 logger.warning(f"校对后单条重译失败 [{i}]: {fallback_error}")
@@ -3616,15 +3791,16 @@ JSON 顶层字段：
                                 logger.warning(f"译后校对详情回调失败: {callback_error}")
                     else:
                         repair_prev, repair_next = get_context_for_task(task_key)
+                        repaired_text = call_translate_chunk(
+                            src,
+                            repair_prev,
+                            repair_next,
+                            retranslate_residue_fragments.get(i),
+                        )
                         repaired[i] = (
                             task_key,
                             src,
-                            call_translate_chunk(
-                                src,
-                                repair_prev,
-                                repair_next,
-                                retranslate_residue_fragments.get(i),
-                            ),
+                            self._postprocess_translation(src, repaired_text),
                         )
                     fixed_count += 1
                 except Exception as e:
@@ -3804,8 +3980,10 @@ JSON 顶层字段：
                     try:
                         batch_results = future.result()
                         for task_key, original, translated in batch_results:
-                            if not should_accept_translation(original, translated, "批次译文疑似未完成"):
+                            accepted = accept_translation(original, translated, "批次译文疑似未完成")
+                            if accepted is None:
                                 continue
+                            translated = accepted
                             if self._should_write_cache():
                                 with self._cache_lock:
                                     self.cache[task_key] = translated
@@ -3835,8 +4013,10 @@ JSON 顶层字段：
                             try:
                                 fallback_prev, fallback_next = get_context_for_task(task_key)
                                 zh = call_translate_chunk(text, fallback_prev, fallback_next)
-                                if not should_accept_translation(text, zh, "批次失败后的单条重试仍未完成"):
+                                accepted = accept_translation(text, zh, "批次失败后的单条重试仍未完成")
+                                if accepted is None:
                                     continue
+                                zh = accepted
                                 if self._should_write_cache():
                                     with self._cache_lock:
                                         self.cache[task_key] = zh
@@ -3870,16 +4050,24 @@ JSON 顶层字段：
             if translated is None:
                 with self._cache_lock:
                     cached = self.cache.get(cache_key)
-                if cached is not None and should_accept_translation(text, cached, "最终缓存补全疑似未完成"):
-                    ordered_results[idx] = cached
-                    results.setdefault(text, cached)
+                if cached is not None:
+                    accepted = accept_translation(text, cached, "最终缓存补全疑似未完成")
+                else:
+                    accepted = None
+                if accepted is not None:
+                    ordered_results[idx] = accepted
+                    results.setdefault(text, accepted)
                 elif cached is not None:
                     with self._cache_lock:
                         self.cache.pop(cache_key, None)
                         self._cache_dirty = True
                 continue
-            if not should_accept_translation(text, translated, "最终校验发现译文仍未完成"):
+            accepted = accept_translation(text, translated, "最终校验发现译文仍未完成")
+            if accepted is None:
                 ordered_results[idx] = None
+            else:
+                ordered_results[idx] = accepted
+                results.setdefault(text, accepted)
 
         missing_texts = [text for idx, text in enumerate(texts) if idx >= len(ordered_results) or not ordered_results[idx]]
         for text in missing_texts:
