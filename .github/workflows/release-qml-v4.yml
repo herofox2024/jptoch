@@ -2,6 +2,11 @@ name: Release QML V4
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without leading v, e.g. 4.1.1"
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -40,6 +45,35 @@ jobs:
           pip install -r experimental\qml_v4\requirements.txt
           pip install pyinstaller pyinstaller-hooks-contrib
 
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $version = "${{ github.event.inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = "${{ github.ref_name }}"
+          }
+          $version = $version -replace '^refs/tags/', ''
+          $version = $version -replace '^[vV]', ''
+          if ([string]::IsNullOrWhiteSpace($version) -or $version -eq "main" -or $version -eq "master") {
+            $version = python -c "from experimental.qml_v4.backend.app_info import APP_VERSION; print(APP_VERSION)"
+          }
+          if ($version -notmatch '^\d+\.\d+(\.\d+){0,2}$') {
+            throw "Invalid release version: $version"
+          }
+          $fileVersion = $version
+          while (($fileVersion.Split(".")).Count -lt 4) {
+            $fileVersion = "$fileVersion.0"
+          }
+          "APP_BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "APP_FILE_VERSION=$fileVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $appInfoPath = "experimental\qml_v4\backend\app_info.py"
+          $appInfo = Get-Content $appInfoPath -Raw -Encoding UTF8
+          $appInfo = $appInfo -replace 'APP_VERSION = "[^"]+"', "APP_VERSION = `"$version`""
+          Set-Content $appInfoPath $appInfo -Encoding UTF8
+          Write-Host "Resolved release version: $version ($fileVersion)"
+
       - name: Build PyInstaller onedir slim package
         shell: pwsh
         run: |
@@ -65,17 +99,18 @@ jobs:
           if (-not $isccPath) {
             throw "ISCC.exe not found after installing Inno Setup."
           }
-          & $isccPath "installer\EPUB日译中V4.0_slim.iss"
+          & $isccPath "/DMyAppVersion=$env:APP_BUILD_VERSION" "/DMyAppFileVersion=$env:APP_FILE_VERSION" "installer\EPUB日译中V4.0_slim.iss"
 
       - name: Package portable onedir
         shell: pwsh
         run: |
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-          $portableDir = Get-ChildItem dist -Directory | Where-Object { $_.Name -like "*V4.1_slim" } | Select-Object -First 1
+          $portableDirName = "AI日译中(EPUB)V${env:APP_BUILD_VERSION}_slim"
+          $portableDir = Get-ChildItem dist -Directory | Where-Object { $_.Name -eq $portableDirName } | Select-Object -First 1
           if (-not $portableDir) {
-            throw "Portable onedir output was not found under dist."
+            throw "Portable onedir output was not found under dist: $portableDirName"
           }
-          Compress-Archive -Path (Join-Path $portableDir.FullName "*") -DestinationPath "dist\AI日译中(EPUB)V4.1_slim_portable.zip" -Force
+          Compress-Archive -Path (Join-Path $portableDir.FullName "*") -DestinationPath "dist\AI日译中(EPUB)V${env:APP_BUILD_VERSION}_slim_portable.zip" -Force
 
       - name: Verify build outputs
         shell: pwsh

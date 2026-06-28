@@ -10,6 +10,11 @@ experiment_root = Path(SPECPATH).resolve()
 project_root = experiment_root.parent.parent
 app_icon = experiment_root / "assets" / "app_icon.ico"
 fallback_icon = project_root / "assets" / "app.ico"
+sys.path.insert(0, str(experiment_root))
+
+from backend.app_info import APP_VERSION
+
+APP_EXE_BASENAME = f"AI日译中(EPUB)V{APP_VERSION}"
 
 a = Analysis(
     [str(experiment_root / "main.py")],
@@ -59,7 +64,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="AI日译中(EPUB)V4.1",
+    name=APP_EXE_BASENAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

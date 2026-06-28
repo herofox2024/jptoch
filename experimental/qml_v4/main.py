@@ -163,12 +163,13 @@ def main():
     from PySide6.QtGui import QFont, QIcon
     from PySide6.QtWidgets import QApplication
     from PySide6.QtQml import QQmlApplicationEngine
+    from backend.app_info import APP_DISPLAY_NAME, APP_NAME
 
     icon_path = _find_app_icon_path()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("AI日译中（EPUB）")
-    app.setApplicationDisplayName("AI日译中（EPUB）V4.1")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_DISPLAY_NAME)
     app.setOrganizationName("epub-translator")
     if icon_path:
         app.setWindowIcon(QIcon(str(icon_path)))

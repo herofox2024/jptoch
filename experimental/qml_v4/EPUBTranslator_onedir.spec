@@ -6,12 +6,19 @@ This build keeps Qt/PySide files as separate files so Inno Setup can compress
 the whole directory more effectively than wrapping an already-packed onefile exe.
 """
 
+import sys
 from pathlib import Path
 
 experiment_root = Path(SPECPATH).resolve()
 project_root = experiment_root.parent.parent
 app_icon = experiment_root / "assets" / "app_icon.ico"
 fallback_icon = project_root / "assets" / "app.ico"
+sys.path.insert(0, str(experiment_root))
+
+from backend.app_info import APP_VERSION
+
+APP_EXE_BASENAME = f"AI日译中(EPUB)V{APP_VERSION}"
+APP_COLLECT_NAME = f"{APP_EXE_BASENAME}_onedir"
 
 a = Analysis(
     [str(experiment_root / "main.py")],
@@ -60,7 +67,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="AI日译中(EPUB)V4.1",
+    name=APP_EXE_BASENAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -82,5 +89,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="AI日译中(EPUB)V4.1_onedir",
+    name=APP_COLLECT_NAME,
 )
