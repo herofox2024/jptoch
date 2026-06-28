@@ -352,6 +352,56 @@ class TranslateWorker(QObject):
         return cleaned
 
     @staticmethod
+    def _looks_like_model_refusal(text: str) -> bool:
+        value = str(text or "").strip().lower()
+        if not value:
+            return True
+
+        hard_markers = (
+            "请提供具体的日文段落",
+            "请提供具体的日文",
+            "不是需要翻译的日文内容",
+            "并非需要翻译的日文内容",
+            "书名或文件名称",
+            "似乎是书名",
+            "无法按照要求翻译",
+            "无法翻译该内容",
+            "不能翻译该内容",
+            "please provide the japanese",
+            "please provide specific japanese",
+            "not a japanese text",
+            "not text to translate",
+        )
+        if any(marker in value for marker in hard_markers):
+            return True
+
+        apology_markers = ("抱歉", "对不起", "sorry", "apologize")
+        task_markers = ("请提供", "无法", "不能", "不是", "并非", "文本", "内容", "翻译", "provide", "cannot", "can't", "unable")
+        if any(marker in value for marker in apology_markers) and any(marker in value for marker in task_markers):
+            return True
+
+        sentence_marks = sum(value.count(ch) for ch in "。！？!?")
+        meta_words = ("文本", "内容", "翻译", "提供", "段落", "句子", "文件", "text", "content", "translate", "provide")
+        return sentence_marks >= 2 and any(word in value for word in meta_words)
+
+    @classmethod
+    def _is_usable_translated_filename(cls, candidate: str) -> bool:
+        if cls._looks_like_model_refusal(candidate):
+            return False
+        return bool(cls._sanitize_filename(candidate))
+
+    @staticmethod
+    def _source_title_for_filename(stem: str) -> str:
+        value = str(stem or "").strip()
+        if not value:
+            return ""
+        for marker in ("+(", "＋("):
+            if marker in value:
+                value = value.split(marker, 1)[0]
+                break
+        return value.strip(" ._+-＋")
+
+    @staticmethod
     def _unique_epub_path(path: Path) -> Path:
         if not path.exists():
             return path
@@ -371,14 +421,15 @@ class TranslateWorker(QObject):
         source_path = Path(cfg.out)
         source_base = Path(cfg.inp).stem
         candidates = []
+        source_title = self._source_title_for_filename(source_base)
 
-        if source_base in results and results[source_base]:
-            candidates.append(str(results[source_base]))
+        if source_title and source_title in results and results[source_title]:
+            candidates.append(str(results[source_title]))
 
-        if self._is_translatable(source_base):
+        if source_title and self._is_translatable(source_title):
             try:
-                name_results = translator.translate_batch([source_base])
-                translated_name = name_results.get(source_base)
+                name_results = translator.translate_batch([source_title])
+                translated_name = name_results.get(source_title)
                 if translated_name:
                     candidates.append(str(translated_name))
             except Exception:
@@ -391,9 +442,9 @@ class TranslateWorker(QObject):
                 break
 
         for candidate in candidates:
-            safe_name = self._sanitize_filename(candidate)
-            if not safe_name:
+            if not self._is_usable_translated_filename(candidate):
                 continue
+            safe_name = self._sanitize_filename(candidate)
             target = source_path.with_name(f"{safe_name}.epub")
             if os.path.normcase(os.path.abspath(str(target))) == os.path.normcase(os.path.abspath(str(source_path))):
                 return str(source_path)
