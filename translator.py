@@ -318,6 +318,13 @@ class JaZhTranslator:
     MAX_CONTINUATIONS = 2  # finish_reason=length 时最大续取次数
     JAPANESE_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
     JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
+    JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]]")
+    JAPANESE_SINGLE_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\uff66-\uff9f]$")
+    JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
+    _japanese_residue_allowlist_cache: Optional[Dict[str, Any]] = None
+    _japanese_residue_allowlist_mtime: Optional[float] = None
+    _japanese_residue_allowlist_checked_at = 0.0
+    _japanese_residue_allowlist_check_interval = 5.0
     # 允许中文译文中的字形描述，例如“コ”字形、コ字型、ロの字形。
     # 这些是形状标记，不是未翻译日文残留；更长的假名片段仍会被检测。
     ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
@@ -969,10 +976,116 @@ class JaZhTranslator:
 
     @staticmethod
     def _strip_allowed_japanese_notation(text: str) -> str:
-        """Ignore isolated kana used as Chinese shape notation, such as “コ”字形."""
+        """Ignore approved literal Japanese snippets that are not untranslated residue."""
         if not text:
             return ""
-        return JaZhTranslator.ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", text)
+        stripped = JaZhTranslator.ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", text)
+        stripped = JaZhTranslator._strip_builtin_allowed_quoted_literals(stripped)
+        return JaZhTranslator._strip_user_allowed_japanese_literals(stripped)
+
+    @classmethod
+    def _strip_builtin_allowed_quoted_literals(cls, text: str) -> str:
+        """Allow very short quoted katakana markers, e.g. “コ”, without allowing real Japanese phrases."""
+        if not text:
+            return ""
+
+        def replace(match: re.Match) -> str:
+            literal = (match.group(1) or "").strip()
+            if cls.JAPANESE_SINGLE_KATAKANA_RE.fullmatch(literal):
+                return ""
+            return match.group(0)
+
+        return cls.JAPANESE_QUOTED_TEXT_RE.sub(replace, text)
+
+    @classmethod
+    def japanese_residue_allowlist_path(cls) -> str:
+        """Return the user-editable allowlist path for literal Japanese snippets."""
+        return str(get_data_dir() / cls.JAPANESE_RESIDUE_ALLOWLIST_FILE)
+
+    @classmethod
+    def _load_japanese_residue_allowlist(cls) -> Dict[str, Any]:
+        """Load user-configurable residue allowlist with lightweight mtime caching."""
+        now = time.time()
+        if (
+            cls._japanese_residue_allowlist_cache is not None
+            and now - cls._japanese_residue_allowlist_checked_at < cls._japanese_residue_allowlist_check_interval
+        ):
+            return cls._japanese_residue_allowlist_cache
+
+        cls._japanese_residue_allowlist_checked_at = now
+        path = Path(cls.japanese_residue_allowlist_path())
+        try:
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            cls._japanese_residue_allowlist_mtime = None
+            cls._japanese_residue_allowlist_cache = {"quoted": set(), "exact": [], "quoted_regex": [], "regex": []}
+            return cls._japanese_residue_allowlist_cache
+
+        if cls._japanese_residue_allowlist_cache is not None and cls._japanese_residue_allowlist_mtime == mtime:
+            return cls._japanese_residue_allowlist_cache
+
+        def as_str_list(value: Any) -> List[str]:
+            if not isinstance(value, list):
+                return []
+            result = []
+            for item in value:
+                text_item = str(item or "").strip()
+                if text_item:
+                    result.append(text_item)
+            return list(dict.fromkeys(result))
+
+        cache = {"quoted": set(), "exact": [], "quoted_regex": [], "regex": []}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(payload, dict):
+                raise ValueError("allowlist root must be a JSON object")
+
+            cache["quoted"] = set(as_str_list(payload.get("quoted")))
+            cache["exact"] = as_str_list(payload.get("exact"))
+            for pattern in as_str_list(payload.get("quoted_regex")):
+                try:
+                    cache["quoted_regex"].append(re.compile(pattern))
+                except re.error as exc:
+                    logger.warning("日文残留允许列表 quoted_regex 无效: %s (%s)", pattern, exc)
+            for pattern in as_str_list(payload.get("regex")):
+                try:
+                    cache["regex"].append(re.compile(pattern))
+                except re.error as exc:
+                    logger.warning("日文残留允许列表 regex 无效: %s (%s)", pattern, exc)
+        except Exception as exc:
+            logger.warning("加载日文残留允许列表失败: %s (%s)", path, exc)
+
+        cls._japanese_residue_allowlist_mtime = mtime
+        cls._japanese_residue_allowlist_cache = cache
+        return cache
+
+    @classmethod
+    def _strip_user_allowed_japanese_literals(cls, text: str) -> str:
+        """Strip user-approved literals from residue detection only; translation text is unchanged."""
+        if not text:
+            return ""
+        allowlist = cls._load_japanese_residue_allowlist()
+        stripped = text
+
+        quoted_literals = allowlist.get("quoted") or set()
+        quoted_regexes = allowlist.get("quoted_regex") or []
+        if quoted_literals or quoted_regexes:
+            def replace_quoted(match: re.Match) -> str:
+                literal = (match.group(1) or "").strip()
+                if literal in quoted_literals:
+                    return ""
+                for pattern in quoted_regexes:
+                    if pattern.fullmatch(literal):
+                        return ""
+                return match.group(0)
+
+            stripped = cls.JAPANESE_QUOTED_TEXT_RE.sub(replace_quoted, stripped)
+
+        for literal in allowlist.get("exact") or []:
+            stripped = stripped.replace(literal, "")
+        for pattern in allowlist.get("regex") or []:
+            stripped = pattern.sub("", stripped)
+        return stripped
 
     @staticmethod
     def _build_residue_repair_guidance(examples: List[Dict[str, str]]) -> str:
@@ -994,6 +1107,11 @@ class JaZhTranslator:
     def has_japanese_residue(text: str) -> bool:
         """Public helper for UI/bridge code that must reject untranslated kana residue."""
         return JaZhTranslator._has_japanese_residue(text)
+
+    @staticmethod
+    def japanese_residue_fragments(text: str) -> List[str]:
+        """Public helper for diagnostics and UI messages."""
+        return JaZhTranslator._extract_japanese_residue_fragments(text)
 
     @classmethod
     def _is_incomplete_translation(cls, src: str, dst: Optional[str]) -> bool:

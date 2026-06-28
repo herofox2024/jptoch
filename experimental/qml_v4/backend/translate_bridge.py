@@ -355,7 +355,9 @@ class _TranslateWorker(QObject):
                     if JaZhTranslator.has_japanese_residue(raw):
                         residue_total += 1
                         if len(residue_samples) < 8:
-                            residue_samples.append(raw[:120])
+                            fragments = JaZhTranslator.japanese_residue_fragments(raw)
+                            fragment_text = "、".join(fragments[:5]) if fragments else "未知片段"
+                            residue_samples.append(f"片段: {fragment_text} | 文本: {raw[:120]}")
 
             if residue_total:
                 translator.flush_cache()
@@ -365,7 +367,12 @@ class _TranslateWorker(QObject):
                     "已阻止保存完成品，请调整参数或切换模型后恢复续译。"
                 )
                 self.statusChanged.emit(message)
-                self.errorDetail.emit(message + (f"\n样例:\n{samples}" if samples else ""))
+                allowlist_path = JaZhTranslator.japanese_residue_allowlist_path()
+                hint = (
+                    "\n如果确认某个片段是必须保留的字形、符号或原文标记，"
+                    f"可加入允许列表: {allowlist_path}"
+                )
+                self.errorDetail.emit(message + hint + (f"\n样例:\n{samples}" if samples else ""))
                 self.failed.emit(message)
                 return
 
