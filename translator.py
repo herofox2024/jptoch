@@ -426,6 +426,7 @@ class JaZhTranslator:
     JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
     JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]]")
     JAPANESE_SINGLE_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\uff66-\uff9f]$")
+    SHA256_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
     JAPANESE_O_NAME_PREFIX_RE = re.compile(r"お[\u3400-\u9fff々]{1,3}(?![\u3400-\u9fff々])")
     JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
         "茶", "金", "酒", "湯", "水", "米", "菓子", "店", "客", "宅", "礼",
@@ -742,6 +743,9 @@ class JaZhTranslator:
 
         self.glossary = self._load_json(self.glossary_path, {}) if self.enable_glossary else {}
         self.cache = self._load_json(self.cache_path, {})
+        self._cross_model_text_cache_index: Dict[str, str] = {}
+        self._cross_model_context_cache_index: Dict[Tuple[str, str], str] = {}
+        self._cross_model_cache_index_built = False
 
         # 术语表分类（需要在 _count_glossary_terms 之前初始化）
         self.glossary_categories = DEFAULT_GLOSSARY_CATEGORIES
@@ -2046,7 +2050,7 @@ class JaZhTranslator:
         return gs_normalize_glossary_payload(payload)
 
     def _cache_key(self, text: str) -> str:
-        """Include provider/model in cache keys so switching models re-translates."""
+        """Include provider/model in primary cache keys; cross-model resume uses a digest index."""
         provider_model = f"{self.provider}:{self.model}".lower()
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         return f"v2:{provider_model}:{digest}"
@@ -2090,7 +2094,7 @@ class JaZhTranslator:
         """Most recent translate_batch result aligned to the input text order."""
         return list(getattr(self, "_last_ordered_results", []))
 
-    # ---- Phase 1-②: 文本级缓存（跨模型共享已验证译文）----
+    # ---- Phase 1-②: 文本级缓存（跨模型共享可复用译文）----
     _text_cache: Dict[str, Dict[str, Any]] = {}
     _text_cache_loaded = False
     TEXT_CACHE_FILE_NAME = "text_cache.json"
@@ -2116,6 +2120,60 @@ class JaZhTranslator:
     @classmethod
     def _cache_digest(cls, text: str) -> str:
         return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _parse_model_cache_key(cls, key: str) -> Tuple[str, Optional[str], Optional[str]]:
+        """Return (kind, text_digest, context_digest) for v2/v3 cache keys."""
+        key = str(key or "")
+        parts = key.split(":")
+        if key.startswith("v3ctx:") and len(parts) >= 4:
+            context_digest = parts[-2]
+            text_digest = parts[-1]
+            if cls.SHA256_DIGEST_RE.fullmatch(context_digest) and cls.SHA256_DIGEST_RE.fullmatch(text_digest):
+                return "context", text_digest, context_digest
+        if key.startswith("v2:") and parts:
+            text_digest = parts[-1]
+            if cls.SHA256_DIGEST_RE.fullmatch(text_digest):
+                return "text", text_digest, None
+        return "", None, None
+
+    def _ensure_cross_model_cache_index(self) -> None:
+        """Build digest indexes so a new provider/model can reuse previous model-cache entries."""
+        with self._cache_lock:
+            if self._cross_model_cache_index_built:
+                return
+            text_index: Dict[str, str] = {}
+            context_index: Dict[Tuple[str, str], str] = {}
+            for key, value in self.cache.items():
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                kind, text_digest, context_digest = self._parse_model_cache_key(str(key))
+                if kind == "context" and text_digest and context_digest:
+                    context_index.setdefault((context_digest, text_digest), value)
+                elif kind == "text" and text_digest:
+                    text_index.setdefault(text_digest, value)
+            self._cross_model_text_cache_index = text_index
+            self._cross_model_context_cache_index = context_index
+            self._cross_model_cache_index_built = True
+
+    def _invalidate_cross_model_cache_index(self) -> None:
+        with self._cache_lock:
+            self._cross_model_cache_index_built = False
+            self._cross_model_text_cache_index = {}
+            self._cross_model_context_cache_index = {}
+
+    def _lookup_cross_model_cache(self, text: str, current_cache_key: str) -> Optional[str]:
+        """Find a safe candidate from cache.json entries created by another provider/model."""
+        if not text or not current_cache_key:
+            return None
+        self._ensure_cross_model_cache_index()
+        kind, text_digest, context_digest = self._parse_model_cache_key(current_cache_key)
+        with self._cache_lock:
+            if kind == "context" and text_digest and context_digest:
+                return self._cross_model_context_cache_index.get((context_digest, text_digest))
+            if text_digest:
+                return self._cross_model_text_cache_index.get(text_digest)
+        return None
 
     def _load_manual_cache(self, force: bool = False):
         """加载人工修改缓存。人工译文优先级最高，不受跨模型缓存开关影响。"""
@@ -2186,12 +2244,12 @@ class JaZhTranslator:
 
         return None, ""
 
-    def _lookup_text_cache(self, text: str) -> Optional[str]:
-        """查找文本级缓存，返回已验证的译文或 None。"""
+    def _lookup_text_cache(self, text: str, allow_unverified: bool = False) -> Optional[str]:
+        """查找文本级缓存；恢复续译时可复用已通过安全校验的普通译文。"""
         self._load_text_cache()
         key = self._text_cache_key(text)
         entry = self._text_cache.get(key)
-        if entry and isinstance(entry, dict) and entry.get("verified", False):
+        if entry and isinstance(entry, dict) and (entry.get("verified", False) or allow_unverified):
             return entry.get("translation")
         return None
 
@@ -2306,6 +2364,7 @@ class JaZhTranslator:
                         removed += 1
             if removed:
                 self._cache_dirty = True
+                self._invalidate_cross_model_cache_index()
 
         if removed:
             self._save_cache(force=True)
@@ -2322,6 +2381,7 @@ class JaZhTranslator:
                 text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
                 self._atomic_write_json(text_cache_path, self._text_cache)
                 removed += text_removed
+                self._invalidate_cross_model_cache_index()
 
             self._load_manual_cache(force=True)
             manual_removed = 0
@@ -3459,6 +3519,7 @@ JSON 顶层字段：
         # Phase 1-③: 预翻译计数
         pre_translated = 0
         manual_cache_hits = 0
+        cross_model_cache_hits = 0
         # Phase 1-②: 文本缓存命中计数
         text_cache_hits = 0
 
@@ -3491,6 +3552,21 @@ JSON 顶层字段：
                     self.cache.pop(cache_key, None)
                     self._cache_dirty = True
 
+                # ③ 跨模型 cache.json 复用：切换模型后恢复续译时复用旧模型已完成译文。
+                if getattr(self, "allow_text_cache_reuse", False):
+                    cross_cached = self._lookup_cross_model_cache(text, cache_key)
+                    if cross_cached is not None:
+                        cross_cached = self._postprocess_translation(text, cross_cached)
+                        if not self._is_incomplete_translation(text, cross_cached):
+                            remember_completed(idx, text, cross_cached)
+                            self.cache[cache_key] = cross_cached
+                            self._cache_dirty = True
+                            completed += 1
+                            cross_model_cache_hits += 1
+                            if item_callback:
+                                item_callback(text, cross_cached)
+                            continue
+
                 # ③ Phase 1-③: 本地预翻译规则
                 pre_result = self._pre_translate(text)
                 if pre_result is not None:
@@ -3507,9 +3583,9 @@ JSON 顶层字段：
                         item_callback(text, pre_result)
                     continue
 
-                # ④ Phase 1-②: 文本级缓存（跨模型，仅复用已校对译文）
+                # ④ Phase 1-②: 文本级缓存（跨模型复用已通过安全校验的译文）
                 if getattr(self, "allow_text_cache_reuse", False) and not self._is_context_cache_text(text):
-                    text_cached = self._lookup_text_cache(text)
+                    text_cached = self._lookup_text_cache(text, allow_unverified=True)
                     if text_cached is not None:
                         text_cached = self._postprocess_translation(text, text_cached)
                         if not self._is_incomplete_translation(text, text_cached):
@@ -3526,6 +3602,8 @@ JSON 顶层字段：
 
         if manual_cache_hits:
             logger.info(f"人工译文缓存命中: {manual_cache_hits} 条")
+        if cross_model_cache_hits:
+            logger.info(f"跨模型模型缓存命中: {cross_model_cache_hits} 条")
         if pre_translated:
             logger.info(f"预翻译命中: {pre_translated} 条")
         if text_cache_hits:

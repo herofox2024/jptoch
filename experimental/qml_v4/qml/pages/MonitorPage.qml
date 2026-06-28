@@ -58,12 +58,6 @@ Page {
     property string detailOriginal: ""
     property string detailDraft: ""
     property string detailRevised: ""
-    property int qualityJapaneseResidueCount: 0
-    property int qualityGlossaryMismatchCount: 0
-    property int qualityChangedCount: 0
-    property string qualityCommonResidue: "--"
-    property var qualityResidueCounts: ({})
-
     ListModel { id: proofreadModel }
 
     function isBusy() {
@@ -124,7 +118,6 @@ Page {
 
     function appendProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed) {
         page.proofreadCount += 1
-        page.updateQualityReport(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed)
         proofreadModel.append({
             "indexText": "#" + page.proofreadCount,
             "timeText": new Date().toLocaleTimeString(),
@@ -148,62 +141,6 @@ Page {
     function clearProofreadDetails() {
         page.proofreadCount = 0
         proofreadModel.clear()
-        page.clearQualityReport()
-    }
-
-    function clearQualityReport() {
-        page.qualityJapaneseResidueCount = 0
-        page.qualityGlossaryMismatchCount = 0
-        page.qualityChangedCount = 0
-        page.qualityCommonResidue = "--"
-        page.qualityResidueCounts = ({})
-    }
-
-    function extractResidueFragments(text) {
-        var value = String(text || "")
-        var matches = value.match(/[\u3040-\u30ffー]{2,}/g)
-        if (!matches) return []
-        var result = []
-        for (var i = 0; i < matches.length; i++) {
-            var part = matches[i].trim()
-            if (part.length >= 2 && result.indexOf(part) < 0) result.push(part)
-        }
-        return result
-    }
-
-    function updateQualityReport(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed) {
-        if (japaneseResidue) page.qualityJapaneseResidueCount += 1
-        if (glossaryMismatch) page.qualityGlossaryMismatchCount += 1
-        if (changed) page.qualityChangedCount += 1
-
-        var fragments = page.extractResidueFragments(draft)
-        if (fragments.length === 0) fragments = page.extractResidueFragments(reason)
-        if (fragments.length === 0) fragments = page.extractResidueFragments(original)
-        var counts = page.qualityResidueCounts || ({})
-        var topText = page.qualityCommonResidue
-        var topCount = 0
-        if (topText !== "--" && counts[topText]) topCount = counts[topText]
-        for (var i = 0; i < fragments.length; i++) {
-            var fragment = fragments[i]
-            counts[fragment] = (counts[fragment] || 0) + 1
-            if (counts[fragment] > topCount) {
-                topText = fragment
-                topCount = counts[fragment]
-            }
-        }
-        page.qualityResidueCounts = counts
-        page.qualityCommonResidue = topCount > 0 ? (topText + " ×" + topCount) : "--"
-    }
-
-    function qualityChangedRateText() {
-        if (page.proofreadCount <= 0) return "--"
-        return (page.qualityChangedCount * 100.0 / page.proofreadCount).toFixed(1) + "%"
-    }
-
-    function failedProviderText() {
-        if (page.statFailCount <= 0) return "无"
-        if (page.cfg && page.cfg.provider) return page.cfg.provider + " ×" + page.statFailCount
-        return page.statFailCount + " 次"
     }
 
     function clearRunStats() {
@@ -571,7 +508,6 @@ Page {
                 border.color: AppPalette.lineColor
             }
             TabButton { text: "运行概览" }
-            TabButton { text: "质量报告" }
             TabButton { text: "实时翻译" }
             TabButton { text: "校对详情" }
             TabButton { text: "错误诊断" }
@@ -630,112 +566,6 @@ Page {
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                color: AppPalette.cardBg
-                radius: AppPalette.radiusLarge
-                border.color: AppPalette.borderColor
-
-                ScrollView {
-                    anchors.fill: parent
-                    anchors.margins: 14
-                    clip: true
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                    ColumnLayout {
-                        width: parent.availableWidth
-                        spacing: 12
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(108, qualityHeaderColumn.implicitHeight + 40)
-                            radius: AppPalette.radiusMedium
-                            color: AppPalette.surfaceRaised
-                            border.color: AppPalette.lineColor
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                spacing: 12
-
-                                ColumnLayout {
-                                    id: qualityHeaderColumn
-                                    Layout.fillWidth: true
-                                    spacing: 4
-                                    Label {
-                                        text: "质量报告"
-                                        color: AppPalette.textColor
-                                        font.pixelSize: 18
-                                        font.weight: Font.DemiBold
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: proofreadModel.count > 0
-                                              ? "基于本次质检、校对详情和运行统计生成，用于快速判断是否存在日文残留、术语误用或接口失败。"
-                                              : "翻译过程中出现可疑译文或校对记录后，这里会自动汇总质量指标。"
-                                        color: AppPalette.mutedText
-                                        font.pixelSize: 12
-                                        wrapMode: Text.WordWrap
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.preferredWidth: 128
-                                    Layout.preferredHeight: 40
-                                    radius: 20
-                                    color: page.statFailCount > 0 || page.statJapaneseResidueRemaining > 0 ? (AppPalette.dark ? "#3a2420" : "#f6ded9") : AppPalette.accentSoft
-                                    border.color: page.statFailCount > 0 || page.statJapaneseResidueRemaining > 0 ? AppPalette.errorColor : AppPalette.accentColor
-                                    Label {
-                                        anchors.centerIn: parent
-                                        text: page.statFailCount > 0 || page.statJapaneseResidueRemaining > 0 ? "需复查" : "质量正常"
-                                        color: parent.border.color
-                                        font.pixelSize: 13
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-                            }
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: page.width > 1060 ? 4 : (page.width > 760 ? 2 : 1)
-                            columnSpacing: 10
-                            rowSpacing: 10
-
-                            QualityMetricCard { title: "日文残留触发"; value: page.qualityJapaneseResidueCount; hint: "校对详情中标记为日文残留的次数"; tone: page.qualityJapaneseResidueCount > 0 ? "error" : "success" }
-                            QualityMetricCard { title: "术语不一致"; value: page.qualityGlossaryMismatchCount; hint: "校对详情中标记为术语不一致的次数"; tone: page.qualityGlossaryMismatchCount > 0 ? "amber" : "success" }
-                            QualityMetricCard { title: "重译次数"; value: page.statQualityRetranslate; hint: "质检判定需要重新翻译的文本次数"; tone: page.statQualityRetranslate > 0 ? "amber" : "" }
-                            QualityMetricCard { title: "校对修改率"; value: page.qualityChangedRateText(); hint: page.qualityChangedCount + " / " + page.proofreadCount + " 条校对记录发生变化"; tone: page.qualityChangedCount > 0 ? "accent" : "" }
-                            QualityMetricCard { title: "校对修复"; value: page.statProofreadFixed; hint: "后端统计的校对修复次数"; tone: "accent" }
-                            QualityMetricCard { title: "保存前残留"; value: page.statJapaneseResidueRemaining; hint: "保存 EPUB 前仍检测到的疑似日文残留"; tone: page.statJapaneseResidueRemaining > 0 ? "error" : "success" }
-                            QualityMetricCard { title: "失败供应商"; value: page.failedProviderText(); hint: "API 失败数按当前翻译供应商归因"; tone: page.statFailCount > 0 ? "error" : "success" }
-                            QualityMetricCard { title: "常见残留片段"; value: page.qualityCommonResidue; hint: "从初译/原因/原文中提取的假名片段"; tone: page.qualityCommonResidue !== "--" ? "amber" : "" }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: qualityAdviceText.paintedHeight + 36
-                            radius: AppPalette.radiusMedium
-                            color: AppPalette.fieldBg
-                            border.color: AppPalette.lineColor
-                            Label {
-                                id: qualityAdviceText
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                text: page.statJapaneseResidueRemaining > 0
-                                      ? "建议：保存前仍有日文残留，降低并发/批量或切换更稳定模型后恢复续译；不要直接发布当前输出。"
-                                      : (page.qualityGlossaryMismatchCount > 0
-                                         ? "建议：术语不一致较多时，优先检查术语表是否过宽、是否存在一词多义误匹配。"
-                                         : "建议：如果质量报告长期为空，说明本地检查暂未发现明显问题；仍建议抽查章节标题和专有名词。")
-                                color: AppPalette.mutedText
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
                         }
                     }
                 }
@@ -1085,73 +915,6 @@ Page {
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
                 Layout.fillWidth: true
-            }
-        }
-    }
-
-    component QualityMetricCard: Rectangle {
-        property string title: ""
-        property var value: ""
-        property string hint: ""
-        property string tone: ""
-
-        Layout.fillWidth: true
-        Layout.preferredHeight: cardColumn.implicitHeight + 24
-        Layout.minimumHeight: 104
-        implicitHeight: Layout.preferredHeight
-        radius: AppPalette.radiusMedium
-        color: AppPalette.surfaceRaised
-        clip: true
-        border.color: tone === "error"
-                      ? AppPalette.errorColor
-                      : tone === "amber"
-                        ? AppPalette.amberColor
-                        : tone === "accent"
-                          ? AppPalette.accentColor
-                          : AppPalette.lineColor
-
-        readonly property color toneColor: tone === "error"
-                                           ? AppPalette.errorColor
-                                           : tone === "amber"
-                                             ? AppPalette.amberColor
-                                             : tone === "accent"
-                                               ? AppPalette.accentColor
-                                               : tone === "success"
-                                                 ? AppPalette.successColor
-                                                 : AppPalette.textColor
-
-        ColumnLayout {
-            id: cardColumn
-            anchors.fill: parent
-            anchors.margins: 12
-            spacing: 6
-
-            Label {
-                Layout.fillWidth: true
-                text: title
-                color: AppPalette.mutedText
-                font.pixelSize: 11
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: value !== undefined ? value.toString() : "--"
-                color: parent.parent.toneColor
-                font.pixelSize: 20
-                font.weight: Font.DemiBold
-                wrapMode: Text.WordWrap
-                elide: Text.ElideRight
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: hint
-                color: AppPalette.mutedText
-                font.pixelSize: 10
-                wrapMode: Text.WordWrap
-                elide: Text.ElideRight
             }
         }
     }

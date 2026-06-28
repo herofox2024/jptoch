@@ -211,7 +211,7 @@ class _TranslateWorker(QObject):
                 proofread_provider=cfg.get("proofread_provider") or None,
                 proofread_api_key=cfg.get("proofread_api_key") or None,
                 proofread_api_url=cfg.get("proofread_api_url") or None,
-                allow_text_cache_reuse=bool(cfg.get("allow_text_cache_reuse", False)),
+                allow_text_cache_reuse=bool(cfg.get("allow_text_cache_reuse", True)),
             )
             self._translator = translator
             if self._bridge:
@@ -690,7 +690,7 @@ class TranslateBridge(QObject):
             "proofread_api_key": getattr(cfg, "proofreadApiKey", ""),
             "proofread_api_url": getattr(cfg, "proofreadApiUrl", ""),
             "proofread_model": getattr(cfg, "proofreadModel", ""),  # P3-⑥
-            "allow_text_cache_reuse": getattr(cfg, "allowTextCacheReuse", False),
+            "allow_text_cache_reuse": getattr(cfg, "allowTextCacheReuse", True),
         }
 
     @Slot("QVariant")
@@ -911,6 +911,12 @@ class TranslateBridge(QObject):
     def resumeTranslation(self, cfg):
         if not self._is_paused:
             self.failed.emit("当前没有可恢复的暂停任务"); return
+        if hasattr(cfg, "allowTextCacheReuse"):
+            try:
+                cfg.allowTextCacheReuse = True
+                cfg.saveToDisk()
+            except Exception:
+                logger.debug("恢复续译时启用跨模型缓存复用失败", exc_info=True)
         self._cancel_event.clear()
         self._is_paused = False
         self.startTranslation(cfg)

@@ -503,7 +503,7 @@ Page {
                         spacing: 10
 
                         Label {
-                            text: "校对可使用独立供应商和模型。跨模型缓存只复用已经过校对的译文，避免换模型时误用未验证旧译文。"
+                            text: "校对可使用独立供应商和模型；切换翻译模型后，恢复续译会优先复用已通过安全校验的旧译文缓存。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
                             font.pixelSize: 12
@@ -718,15 +718,15 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: "跨模型缓存只复用已经过校对的译文。需要重新用新模型翻译当前 EPUB 时，请到任务页使用“清理当前 EPUB 缓存”。"
+                            text: "跨模型缓存用于切换大模型后继续续译：已通过安全校验的旧模型译文会直接复用。需要完全用新模型重译当前 EPUB 时，请到任务页使用“清理当前 EPUB 缓存”。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
                             font.pixelSize: 12
                         }
 
                         CheckBox {
-                            text: "允许跨模型复用已校对译文缓存"
-                            checked: cfg ? cfg.allowTextCacheReuse : false
+                            text: "允许切换模型后复用已翻译缓存"
+                            checked: cfg ? cfg.allowTextCacheReuse : true
                             onCheckedChanged: {
                                 if (cfg) {
                                     cfg.allowTextCacheReuse = checked

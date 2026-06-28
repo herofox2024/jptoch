@@ -216,7 +216,7 @@ class ConfigBridge(QObject):
         self._proofread_api_key = ""
         self._proofread_api_url = ""
         self._proofread_model = ""   # P3-⑥: 校对专用模型（空=使用主模型）
-        self._allow_text_cache_reuse = False
+        self._allow_text_cache_reuse = True
         self._theme = "light"
         self._autosave_enabled = False
         self._load_from_disk()
@@ -246,6 +246,8 @@ class ConfigBridge(QObject):
             for key in _CONFIG_KEYS:
                 if key in data:
                     setattr(self, f"_{key}", data[key])
+            if "allow_text_cache_reuse" not in data:
+                self._allow_text_cache_reuse = True
             logger.info(f"配置已加载: {path}")
         except Exception as e:
             logger.warning(f"加载配置失败: {e}")
