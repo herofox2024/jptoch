@@ -23,8 +23,60 @@ Page {
     property var proofreadToneLabels: ["自动识别（推荐）", "中性口吻", "轻小说口吻", "文学化口吻"]
     property var proofreadProviderValues: ["", "deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"]
     property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Gemini", "智谱 GLM", "文心一言", "自定义"]
+    property string residueAllowlistPath: cfg ? cfg.japaneseResidueAllowlistPath : ""
+    property string residueAllowlistStatus: ""
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
     readonly property bool updaterBusy: updater ? (updater.checking || updater.downloading) : false
+
+    ListModel { id: residueAllowlistModel }
+
+    function refreshJapaneseResidueAllowlist() {
+        if (!cfg || !cfg.getJapaneseResidueAllowlist) return
+        var info = cfg.getJapaneseResidueAllowlist()
+        page.residueAllowlistPath = info.path || ""
+        residueAllowlistModel.clear()
+        var items = info.quoted || []
+        for (var i = 0; i < items.length; i++) {
+            residueAllowlistModel.append({ "fragment": items[i] })
+        }
+    }
+
+    function addJapaneseResidueAllowItem() {
+        if (!cfg) return
+        var value = residueAllowInput.text.trim()
+        if (!value) {
+            page.residueAllowlistStatus = "请输入要放行的片段"
+            return
+        }
+        var result = cfg.addJapaneseResidueAllowQuoted(value)
+        page.residueAllowlistStatus = result.message || ""
+        residueAllowInput.text = ""
+        page.refreshJapaneseResidueAllowlist()
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result.ok ? ToastBridge.showSuccess(page.residueAllowlistStatus) : ToastBridge.showError(page.residueAllowlistStatus)
+        }
+    }
+
+    function removeJapaneseResidueAllowItem(value) {
+        if (!cfg || !value) return
+        var result = cfg.removeJapaneseResidueAllowQuoted(value)
+        page.residueAllowlistStatus = result.message || ""
+        page.refreshJapaneseResidueAllowlist()
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result.ok ? ToastBridge.showSuccess(page.residueAllowlistStatus) : ToastBridge.showError(page.residueAllowlistStatus)
+        }
+    }
+
+    Component.onCompleted: page.refreshJapaneseResidueAllowlist()
+
+    Connections {
+        target: page.cfg
+        ignoreUnknownSignals: true
+
+        function onJapaneseResidueAllowlistChanged() {
+            page.refreshJapaneseResidueAllowlist()
+        }
+    }
 
     Connections {
         target: page.updater
@@ -356,6 +408,7 @@ Page {
                         }
                     }
                 }
+
             }
 
             SettingsPane {
@@ -526,6 +579,129 @@ Page {
                                 onTextChanged: { if (cfg) cfg.proofreadModel = text }
                                 onEditingFinished: { if (cfg) cfg.saveToDisk() }
                             }
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: "日文残留白名单"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 10
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "仅在确认片段确实需要保留日文时使用。这里添加的是“引号内片段白名单”，例如译文中的 “レディス” 会放行，但正文其他位置的日文仍会继续被拦截。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Label {
+                                text: "文件"
+                                color: AppPalette.textColor
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+
+                            TextField {
+                                Layout.fillWidth: true
+                                text: page.residueAllowlistPath
+                                readOnly: true
+                                selectByMouse: true
+                                color: AppPalette.textColor
+                                font.pixelSize: 11
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            TextField {
+                                id: residueAllowInput
+                                Layout.fillWidth: true
+                                placeholderText: "输入保存前提示里的片段，例如 レディス"
+                                selectByMouse: true
+                                onAccepted: page.addJapaneseResidueAllowItem()
+                            }
+
+                            Button {
+                                text: "加入白名单"
+                                highlighted: true
+                                onClicked: page.addJapaneseResidueAllowItem()
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.max(86, Math.min(190, residueAllowlistModel.count * 38 + 18))
+                            radius: AppPalette.radiusMedium
+                            color: AppPalette.cardAlt
+                            border.color: AppPalette.lineColor
+                            clip: true
+
+                            ListView {
+                                id: residueAllowList
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                model: residueAllowlistModel
+                                spacing: 6
+                                clip: true
+
+                                delegate: Rectangle {
+                                    width: residueAllowList.width
+                                    height: 32
+                                    radius: 10
+                                    color: AppPalette.surfaceRaised
+                                    border.color: AppPalette.lineColor
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 10
+                                        anchors.rightMargin: 6
+                                        spacing: 8
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: fragment
+                                            color: AppPalette.textColor
+                                            font.pixelSize: 13
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Button {
+                                            text: "删除"
+                                            flat: true
+                                            onClicked: page.removeJapaneseResidueAllowItem(fragment)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                anchors.centerIn: parent
+                                visible: residueAllowlistModel.count === 0
+                                text: "暂无白名单片段"
+                                color: AppPalette.mutedText
+                                font.pixelSize: 12
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.residueAllowlistStatus
+                            visible: page.residueAllowlistStatus !== ""
+                            color: page.residueAllowlistStatus.indexOf("失败") >= 0 || page.residueAllowlistStatus.indexOf("请输入") >= 0
+                                   ? AppPalette.errorColor : AppPalette.successColor
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
                         }
                     }
                 }

@@ -6,6 +6,7 @@
 import json
 import logging
 from pathlib import Path
+from typing import Any, Dict, List
 
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
@@ -88,16 +89,80 @@ _CONFIG_KEYS = [
 ]
 
 CONFIG_FILE_NAME = "config.json"
+JAPANESE_RESIDUE_ALLOWLIST_FILE_NAME = "japanese_residue_allowlist.json"
+_RESIDUE_QUOTE_CHARS = "「」『』“”\"'（）()【】[]"
 
 
 def _data_dir() -> Path:
     data_dir = Path.home() / ".epub_translator"
-    data_dir.mkdir(exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
 
 def _config_path() -> Path:
     return _data_dir() / CONFIG_FILE_NAME
+
+
+def _japanese_residue_allowlist_path() -> Path:
+    return _data_dir() / JAPANESE_RESIDUE_ALLOWLIST_FILE_NAME
+
+
+def _normalize_residue_fragment(fragment: str) -> str:
+    text = str(fragment or "").strip()
+    return text.strip(_RESIDUE_QUOTE_CHARS).strip()
+
+
+def _default_residue_allowlist() -> Dict[str, List[str]]:
+    return {"quoted": [], "exact": [], "quoted_regex": [], "regex": []}
+
+
+def _clean_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _load_residue_allowlist() -> Dict[str, List[str]]:
+    path = _japanese_residue_allowlist_path()
+    payload = _default_residue_allowlist()
+    if not path.exists():
+        return payload
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(data, dict):
+            return payload
+        for key in payload:
+            payload[key] = _clean_string_list(data.get(key))
+    except Exception as exc:
+        logger.warning("加载日文残留允许列表失败: %s", exc)
+    return payload
+
+
+def _save_residue_allowlist(payload: Dict[str, List[str]]) -> None:
+    path = _japanese_residue_allowlist_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned = _default_residue_allowlist()
+    for key in cleaned:
+        cleaned[key] = _clean_string_list(payload.get(key))
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _invalidate_translator_residue_allowlist_cache() -> None:
+    try:
+        from translator import JaZhTranslator
+
+        JaZhTranslator._japanese_residue_allowlist_cache = None
+        JaZhTranslator._japanese_residue_allowlist_mtime = None
+        JaZhTranslator._japanese_residue_allowlist_checked_at = 0.0
+    except Exception:
+        pass
 
 
 class ConfigBridge(QObject):
@@ -125,6 +190,7 @@ class ConfigBridge(QObject):
     _proofreadApiKeyChanged = Signal()
     _proofreadApiUrlChanged = Signal()
     _themeChanged = Signal()
+    japaneseResidueAllowlistChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -217,6 +283,53 @@ class ConfigBridge(QObject):
     def getPerfPreset(self, key: str):
         preset = PERF_UI_PRESETS.get(key, {})
         return preset.get("values", {})
+
+    @Property(str, constant=True)
+    def japaneseResidueAllowlistPath(self) -> str:
+        return str(_japanese_residue_allowlist_path())
+
+    @Slot(result="QVariantMap")
+    def getJapaneseResidueAllowlist(self):
+        payload = _load_residue_allowlist()
+        return {
+            "path": str(_japanese_residue_allowlist_path()),
+            "quoted": payload.get("quoted", []),
+            "exact": payload.get("exact", []),
+            "quotedRegex": payload.get("quoted_regex", []),
+            "regex": payload.get("regex", []),
+        }
+
+    @Slot(str, result="QVariantMap")
+    def addJapaneseResidueAllowQuoted(self, fragment: str):
+        value = _normalize_residue_fragment(fragment)
+        if not value:
+            return {"ok": False, "message": "请输入需要放行的片段"}
+        payload = _load_residue_allowlist()
+        quoted = payload.setdefault("quoted", [])
+        if value not in quoted:
+            quoted.append(value)
+            _save_residue_allowlist(payload)
+            _invalidate_translator_residue_allowlist_cache()
+            self.japaneseResidueAllowlistChanged.emit()
+            logger.info("已加入日文残留允许列表: %s", value)
+            return {"ok": True, "message": f"已加入白名单: {value}"}
+        return {"ok": True, "message": f"白名单已存在: {value}"}
+
+    @Slot(str, result="QVariantMap")
+    def removeJapaneseResidueAllowQuoted(self, fragment: str):
+        value = _normalize_residue_fragment(fragment)
+        if not value:
+            return {"ok": False, "message": "请选择要删除的片段"}
+        payload = _load_residue_allowlist()
+        quoted = payload.setdefault("quoted", [])
+        if value in quoted:
+            payload["quoted"] = [item for item in quoted if item != value]
+            _save_residue_allowlist(payload)
+            _invalidate_translator_residue_allowlist_cache()
+            self.japaneseResidueAllowlistChanged.emit()
+            logger.info("已移除日文残留允许列表: %s", value)
+            return {"ok": True, "message": f"已删除: {value}"}
+        return {"ok": False, "message": f"白名单不存在: {value}"}
 
     @Slot(str)
     def setProvider(self, provider: str):
