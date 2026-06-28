@@ -1,0 +1,87 @@
+# -*- coding: utf-8 -*-
+"""QML bridge for viewing the application log in real time."""
+
+import logging
+import time
+from pathlib import Path
+
+from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices
+
+
+def _data_dir() -> Path:
+    path = Path.home() / ".epub_translator"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _logs_dir() -> Path:
+    path = _data_dir() / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _current_log_path() -> Path:
+    return _logs_dir() / f"app-{time.strftime('%Y%m%d')}.log"
+
+
+class _QtLogHandler(logging.Handler):
+    """Forward Python logging records to QML through a Qt signal."""
+
+    def __init__(self, bridge: "LogBridge"):
+        super().__init__(level=logging.INFO)
+        self._bridge = bridge
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._bridge.entryAppended.emit(self.format(record))
+        except Exception:
+            # Never let UI log forwarding break the actual logging pipeline.
+            pass
+
+
+class LogBridge(QObject):
+    entryAppended = Signal(str)
+    currentLogPathChanged = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._handler = _QtLogHandler(self)
+        self._handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        logging.getLogger().addHandler(self._handler)
+
+    @Property(str, notify=currentLogPathChanged)
+    def currentLogPath(self) -> str:
+        return str(_current_log_path())
+
+    @Property(str, constant=True)
+    def logDirectory(self) -> str:
+        return str(_logs_dir())
+
+    @Slot(int, result=str)
+    def readRecent(self, maxLines: int = 800) -> str:
+        path = _current_log_path()
+        if not path.exists():
+            return f"日志文件尚未生成: {path}"
+
+        max_lines = max(50, min(int(maxLines or 800), 5000))
+        max_bytes = 1024 * 768
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as file:
+                if size > max_bytes:
+                    file.seek(-max_bytes, 2)
+                    data = file.read()
+                    prefix = f"... 仅显示最近 {max_lines} 行日志 ...\n"
+                else:
+                    data = file.read()
+                    prefix = ""
+            text = data.decode("utf-8", errors="replace")
+            lines = text.splitlines()
+            return prefix + "\n".join(lines[-max_lines:])
+        except Exception as exc:
+            return f"读取日志失败: {exc}"
+
+    @Slot(result=bool)
+    def openLogDirectory(self) -> bool:
+        return QDesktopServices.openUrl(QUrl.fromLocalFile(str(_logs_dir())))

@@ -42,6 +42,7 @@ a = Analysis(
         "backend.glossary_bridge",
         "backend.toast_bridge",
         "backend.update_bridge",
+        "backend.log_bridge",
     ],
     hookspath=[],
     hooksconfig={},

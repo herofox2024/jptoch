@@ -28,10 +28,12 @@ ApplicationWindow {
     property var tbridge: TranslateBridge
     property var gbridge: GlossaryBridge
     property var updater: UpdateBridge
+    property var logBridge: LogBridge
     property var toast: typeof ToastBridge !== "undefined" ? ToastBridge : null
     property int currentPageIndex: 0
     property bool taskPageLoaded: true
     property bool monitorPageLoaded: false
+    property bool logPageLoaded: false
     property bool apiPageLoaded: false
     property bool glossaryPageLoaded: false
     property bool optionsPageLoaded: false
@@ -82,13 +84,14 @@ ApplicationWindow {
     function markPageLoaded(index) {
         if (index === 0) appWindow.taskPageLoaded = true
         else if (index === 1) appWindow.monitorPageLoaded = true
-        else if (index === 2) appWindow.apiPageLoaded = true
-        else if (index === 3) appWindow.glossaryPageLoaded = true
-        else if (index === 4) appWindow.optionsPageLoaded = true
+        else if (index === 2) appWindow.logPageLoaded = true
+        else if (index === 3) appWindow.apiPageLoaded = true
+        else if (index === 4) appWindow.glossaryPageLoaded = true
+        else if (index === 5) appWindow.optionsPageLoaded = true
     }
 
     function activateCurrentPage() {
-        if (appWindow.currentPageIndex === 3
+        if (appWindow.currentPageIndex === 4
                 && glossaryLoader.item
                 && glossaryLoader.item.ensureLoaded) {
             glossaryLoader.item.ensureLoaded()
@@ -300,9 +303,10 @@ ApplicationWindow {
                     spacing: 8
                     NavButton { iconName: "task"; label: "任务"; desc: "导入书籍"; pageIndex: 0 }
                     NavButton { iconName: "status"; label: "状态"; desc: "实时进度"; pageIndex: 1 }
-                    NavButton { iconName: "api"; label: "API"; desc: "模型接口"; pageIndex: 2 }
-                    NavButton { iconName: "glossary"; label: "术语表"; desc: "名词统一"; pageIndex: 3 }
-                    NavButton { iconName: "settings"; label: "设置"; desc: "性能校对"; pageIndex: 4 }
+                    NavButton { iconName: "log"; label: "日志"; desc: "实时诊断"; pageIndex: 2 }
+                    NavButton { iconName: "api"; label: "API"; desc: "模型接口"; pageIndex: 3 }
+                    NavButton { iconName: "glossary"; label: "术语表"; desc: "名词统一"; pageIndex: 4 }
+                    NavButton { iconName: "settings"; label: "设置"; desc: "性能校对"; pageIndex: 5 }
                 }
 
                 Item { Layout.fillHeight: true }
@@ -404,11 +408,26 @@ ApplicationWindow {
                     anchors.fill: parent
                     active: appWindow.apiPageLoaded
                     visible: opacity > 0.01
+                    enabled: appWindow.currentPageIndex === 3
+                    opacity: appWindow.currentPageIndex === 3 ? 1 : 0
+                    scale: appWindow.currentPageIndex === 3 ? 1.0 : 0.992
+                    sourceComponent: ApiConfigPage {
+                        cfg: appWindow.cfg
+                    }
+                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                }
+
+                Loader {
+                    id: logLoader
+                    anchors.fill: parent
+                    active: appWindow.logPageLoaded
+                    visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 2
                     opacity: appWindow.currentPageIndex === 2 ? 1 : 0
                     scale: appWindow.currentPageIndex === 2 ? 1.0 : 0.992
-                    sourceComponent: ApiConfigPage {
-                        cfg: appWindow.cfg
+                    sourceComponent: LogPage {
+                        logBridge: appWindow.logBridge
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -419,9 +438,9 @@ ApplicationWindow {
                     anchors.fill: parent
                     active: appWindow.glossaryPageLoaded
                     visible: opacity > 0.01
-                    enabled: appWindow.currentPageIndex === 3
-                    opacity: appWindow.currentPageIndex === 3 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 3 ? 1.0 : 0.992
+                    enabled: appWindow.currentPageIndex === 4
+                    opacity: appWindow.currentPageIndex === 4 ? 1 : 0
+                    scale: appWindow.currentPageIndex === 4 ? 1.0 : 0.992
                     sourceComponent: GlossaryPage {
                         cfg: appWindow.cfg
                         gbridge: appWindow.gbridge
@@ -436,9 +455,9 @@ ApplicationWindow {
                     anchors.fill: parent
                     active: appWindow.optionsPageLoaded
                     visible: opacity > 0.01
-                    enabled: appWindow.currentPageIndex === 4
-                    opacity: appWindow.currentPageIndex === 4 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 4 ? 1.0 : 0.992
+                    enabled: appWindow.currentPageIndex === 5
+                    opacity: appWindow.currentPageIndex === 5 ? 1 : 0
+                    scale: appWindow.currentPageIndex === 5 ? 1.0 : 0.992
                     sourceComponent: OptionsPage {
                         cfg: appWindow.cfg
                         updater: appWindow.updater
@@ -460,7 +479,7 @@ ApplicationWindow {
         readonly property bool active: pageStack.currentIndex === pageIndex
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 62
+        Layout.preferredHeight: 58
         activeFocusOnTab: true
 
         function activate() {
@@ -699,6 +718,15 @@ ApplicationWindow {
                     circle(ctx, 12, 12, 1.4, true)
                     line(ctx, 12, 6, 12, 3.5)
                     line(ctx, 12, 18, 12, 20.5)
+                } else if (navIcon.name === "log") {
+                    roundedRect(ctx, 4.5, 3.5, 15, 17, 2.2)
+                    ctx.stroke()
+                    line(ctx, 8, 8, 16, 8)
+                    line(ctx, 8, 12, 16, 12)
+                    line(ctx, 8, 16, 13.5, 16)
+                    circle(ctx, 6.8, 8, 0.45, true)
+                    circle(ctx, 6.8, 12, 0.45, true)
+                    circle(ctx, 6.8, 16, 0.45, true)
                 } else if (navIcon.name === "glossary") {
                     ctx.beginPath()
                     ctx.moveTo(px(4), py(6))
