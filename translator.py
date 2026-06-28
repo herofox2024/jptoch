@@ -94,16 +94,122 @@ class TranslationIncompleteError(RuntimeError):
         failed_texts: Optional[List[str]] = None,
         residue_texts: Optional[List[str]] = None,
         partial_results: Optional[Dict[str, str]] = None,
+        failed_details: Optional[List[Dict[str, Any]]] = None,
+        residue_details: Optional[List[Dict[str, Any]]] = None,
     ):
         self.failed_texts = list(dict.fromkeys(failed_texts or []))
         self.residue_texts = list(dict.fromkeys(residue_texts or []))
         self.partial_results = dict(partial_results or {})
+        self.failed_details = self._normalize_failed_details(failed_details, self.failed_texts)
+        self.residue_details = self._normalize_residue_details(residue_details, self.residue_texts)
         message = (
             f"翻译未完成：{len(self.failed_texts)} 条未成功翻译，"
             f"{len(self.residue_texts)} 条疑似仍有日文残留。"
             "已保留成功译文缓存，请降低并发/批量或切换模型后恢复续译。"
         )
         super().__init__(message)
+
+    @staticmethod
+    def _snippet(text: Any, limit: int = 220) -> str:
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + "..."
+
+    @classmethod
+    def _normalize_failed_details(
+        cls,
+        details: Optional[List[Dict[str, Any]]],
+        fallback_texts: List[str],
+    ) -> List[Dict[str, str]]:
+        normalized: List[Dict[str, str]] = []
+        seen = set()
+        for item in details or []:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or item.get("original") or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(
+                {
+                    "text": text,
+                    "reason": str(item.get("reason") or "未返回安全译文"),
+                }
+            )
+        for text in fallback_texts:
+            if text not in seen:
+                seen.add(text)
+                normalized.append({"text": text, "reason": "未返回安全译文"})
+        return normalized
+
+    @classmethod
+    def _normalize_residue_details(
+        cls,
+        details: Optional[List[Dict[str, Any]]],
+        fallback_texts: List[str],
+    ) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        seen = set()
+        for item in details or []:
+            if not isinstance(item, dict):
+                continue
+            original = str(item.get("original") or item.get("text") or "").strip()
+            if not original or original in seen:
+                continue
+            fragments = item.get("fragments") or []
+            if isinstance(fragments, str):
+                fragments = [fragments]
+            fragments = [str(fragment).strip() for fragment in fragments if str(fragment).strip()]
+            seen.add(original)
+            normalized.append(
+                {
+                    "original": original,
+                    "translated": str(item.get("translated") or ""),
+                    "fragments": list(dict.fromkeys(fragments)),
+                    "reason": str(item.get("reason") or "译文疑似仍有日文残留"),
+                }
+            )
+        for text in fallback_texts:
+            if text not in seen:
+                seen.add(text)
+                normalized.append(
+                    {
+                        "original": text,
+                        "translated": "",
+                        "fragments": [],
+                        "reason": "译文疑似仍有日文残留",
+                    }
+                )
+        return normalized
+
+    def format_diagnostics(self, max_items: int = 5) -> str:
+        """Format actionable diagnostics for logs and UI error panels."""
+        lines = [
+            (
+                f"翻译未完成诊断：未成功翻译 {len(self.failed_texts)} 条，"
+                f"疑似日文残留 {len(self.residue_texts)} 条。"
+            )
+        ]
+        if self.failed_details:
+            lines.append("[失败样例]")
+            for index, detail in enumerate(self.failed_details[:max_items], 1):
+                lines.append(f"{index}. 原文: {self._snippet(detail.get('text'))}")
+                lines.append(f"   原因: {self._snippet(detail.get('reason'), 120)}")
+        if self.residue_details:
+            lines.append("[日文残留样例]")
+            for index, detail in enumerate(self.residue_details[:max_items], 1):
+                fragments = detail.get("fragments") or []
+                fragment_text = "、".join(fragments[:8]) if fragments else "未知片段"
+                lines.append(f"{index}. 残留片段: {self._snippet(fragment_text, 160)}")
+                lines.append(f"   原文: {self._snippet(detail.get('original'))}")
+                translated = self._snippet(detail.get("translated"))
+                if translated:
+                    lines.append(f"   译文: {translated}")
+                reason = self._snippet(detail.get("reason"), 120)
+                if reason:
+                    lines.append(f"   原因: {reason}")
+        return "\n".join(lines)
 
 
 def get_data_dir() -> Path:
@@ -3786,18 +3892,37 @@ JSON 顶层字段：
                 self._inc_stat("translation_incomplete", len(unique_failed))
             if unique_residue:
                 self._inc_stat("japanese_residue_remaining", len(unique_residue))
-            sample = " | ".join(unique_failed[:3])
-            logger.error(
-                "翻译未完成：%s 条未成功翻译，%s 条疑似日文残留。样例: %s",
-                len(unique_failed),
-                len(unique_residue),
-                sample or "-",
-            )
-            raise TranslationIncompleteError(
+            failed_details = [
+                {
+                    "text": text,
+                    "reason": failed_texts.get(text) or "未返回安全译文",
+                }
+                for text in unique_failed
+            ]
+            residue_details = []
+            for text in unique_residue:
+                translated = residue_texts.get(text, "")
+                residue_details.append(
+                    {
+                        "original": text,
+                        "translated": translated,
+                        "fragments": self._extract_japanese_residue_fragments(translated),
+                        "reason": failed_texts.get(text) or "译文疑似仍有日文残留",
+                    }
+                )
+            incomplete_error = TranslationIncompleteError(
                 failed_texts=unique_failed,
                 residue_texts=unique_residue,
                 partial_results=results,
+                failed_details=failed_details,
+                residue_details=residue_details,
             )
+            logger.error(
+                "%s\n日文残留白名单路径: %s",
+                incomplete_error.format_diagnostics(max_items=5),
+                self.japanese_residue_allowlist_path(),
+            )
+            raise incomplete_error
 
         if progress_callback and completed < total:
             progress_callback(total, total)

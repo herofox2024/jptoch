@@ -287,14 +287,31 @@ class _TranslateWorker(QObject):
                 translator.flush_cache()
                 failed_count = len(e.failed_texts)
                 residue_count = len(e.residue_texts)
-                samples = "\n".join(f"- {text[:120]}" for text in e.failed_texts[:5])
                 message = (
                     f"翻译未完成：{failed_count} 条未成功翻译，"
                     f"{residue_count} 条疑似日文残留。"
                     "已保留成功译文缓存，请降低并发/批量或切换模型后点击恢复续译。"
                 )
+                if hasattr(e, "format_diagnostics"):
+                    detail = e.format_diagnostics(max_items=5)
+                else:
+                    samples = "\n".join(f"- {text[:120]}" for text in e.failed_texts[:5])
+                    detail = message + (f"\n样例:\n{samples}" if samples else "")
+                if residue_count:
+                    try:
+                        allowlist_path = JaZhTranslator.japanese_residue_allowlist_path()
+                    except Exception:
+                        allowlist_path = ""
+                    detail += (
+                        "\n\n处理建议：如果残留片段是真正未翻译的日文，请不要加入白名单，"
+                        "建议降低批量/并发或切换模型后恢复续译。"
+                        "\n如果残留片段是必须保留的字形、符号或原文标记，"
+                        "可在 设置 -> 风格与校对 -> 日文残留白名单 添加。"
+                    )
+                    if allowlist_path:
+                        detail += f"\n白名单文件: {allowlist_path}"
                 self.statusChanged.emit(message)
-                self.errorDetail.emit(message + (f"\n样例:\n{samples}" if samples else ""))
+                self.errorDetail.emit(detail)
                 self.failed.emit(message)
                 return
 
