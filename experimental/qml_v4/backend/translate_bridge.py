@@ -5,6 +5,7 @@
 
 import os
 import math
+import logging
 import threading
 import time
 import traceback
@@ -17,6 +18,8 @@ from backend.toast_bridge import ToastBridge
 
 CANCELLED_RESULT = "__CANCELLED__"
 STOPPED_RESULT = "__STOPPED__"
+logger = logging.getLogger(__name__)
+
 def _sanitize_filename(name):
     invalid = '<>:"/\\\\|?*'
     cleaned = ''.join('_' if c in invalid or ord(c) < 32 else c for c in name)
@@ -408,6 +411,8 @@ class _TranslateWorker(QObject):
             hidden_tags = {"rt", "rp", "script", "style", "noscript"}
             residue_samples = []
             residue_total = 0
+            weak_residue_samples = []
+            weak_residue_total = 0
             for _, soup, _ in docs:
                 root = soup.find("body") or soup
                 for node in root.find_all(string=True):
@@ -417,12 +422,18 @@ class _TranslateWorker(QObject):
                     raw = str(node).strip()
                     if not raw:
                         continue
-                    if JaZhTranslator.has_japanese_residue(raw):
+                    if JaZhTranslator.has_blocking_japanese_residue(raw):
                         residue_total += 1
                         if len(residue_samples) < 8:
                             fragments = JaZhTranslator.japanese_residue_fragments(raw)
                             fragment_text = "、".join(fragments[:5]) if fragments else "未知片段"
                             residue_samples.append(f"片段: {fragment_text} | 文本: {raw[:120]}")
+                    elif JaZhTranslator.has_weak_japanese_residue(raw):
+                        weak_residue_total += 1
+                        if len(weak_residue_samples) < 5:
+                            fragments = JaZhTranslator.japanese_residue_fragments(raw)
+                            fragment_text = "、".join(fragments[:5]) if fragments else "未知片段"
+                            weak_residue_samples.append(f"片段: {fragment_text} | 文本: {raw[:120]}")
 
             if residue_total:
                 translator.flush_cache()
@@ -440,6 +451,12 @@ class _TranslateWorker(QObject):
                 self.errorDetail.emit(message + hint + (f"\n样例:\n{samples}" if samples else ""))
                 self.failed.emit(message)
                 return
+            if weak_residue_total:
+                logger.warning(
+                    "保存前检查发现 %s 处弱日文残留，已提示但不阻塞保存。样例: %s",
+                    weak_residue_total,
+                    " | ".join(weak_residue_samples),
+                )
 
             for item, soup, _ in docs:
                 item.set_content(str(soup).encode("utf-8"))

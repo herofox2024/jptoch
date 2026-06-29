@@ -1177,6 +1177,39 @@ class JaZhTranslator:
         return [frag for frag in dict.fromkeys(fragments) if frag.strip()]
 
     @classmethod
+    def _has_likely_o_name_prefix_residue(cls, text: str) -> bool:
+        """Detect お + CJK name prefixes even when followed by Chinese text, e.g. お仲写."""
+        stripped = cls._strip_allowed_japanese_notation(text or "")
+        for match in re.finditer(r"お([\u3400-\u9fff々])", stripped):
+            stem = match.group(1)
+            if stem not in cls.JAPANESE_O_PREFIX_NON_PERSON_STEMS:
+                return True
+        return False
+
+    @classmethod
+    def _has_weak_japanese_residue(cls, text: str) -> bool:
+        """Return True for low-risk single-kana leftovers, e.g. historical terms like 藪入り."""
+        stripped = cls._strip_allowed_japanese_notation(text or "")
+        if not cls.JAPANESE_KANA_RE.search(stripped):
+            return False
+        if cls.JAPANESE_O_NAME_PREFIX_RE.search(stripped) or cls._has_likely_o_name_prefix_residue(stripped):
+            return False
+        fragments = [frag for frag in cls.JAPANESE_KANA_FRAGMENT_RE.findall(stripped) if frag.strip()]
+        if not fragments:
+            return False
+        if any(len(fragment) > 1 for fragment in fragments):
+            return False
+        return len(fragments) <= 3 and len(set(fragments)) <= 3
+
+    @classmethod
+    def _has_blocking_japanese_residue(cls, text: str) -> bool:
+        """Return True only for residue that should block cache/save completion."""
+        stripped = cls._strip_allowed_japanese_notation(text or "")
+        if not cls.JAPANESE_KANA_RE.search(stripped):
+            return False
+        return not cls._has_weak_japanese_residue(stripped)
+
+    @classmethod
     def _postprocess_translation(cls, src: str, dst: Optional[str]) -> str:
         """Apply conservative local cleanups before residue checks and cache writes."""
         translated = str(dst or "").strip()
@@ -1347,6 +1380,16 @@ class JaZhTranslator:
         return JaZhTranslator._has_japanese_residue(text)
 
     @staticmethod
+    def has_blocking_japanese_residue(text: str) -> bool:
+        """Public helper for final save checks; weak single-kana leftovers are warnings only."""
+        return JaZhTranslator._has_blocking_japanese_residue(text)
+
+    @staticmethod
+    def has_weak_japanese_residue(text: str) -> bool:
+        """Public helper for diagnostics; weak residue should not block saving."""
+        return JaZhTranslator._has_weak_japanese_residue(text)
+
+    @staticmethod
     def japanese_residue_fragments(text: str) -> List[str]:
         """Public helper for diagnostics and UI messages."""
         return JaZhTranslator._extract_japanese_residue_fragments(text)
@@ -1358,9 +1401,9 @@ class JaZhTranslator:
         translated = cls._postprocess_translation(source, dst)
         if not translated:
             return True
-        if cls._has_japanese_residue(translated):
+        if cls._has_blocking_japanese_residue(translated):
             return True
-        if source and translated == source and cls._has_japanese_residue(source):
+        if source and translated == source and cls._has_blocking_japanese_residue(source):
             return True
         return False
 
@@ -3506,7 +3549,7 @@ JSON 顶层字段：
             if translated is not None:
                 translated = self._postprocess_translation(key, translated)
             failed_texts.setdefault(key, reason)
-            if translated is not None and self._has_japanese_residue(translated):
+            if translated is not None and self._has_blocking_japanese_residue(translated):
                 residue_texts.setdefault(key, translated)
 
         def accept_translation(original: str, translated: Optional[str], reason: str = "") -> Optional[str]:
@@ -3747,6 +3790,10 @@ JSON 顶层字段：
                         if self._should_skip_proofread(src, clean_dst):
                             logger.debug(f"校对分级跳过 [{i}]: 文本过短或匹配跳过模式")
                             continue
+                        weak_residue_only = (
+                            self._has_weak_japanese_residue(clean_dst)
+                            and not self._has_blocking_japanese_residue(clean_dst)
+                        )
                         residue_fragments = self._extract_japanese_residue_fragments(clean_dst)
                         with proofread_residue_fragments_lock:
                             repeated_fragments = [
@@ -3759,6 +3806,12 @@ JSON 顶层字段：
                                         proofread_residue_fragments_seen.get(fragment, 0) + 1
                                     )
                         if repeated_fragments:
+                            if weak_residue_only:
+                                logger.debug(
+                                    "弱日文残留仅提示不阻塞，跳过重复校对: "
+                                    + " / ".join(repeated_fragments[:5])
+                                )
+                                continue
                             suspicious_idx.add(i)
                             retranslate_residue_fragments[i] = repeated_fragments
                             logger.info(
@@ -3835,7 +3888,10 @@ JSON 顶层字段：
                                 else:
                                     raise
                         revised = self._postprocess_translation(src, revised)
-                        if any("日文" in issue or "假名" in issue for issue in issues) and self._has_japanese_residue(revised):
+                        if (
+                            any("日文" in issue or "假名" in issue for issue in issues)
+                            and self._has_blocking_japanese_residue(revised)
+                        ):
                             try:
                                 fallback_prev, fallback_next = get_context_for_task(task_key)
                                 fallback_revised = call_translate_chunk(
