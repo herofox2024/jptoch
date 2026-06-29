@@ -182,6 +182,19 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(result.tone, "light")
         self.assertGreaterEqual(result.confidence, 60)
 
+    def test_detect_novel_style_handles_historical_mystery(self):
+        result = detect_novel_style(
+            title="玄白歌麿捕物帳",
+            toc_titles=["第一章 江戸の町火消し", "第二章 奉行所の同心"],
+            samples=[
+                "旗本の屋敷を訪ねた辰造は、町奉行所の与力から事件の仔細を聞いた。",
+                "『か組』の纏持ちと岡っ引きが番屋で証言を交わしていた。",
+            ],
+        )
+
+        self.assertEqual(result.genre, "historical_mystery")
+        self.assertGreaterEqual(result.confidence, 60)
+
     def test_resolve_style_selection_manual_override(self):
         detected = detect_novel_style(
             title="宇宙船とAI",

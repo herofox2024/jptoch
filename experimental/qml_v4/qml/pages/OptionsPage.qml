@@ -17,8 +17,8 @@ Page {
     property var updateInfo: ({})
     property string updateStatus: updater ? ("当前版本 V" + updater.currentVersion) : "更新模块未加载"
     property int updateDownloadPercent: 0
-    property var proofreadGenreValues: ["auto", "general", "mystery", "scifi", "fantasy"]
-    property var proofreadGenreLabels: ["自动识别（推荐）", "通用小说", "推理小说", "科幻小说", "奇幻小说"]
+    property var proofreadGenreValues: ["auto", "general", "mystery", "historical_mystery", "scifi", "fantasy"]
+    property var proofreadGenreLabels: ["自动识别（推荐）", "通用小说", "推理小说", "历史推理", "科幻小说", "奇幻小说"]
     property var proofreadToneValues: ["auto", "neutral", "light", "literary"]
     property var proofreadToneLabels: ["自动识别（推荐）", "中性口吻", "轻小说口吻", "文学化口吻"]
     property var proofreadProviderValues: ["", "deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"]

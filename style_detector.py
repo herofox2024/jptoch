@@ -7,6 +7,7 @@ from typing import Iterable, List
 
 GENRE_GENERAL = "general"
 GENRE_MYSTERY = "mystery"
+GENRE_HISTORICAL_MYSTERY = "historical_mystery"
 GENRE_SCIFI = "scifi"
 GENRE_FANTASY = "fantasy"
 
@@ -17,6 +18,7 @@ TONE_LITERARY = "literary"
 GENRE_LABELS = {
     GENRE_GENERAL: "通用小说",
     GENRE_MYSTERY: "推理小说",
+    GENRE_HISTORICAL_MYSTERY: "历史推理",
     GENRE_SCIFI: "科幻小说",
     GENRE_FANTASY: "奇幻小说",
 }
@@ -60,6 +62,16 @@ class StyleDetectionResult:
 
 
 GENRE_KEYWORDS = {
+    GENRE_HISTORICAL_MYSTERY: {
+        "捕物帳": 8, "捕物": 7, "捕吏": 6, "同心": 6, "岡っ引": 6, "岡っ引き": 6,
+        "江戸": 6, "奉行": 6, "奉行所": 7, "与力": 6, "旗本": 6, "町火消し": 7,
+        "火消し": 5, "纏持ち": 5, "町奉行": 7, "御用聞き": 6, "長屋": 4,
+        "藪入り": 5, "蔵米": 4, "石取り": 4, "番屋": 5, "自身番": 5,
+        "文化五年": 5, "寛政": 4, "享和": 4, "元禄": 4, "小判": 4, "両": 3,
+        "玄白歌麿捕物帳": 10, "銭形平次": 8, "半七捕物帳": 8,
+        "时代推理": 8, "時代推理": 8, "历史推理": 8, "江户": 6,
+        "奉行所": 7, "町火消": 7, "旗本": 6, "捕物帐": 8,
+    },
     GENRE_MYSTERY: {
         "探偵": 5, "侦探": 5, "推理": 5, "事件": 4, "謎": 4, "谜": 4,
         "殺人": 5, "杀人": 5, "密室": 5, "アリバイ": 4, "不在場証明": 4,

@@ -2586,6 +2586,13 @@ class JaZhTranslator:
                 "对数字、地点、称谓、物证、动作细节保持准确。",
                 "语气可以更清晰，但不能牺牲原文悬念。",
             ],
+            "historical_mystery": [
+                "按历史捕物/时代推理处理，优先保证案情线索、称谓、官职、地名和时代语境准确。",
+                "不要把江户时代对白改成现代轻小说吐槽腔，不要自由润色或补解释。",
+                "对奉行、与力、同心、冈引、町火消、旗本、长屋等时代词保持稳定译法。",
+                "保留推理信息的不确定性，不替读者解释暗号、物证或人物动机。",
+                "对白可以自然中文化，但不能牺牲时代感、阶层关系和原文粗粝口吻。",
+            ],
             "scifi": [
                 "保持技术术语、设定名、组织名、设备名一致。",
                 "技术表达要准确清楚，不要为了口语化而削弱专业感。",
@@ -2719,6 +2726,13 @@ JSON 顶层字段：
         system_prompt = base_prompt + "\n" + extraction_rules
         return system_prompt.rstrip() + "\n\n" + self._build_style_guidance("translation")
 
+    def _translation_task_instruction(self) -> str:
+        """Return the user-facing translation instruction for the active style."""
+        genre, _, _, _ = self._get_style_profile()
+        if genre == "historical_mystery":
+            return "请将以下日文准确、克制、自然地翻译为中文，不要自由润色、不要补充解释："
+        return "请将以下日文翻译为优美流畅的中文："
+
     def _call_deepseek_single(
         self,
         text: str,
@@ -2785,7 +2799,7 @@ JSON 顶层字段：
         residue_guidance_text = f"\n\n{residue_guidance}" if residue_guidance else ""
         user_prompt = (
             f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
-            f"请将以下日文翻译为优美流畅的中文：\n{text}"
+            f"{self._translation_task_instruction()}\n{text}"
             f"{context_guidance}"
             f"{residue_guidance_text}"
         )
@@ -3739,6 +3753,12 @@ JSON 顶层字段：
         if text_cache_hits:
             logger.info(f"文本缓存命中: {text_cache_hits} 条（跨模型）")
         logger.info(f"批量翻译: {total} 条，缓存命中 {completed} 条，待翻译去重后 {len(uncached_unique)} 条")
+
+        if self.proofread_genre == "historical_mystery" and 0 < len(uncached_unique) <= 20 and effective_batch_size > 1:
+            effective_batch_size = 1
+            logger.info(
+                "历史推理少量剩余文本启用保守重试: batch_size=1，不走批量 JSON，禁用自由润色"
+            )
 
         if progress_callback:
             progress_callback(completed, total)
