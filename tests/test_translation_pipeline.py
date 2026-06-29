@@ -307,6 +307,73 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(t.cache[t._cache_key("A")], "ZH:A")
         self.assertEqual(t.cache[t._cache_key("B")], "ZH:B")
 
+    def test_batch_json_total_failure_falls_back_to_single_translation(self):
+        t = DummyTranslator()
+        t.max_workers = 1
+        t.batch_size = 4
+        t._call_deepseek_batch_json = lambda batch, max_retries=2, prev_text=None, next_text=None, item_contexts=None: BatchJsonResult(
+            translations=None,
+            new_terms=[],
+            missing_indices=list(range(len(batch))),
+            finish_reason="stop",
+        )
+        t._call_deepseek = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("delimiter fallback should not be called"))  # type: ignore
+        single_calls = []
+
+        def fake_translate_chunk(text, *args, **kwargs):
+            single_calls.append(text)
+            return f"SINGLE:{text}"
+
+        t._translate_chunk = fake_translate_chunk  # type: ignore
+
+        res = t.translate_batch(["A", "B", "C"], batch_size=4)
+
+        self.assertEqual(res["A"], "SINGLE:A")
+        self.assertEqual(res["B"], "SINGLE:B")
+        self.assertEqual(res["C"], "SINGLE:C")
+        self.assertEqual(single_calls, ["A", "B", "C"])
+        self.assertEqual(t.stats.get("batch_fallback"), 1)
+
+    def test_batch_json_parse_failure_retries_before_fallback(self):
+        class FakeCancel:
+            def is_set(self):
+                return False
+
+            def wait(self, _seconds):
+                return False
+
+        class FakeResponse:
+            def __init__(self, content):
+                self.status_code = 200
+                self.url = "http://example.com/v1/chat/completions"
+                self._content = content
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"choices": [{"message": {"content": self._content}, "finish_reason": "stop"}]}
+
+        class FakeSession:
+            def __init__(self):
+                self.calls = 0
+
+            def post(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return FakeResponse("not json")
+                return FakeResponse('{"translations":[{"idx":0,"zh":"ZH:A"}],"new_terms":[]}')
+
+        t = DummyTranslator()
+        t.cancel_event = FakeCancel()
+        t.session = FakeSession()
+
+        result = t._call_deepseek_batch_json(["A"], max_retries=2)
+
+        self.assertEqual(t.session.calls, 2)
+        self.assertEqual(result.translations, ["ZH:A"])
+        self.assertEqual(result.missing_indices, [])
+
     def test_translate_batch_does_not_write_original_when_retries_fail(self):
         t = DummyTranslator()
         src = "\u5f7c\u5973\u306f\u7b11\u3063\u305f\u3002"
@@ -537,7 +604,11 @@ class TranslatorTests(unittest.TestCase):
             "\u5f7c\u5973\u306f\u9814\u3044\u305f\u3002",
             "\u5f7c\u5973\u306f\u8d70\u3063\u305f\u3002",
         ]
-        drafts = ["\u5979\u306f\u7b11\u4e86\u3002", "\u5979\u306f\u70b9\u5934\u3002", "\u5979\u306f\u8dd1\u4e86\u3002"]
+        drafts = [
+            "\u5979\u4e0e\u304a\u304d\u306c\u8bf4\u8bdd\u3002",
+            "\u5979\u89c1\u5230\u304a\u304d\u306c\u3002",
+            "\u5979\u8ffd\u4e0a\u304a\u304d\u306c\u3002",
+        ]
         t._call_deepseek_batch_json = lambda batch, max_retries=2, prev_text=None, next_text=None, item_contexts=None: BatchJsonResult(
             translations=list(drafts),
             new_terms=[],

@@ -3023,6 +3023,26 @@ JSON 顶层字段：
         if self.provider == "deepseek":
             payload["response_format"] = {"type": "json_object"}
 
+        def retry_or_fail(reason: str, finish_reason: Optional[str] = None, raw_content: str = "") -> Optional[BatchJsonResult]:
+            """Retry malformed batch JSON once more; after max retries, let caller fall back to single translation."""
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt + random.uniform(0, 1)
+                logger.info(
+                    "%s，准备重试批量 JSON (%s/%s)",
+                    reason,
+                    attempt + 1,
+                    max_retries,
+                )
+                if self.cancel_event.wait(wait_time):
+                    raise RuntimeError("翻译已取消")
+                return None
+            return BatchJsonResult(
+                translations=None,
+                missing_indices=list(range(len(texts))),
+                finish_reason=finish_reason,
+                raw_content=raw_content,
+            )
+
         for attempt in range(max_retries):
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
@@ -3053,19 +3073,19 @@ JSON 顶层字段：
                 if not choices:
                     self._inc_stat("batch_json_parse_fail")
                     self._record_dynamic_limit_event("批量 JSON 缺少 choices", kind="format")
-                    return BatchJsonResult(
-                        translations=None, missing_indices=list(range(len(texts))),
-                        finish_reason=self._get_finish_reason(data),
-                    )
+                    failed = retry_or_fail("批量 JSON 缺少 choices", finish_reason=self._get_finish_reason(data))
+                    if failed is None:
+                        continue
+                    return failed
                 message = choices[0].get("message", {})
                 raw = message.get("content", "")
                 if not raw:
                     self._inc_stat("batch_json_parse_fail")
                     self._record_dynamic_limit_event("批量 JSON 缺少 content", kind="format")
-                    return BatchJsonResult(
-                        translations=None, missing_indices=list(range(len(texts))),
-                        finish_reason=self._get_finish_reason(data),
-                    )
+                    failed = retry_or_fail("批量 JSON 缺少 content", finish_reason=self._get_finish_reason(data))
+                    if failed is None:
+                        continue
+                    return failed
 
                 raw = raw.strip()
                 finish_reason = self._get_finish_reason(data)
@@ -3115,10 +3135,11 @@ JSON 顶层字段：
                         self._inc_stat("batch_json_parse_fail")
                         logger.warning("批量 JSON 解析失败，响应摘要: %s", self._response_snippet(raw))
                         self._record_dynamic_limit_event("批量 JSON 解析失败", kind="format")
-                        return BatchJsonResult(
-                            translations=None, missing_indices=list(range(len(texts))),
-                            finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
-                        )
+                        failed = retry_or_fail("批量 JSON 解析失败", finish_reason=finish_reason, raw_content=raw)
+                        if failed is None:
+                            continue
+                        failed.is_truncated = is_truncated
+                        return failed
 
                 arr = obj.get("translations") or obj.get("items")
                 if not isinstance(arr, list):
@@ -3132,10 +3153,11 @@ JSON 顶层字段：
                         self._inc_stat("batch_json_parse_fail")
                         logger.warning("批量 JSON 缺少 translations/items，响应摘要: %s", self._response_snippet(raw))
                         self._record_dynamic_limit_event("批量 JSON 缺少 translations/items", kind="format")
-                        return BatchJsonResult(
-                            translations=None, missing_indices=list(range(len(texts))),
-                            finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw,
-                        )
+                        failed = retry_or_fail("批量 JSON 缺少 translations/items", finish_reason=finish_reason, raw_content=raw)
+                        if failed is None:
+                            continue
+                        failed.is_truncated = is_truncated
+                        return failed
 
                 # 逐条校验 idx，跳过无效项（防幻觉），保留有效项
                 out = [None] * len(texts)
@@ -3844,8 +3866,6 @@ JSON 顶层字段：
                     return self._translate_chunk(text)
                 raise
 
-        mismatch_count = 0
-
         def is_suspicious_pair(src: str, dst: str) -> bool:
             src = (src or "").strip()
             dst = (dst or "").strip()
@@ -4052,7 +4072,6 @@ JSON 顶层字段：
             return repaired
 
         def translate_one_batch(batch: List[str]) -> List[Tuple[str, str, str]]:
-            nonlocal mismatch_count
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
 
@@ -4119,33 +4138,19 @@ JSON 顶层字段：
 
                 return repair_batch_quality(batch, list(zip(batch, batch_texts, final_parts)))
 
-            # Case 3: 全部失败 — 回退到分隔符批量
-            separator = f"\n---SPLIT-{uuid.uuid4().hex}---\n"
-            combined = separator.join(batch_texts)
-            combined_zh = self._call_deepseek(
-                combined,
-                text_separator=separator,
-                prev_text=batch_prev_ctx,
-                next_text=batch_next_ctx,
-            )
-            parts = combined_zh.split(separator)
-
-            if len(parts) != len(batch):
-                with self._cache_lock:
-                    mismatch_count += 1
-                self._inc_stat("batch_fallback")
-                self._inc_stat("batch_split_mismatch")
-                return [
-                    (
-                        task_key,
-                        task_texts[task_key],
-                        call_translate_chunk(task_texts[task_key], *get_context_for_task(task_key)),
-                    )
-                    for task_key in batch
-                ]
-
-            self._inc_stat("batch_delimiter_success")
-            return repair_batch_quality(batch, list(zip(batch, batch_texts, parts)))
+            # Case 3: 批量 JSON 两次仍全部失败 — 直接逐条单条翻译。
+            # 不再走分隔符批量，避免格式/分隔符再次失败导致最后少量文本反复卡住。
+            self._inc_stat("batch_fallback")
+            logger.info("批量 JSON 多次失败，回退逐条单条翻译: %s 条", len(batch))
+            single_parts: List[Optional[str]] = []
+            for task_key, text in zip(batch, batch_texts):
+                try:
+                    retry_prev, retry_next = get_context_for_task(task_key)
+                    single_parts.append(call_translate_chunk(text, retry_prev, retry_next))
+                except Exception as e:
+                    logger.warning(f"批量失败后的单条翻译失败: {e}")
+                    single_parts.append(None)
+            return repair_batch_quality(batch, list(zip(batch, batch_texts, single_parts)))
 
         executor = ThreadPoolExecutor(max_workers=max(1, self.max_workers))
         futures: Dict[Any, List[str]] = {}
@@ -4282,8 +4287,6 @@ JSON 顶层字段：
 
         self._save_cache(force=True)
         self._flush_text_cache()
-        if mismatch_count:
-            logger.warning(f"批量拆分回退 {mismatch_count} 次（模型输出与批次数不一致，已自动逐条翻译）")
 
         for idx, text in enumerate(texts):
             translated = ordered_results[idx] if idx < len(ordered_results) else None
