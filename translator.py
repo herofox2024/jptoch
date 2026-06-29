@@ -1011,6 +1011,50 @@ class JaZhTranslator:
             return text[:limit] + "..."
         return text
 
+    def _log_http_error_response(
+        self,
+        error: requests.exceptions.HTTPError,
+        context: str,
+        attempt: Optional[int] = None,
+        max_retries: Optional[int] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> str:
+        """Log HTTP error response body without leaking request headers/API keys."""
+        resp = getattr(error, "response", None)
+        if resp is None:
+            logger.warning("%s HTTP 错误%s: %s", context, self._format_attempt(attempt, max_retries), error)
+            return ""
+
+        active_provider = (provider or self.provider or "").lower()
+        active_model = model or self.model
+        url = getattr(resp, "url", "")
+        status_code = getattr(resp, "status_code", "unknown")
+        body = ""
+        try:
+            body = resp.text or ""
+        except Exception:
+            body = ""
+        snippet = self._response_snippet(body, limit=900) if body else "<empty>"
+        prefix = "GLM 400" if active_provider == "glm" and status_code == 400 else f"HTTP {status_code}"
+        logger.warning(
+            "%s %s 响应体%s: provider=%s, model=%s, url=%s, body=%s",
+            context,
+            prefix,
+            self._format_attempt(attempt, max_retries),
+            active_provider or "-",
+            active_model or "-",
+            url,
+            snippet,
+        )
+        return snippet
+
+    @staticmethod
+    def _format_attempt(attempt: Optional[int], max_retries: Optional[int]) -> str:
+        if attempt is None or max_retries is None:
+            return ""
+        return f" (尝试 {attempt + 1}/{max_retries})"
+
     def _inc_stat(self, key: str, delta: int = 1):
         with self._stats_lock:
             self.stats[key] = self.stats.get(key, 0) + delta
@@ -1788,6 +1832,18 @@ class JaZhTranslator:
                 logger.warning(f"译后校对超时: {e}")
                 if attempt == 1:
                     return draft
+            except requests.exceptions.HTTPError as e:
+                self._inc_stat("api_requests_failed")
+                self._log_http_error_response(
+                    e,
+                    "译后校对",
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                )
+                if attempt == 1:
+                    return draft
             except Exception as e:
                 logger.warning(f"译后校对失败: {e}")
                 if attempt == 1:
@@ -1990,6 +2046,18 @@ class JaZhTranslator:
                 logger.warning(f"批量校对超时: {e}")
                 if attempt == 1:
                     return {}
+            except requests.exceptions.HTTPError as e:
+                self._inc_stat("api_requests_failed")
+                self._log_http_error_response(
+                    e,
+                    "批量校对",
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                )
+                if attempt == 1:
+                    return {}
             except Exception as e:
                 logger.warning(f"批量校对失败: {e}")
                 if attempt == 1:
@@ -2050,6 +2118,10 @@ class JaZhTranslator:
             if additional:
                 self._record_api_success_event()
             return (additional or "").strip(), finish_reason
+        except requests.exceptions.HTTPError as e:
+            self._inc_stat("api_requests_failed")
+            self._log_http_error_response(e, "截断续取")
+            return "", None
         except Exception as e:
             logger.warning(f"截断续取请求失败: {e}")
             return "", None
@@ -2834,8 +2906,15 @@ JSON 顶层字段：
                 logger.warning(f"网络连接失败 (尝试 {attempt + 1}/{max_retries})")
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
+                body_snippet = self._log_http_error_response(
+                    e,
+                    "单条翻译",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                )
                 last_error = f"HTTP 错误: {e}"
-                logger.warning(f"HTTP 错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if body_snippet:
+                    last_error += f"; 响应体: {self._response_snippet(body_snippet, limit=240)}"
             except (json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
                 last_error = f"API 响应格式错误: {e}"
@@ -3113,7 +3192,15 @@ JSON 顶层字段：
                 )
             except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
-                logger.warning(f"批量翻译请求失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if isinstance(e, requests.exceptions.HTTPError):
+                    self._log_http_error_response(
+                        e,
+                        "批量 JSON 翻译",
+                        attempt=attempt,
+                        max_retries=max_retries,
+                    )
+                else:
+                    logger.warning(f"批量翻译请求失败 (尝试 {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt + random.uniform(0, 1)
                     if self.cancel_event.wait(wait_time):
