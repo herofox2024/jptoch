@@ -247,67 +247,139 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 58
+            Layout.preferredHeight: toolbarContent.implicitHeight + 28
             radius: AppPalette.radiusLarge
             color: AppPalette.cardBg
             border.color: AppPalette.borderColor
 
-            RowLayout {
+            ColumnLayout {
+                id: toolbarContent
                 anchors.fill: parent
-                anchors.leftMargin: 14
-                anchors.rightMargin: 14
-                spacing: 10
+                anchors.margins: 14
+                spacing: 8
 
-                Flow {
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    RowLayout {
+                        id: primaryActions
+                        Layout.fillWidth: true
+                        spacing: 6
+                        readonly property real actionButtonWidth: Math.max(104, Math.floor((width - spacing * 6) / 7))
+
+                        Button {
+                            text: "刷新"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 76
+                            Layout.preferredHeight: 34
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: 12
+                            onClicked: { if (page.gbridge) page.gbridge.load() }
+                        }
+                        Button {
+                            text: "新增术语"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 92
+                            Layout.preferredHeight: 34
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: 12
+                            onClicked: {
+                                if (page.gbridge) {
+                                    page.gbridge.addRow("Item")
+                                    page.statusMessage = "已新增一条手动术语，请填写后保存"
+                                    page.refreshStats()
+                                }
+                            }
+                        }
+                        Button {
+                            text: "删除选中"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 92
+                            Layout.preferredHeight: 34
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: 12
+                            enabled: page.selectedRows.length > 0
+                            onClicked: {
+                                if (page.selectedRows.length > 0 && page.gbridge) {
+                                    page.gbridge.deleteRows(page.selectedRows)
+                                    page.selectedRows = []
+                                    page.statusMessage = "已删除选中术语，保存后写入文件"
+                                    page.refreshStats()
+                                }
+                            }
+                        }
+                        Button {
+                            text: "保存修改"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 92
+                            Layout.preferredHeight: 34
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: 12
+                            highlighted: page.dirty
+                            enabled: page.dirty
+                            onClicked: { if (page.gbridge) page.gbridge.save() }
+                        }
+                        Button {
+                            text: "增量导入"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 92
+                            Layout.preferredHeight: 34
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: 12
+                            onClicked: importDialog.open()
+                        }
+                        Button {
+                            text: "导出/备份"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 96
+                            Layout.preferredHeight: 34
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: 12
+                            onClicked: exportDialog.open()
+                        }
+                        Button {
+                            text: "恢复备份"
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 92
+                            Layout.preferredHeight: 34
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: 12
+                            onClicked: restoreDialog.open()
+                        }
+                    }
+                }
+
+                RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
-                    Button {
-                        text: "刷新"
-                        onClicked: { if (page.gbridge) page.gbridge.load() }
-                    }
-                    Button {
-                        text: "新增术语"
-                        onClicked: {
-                            if (page.gbridge) {
-                                page.gbridge.addRow("Item")
-                                page.statusMessage = "已新增一条手动术语，请填写后保存"
-                                page.refreshStats()
-                            }
-                        }
-                    }
-                    Button {
-                        text: "删除选中"
-                        enabled: page.selectedRows.length > 0
-                        onClicked: {
-                            if (page.selectedRows.length > 0 && page.gbridge) {
-                                page.gbridge.deleteRows(page.selectedRows)
-                                page.selectedRows = []
-                                page.statusMessage = "已删除选中术语，保存后写入文件"
-                                page.refreshStats()
-                            }
-                        }
-                    }
-                    Button {
-                        text: "保存修改"
-                        highlighted: page.dirty
-                        enabled: page.dirty
-                        onClicked: { if (page.gbridge) page.gbridge.save() }
-                    }
-                    Button { text: "增量导入 JSON"; onClicked: importDialog.open() }
-                    Button { text: "导出/备份 JSON"; onClicked: exportDialog.open() }
-                    Button { text: "恢复备份"; onClicked: restoreDialog.open() }
-                }
 
-                CheckBox {
-                    text: "启用术语表"
-                    checked: cfg ? cfg.enableGlossary : true
-                    onCheckedChanged: { if (cfg) cfg.enableGlossary = checked }
-                }
-                CheckBox {
-                    text: "自动提取"
-                    checked: cfg ? cfg.extractGlossary : false
-                    enabled: cfg ? cfg.enableGlossary : false
-                    onCheckedChanged: { if (cfg) cfg.extractGlossary = checked }
+                    CheckBox {
+                        text: "启用术语表"
+                        checked: cfg ? cfg.enableGlossary : true
+                        onCheckedChanged: { if (cfg) cfg.enableGlossary = checked }
+                    }
+                    CheckBox {
+                        text: "自动提取"
+                        checked: cfg ? cfg.extractGlossary : false
+                        enabled: cfg ? cfg.enableGlossary : false
+                        onCheckedChanged: { if (cfg) cfg.extractGlossary = checked }
+                    }
+                    Item { Layout.fillWidth: true }
                 }
             }
         }
