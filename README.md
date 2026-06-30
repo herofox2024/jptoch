@@ -11,6 +11,8 @@
 ![Platform](https://img.shields.io/badge/platform-Windows-c47f2c)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen)
 
+**Language:** [简体中文](README.md) | [English](README_EN.md)
+
 **当前主力版本：QML/V4.1**  
 **稳定回退版：Qt V3.2.1**
 
