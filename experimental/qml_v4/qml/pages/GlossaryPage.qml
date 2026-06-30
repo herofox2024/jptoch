@@ -623,7 +623,7 @@ Page {
             anchors.topMargin: 5
             anchors.bottomMargin: 5
             enabled: policyCell.editable
-            model: ["默认策略", "强制使用", "仅供参考", "忽略校对"]
+            model: ["默认策略", "强制使用", "仅供参考", "上下文命中", "保留原文", "忽略校对"]
             currentIndex: Math.max(0, model.indexOf(policyCell.value))
             font.pixelSize: 12
             onActivated: function(index) {

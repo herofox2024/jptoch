@@ -67,6 +67,8 @@ class DummyTranslator(JaZhTranslator):
         self.proofread_provider = None
         self.proofread_api_key = None
         self._proofread_api_url = None
+        self.prompt_extra_instruction = ""
+        self.enable_prompt_examples = True
         self.glossary_categories = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
         self._glossary_index = {}
         self.glossary = {}
@@ -221,6 +223,20 @@ class TranslatorTests(unittest.TestCase):
             self.assertIn("轻小说口吻", prompt)
             self.assertIn("不要替读者解释谜题", prompt)
             self.assertIn("对白要自然", prompt)
+            self.assertIn("示例引导", prompt)
+
+    def test_custom_prompt_instruction_is_included_in_translation_and_proofread(self):
+        t = DummyTranslator()
+        t.proofread_genre = "historical_mystery"
+        t.prompt_extra_instruction = "保留江户时代称谓，不要现代网络口吻。"
+
+        proofread_prompt = t._build_proofread_system_prompt()
+        translation_prompt = t._build_style_guidance("translation")
+        preview = t.build_prompt_preview()
+
+        for prompt in (proofread_prompt, translation_prompt, preview):
+            self.assertIn("用户补充要求", prompt)
+            self.assertIn("保留江户时代称谓", prompt)
 
     def test_smart_split_text(self):
         text = "第一段。第二段！\n第三段？第四段。"
@@ -273,6 +289,8 @@ class TranslatorTests(unittest.TestCase):
             "Item": [
                 {"original": "グラス", "translation": "杯子", "policy": "reference"},
                 {"original": "サングラス", "translation": "墨镜", "policy": "force"},
+                {"original": "ルビ", "translation": "注音", "policy": "contextual"},
+                {"original": "API", "translation": "应用接口", "policy": "preserve"},
                 {"original": "バグ", "translation": "故障", "policy": "ignore"},
             ]
         }
@@ -280,10 +298,15 @@ class TranslatorTests(unittest.TestCase):
 
         reference_entries = t._select_proofread_glossary_entries("グラスを置いた。")
         force_entries = t._select_proofread_glossary_entries("サングラスをかけた。")
+        contextual_entries = t._select_proofread_glossary_entries("ルビを見る。")
+        preserve_entries = t._select_proofread_glossary_entries("APIを呼び出す。")
         prompt_entries = t._select_glossary_entries("バグが出た。")
 
         self.assertEqual(reference_entries, [])
         self.assertEqual(force_entries[0]["translation"], "墨镜")
+        self.assertEqual(contextual_entries, [])
+        self.assertEqual(preserve_entries[0]["original"], "API")
+        self.assertIn("术语应保留原文", t._find_proofread_issues("APIを呼び出す。", "调用应用接口。")[0])
         self.assertEqual(prompt_entries, [])
 
     def test_cancel_event(self):

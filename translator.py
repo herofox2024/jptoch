@@ -22,6 +22,7 @@ from glossary_store import select_glossary_entries as gs_select_glossary_entries
 from glossary_store import build_glossary_text as gs_build_glossary_text
 from glossary_store import rebuild_glossary_index as gs_rebuild_glossary_index
 from glossary_store import has_valid_glossary_match as gs_has_valid_glossary_match
+from glossary_store import normalize_policy as gs_normalize_policy
 from style_detector import GENRE_LABELS, TONE_LABELS
 
 
@@ -578,6 +579,43 @@ class JaZhTranslator:
     SMART_BATCH_SHORT = 30    # 短文本上限（称呼、语气词、短对话）
     SMART_BATCH_LONG = 200    # 长文本下限（整段叙述，单独处理）
 
+    STYLE_FEW_SHOT_EXAMPLES: Dict[str, Tuple[str, str]] = {
+        "general": (
+            "彼女は小さく息をつき、窓の外へ目を向けた。",
+            "她轻轻叹了口气，将目光投向窗外。",
+        ),
+        "mystery": (
+            "鍵は内側から掛かっていた。だが、床には濡れた足跡が一つだけ残っていた。",
+            "门是从里面锁上的。然而，地板上只留下了一枚湿漉漉的脚印。",
+        ),
+        "historical_mystery": (
+            "与力の前で、辰造はあえて口を噤んだ。",
+            "在与力面前，辰造有意闭口不言。",
+        ),
+        "scifi": (
+            "端末の警告灯が点滅し、隔壁の向こうで冷却炉が唸り始めた。",
+            "终端的警示灯开始闪烁，隔壁另一侧的冷却炉低声轰鸣起来。",
+        ),
+        "fantasy": (
+            "古い紋章が光を帯びると、封じられていた門が静かに開いた。",
+            "古老纹章泛起光芒，被封印的大门静静开启。",
+        ),
+    }
+    TONE_FEW_SHOT_EXAMPLES: Dict[str, Tuple[str, str]] = {
+        "neutral": (
+            "それでも、彼は最後まで理由を語らなかった。",
+            "即便如此，他直到最后也没有说出理由。",
+        ),
+        "light": (
+            "「ちょっと待ってよ。なんで私まで行くことになってるの？」",
+            "“等一下啦。为什么连我也得一起去啊？”",
+        ),
+        "literary": (
+            "雨音だけが、長い沈黙の隙間を静かに満たしていた。",
+            "唯有雨声，静静填满漫长沉默之间的空隙。",
+        ),
+    }
+
     # ---- Phase 2-④: 上下文窗口翻译 ----
     ENABLE_CONTEXT_WINDOW = True   # 是否启用上下文窗口
     ENABLE_BATCH_ITEM_CONTEXT = False  # 批量 JSON 不默认给每条塞 prev/next，避免大幅增加 token
@@ -672,6 +710,8 @@ class JaZhTranslator:
         proofread_api_key: Optional[str] = None,
         proofread_api_url: Optional[str] = None,
         allow_text_cache_reuse: bool = False,
+        prompt_extra_instruction: str = "",
+        enable_prompt_examples: bool = True,
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -789,6 +829,8 @@ class JaZhTranslator:
         self.enable_proofread = bool(enable_proofread)
         self.proofread_genre = proofread_genre if proofread_genre in GENRE_LABELS else "general"
         self.proofread_tone = proofread_tone if proofread_tone in TONE_LABELS else "neutral"
+        self.prompt_extra_instruction = str(prompt_extra_instruction or "").strip()
+        self.enable_prompt_examples = bool(enable_prompt_examples)
         # P3-⑥: 双模型流水线 — 校对用独立模型
         self.proofread_model = proofread_model or None
         self.proofread_provider = proofread_provider or None
@@ -1512,7 +1554,7 @@ class JaZhTranslator:
         return {"category": "Item", "source": "", "info": "", "policy": ""} if value else {}
 
     def _glossary_enforcement_level(self, entry: Dict[str, str]) -> str:
-        """Return force/reference/ignore for proofread glossary enforcement."""
+        """Return force/reference/contextual/preserve/ignore for glossary enforcement."""
         original = str(entry.get("original", "")).strip()
         translation = str(entry.get("translation", "")).strip()
         if not self._is_meaningful_glossary_term(original, translation):
@@ -1522,13 +1564,17 @@ class JaZhTranslator:
         category = str(entry.get("category") or metadata.get("category") or "Item").strip()
         source = str(entry.get("source") or metadata.get("source") or "").strip()
         info = str(entry.get("info") or metadata.get("info") or "").strip()
-        policy = str(entry.get("policy") or metadata.get("policy") or "").strip().lower()
+        policy = gs_normalize_policy(entry.get("policy") or metadata.get("policy") or "")
 
-        if policy in {"force", "forced", "强制", "强制使用"}:
+        if policy == "force":
             return "force"
-        if policy in {"reference", "ref", "weak", "仅供参考", "参考"}:
+        if policy == "reference":
             return "reference"
-        if policy in {"ignore", "ignored", "忽略", "忽略校对"}:
+        if policy == "contextual":
+            return "contextual"
+        if policy == "preserve":
+            return "preserve"
+        if policy == "ignore":
             return "ignore"
 
         if self._is_explicit_force_glossary_marker(source, info):
@@ -1545,6 +1591,12 @@ class JaZhTranslator:
             return "reference"
 
         return "force"
+
+    def _expected_glossary_translation(self, entry: Dict[str, str]) -> str:
+        level = self._glossary_enforcement_level(entry)
+        if level == "preserve":
+            return str(entry.get("original", "")).strip()
+        return str(entry.get("translation", "")).strip()
 
     def _iter_all_glossary_entries(self) -> List[Dict[str, str]]:
         entries: List[Dict[str, str]] = []
@@ -1686,7 +1738,7 @@ class JaZhTranslator:
             metadata = self._lookup_glossary_metadata(original)
             if metadata:
                 entry = {**entry, **{k: v for k, v in metadata.items() if v}}
-            if self._glossary_enforcement_level(entry) == "force":
+            if self._glossary_enforcement_level(entry) in {"force", "preserve"}:
                 filtered.append(entry)
         return filtered
 
@@ -1703,9 +1755,12 @@ class JaZhTranslator:
         if self.enable_glossary:
             for entry in self._select_proofread_glossary_entries(src, max_terms=30):
                 original = str(entry.get("original", "")).strip()
-                translation = str(entry.get("translation", "")).strip()
-                if original and translation and gs_has_valid_glossary_match(src, original) and translation not in dst:
-                    issues.append(f"术语未按术语表翻译: {original} -> {translation}")
+                expected = self._expected_glossary_translation(entry)
+                if original and expected and gs_has_valid_glossary_match(src, original) and expected not in dst:
+                    if self._glossary_enforcement_level(entry) == "preserve":
+                        issues.append(f"术语应保留原文: {original}")
+                    else:
+                        issues.append(f"术语未按术语表翻译: {original} -> {expected}")
         return issues
 
     def _build_proofread_system_prompt(self) -> str:
@@ -1758,7 +1813,8 @@ class JaZhTranslator:
             + f"【日文原文】\n{src}\n\n"
             + f"【中文初译】\n{draft}\n"
             + "\n【术语规则】\n术语只在日文原文中独立命中且符合上下文时才修正；"
-            + "短片假名普通物品和参考术语不得强行替换；如果术语译法会破坏语义，保留初译。\n"
+            + "短片假名普通物品、仅供参考术语和上下文命中术语不得强行替换；"
+            + "标注保留原文的术语必须保留源词；如果术语译法会破坏语义，保留初译。\n"
             + "\n【输出格式】\n只输出修正后的中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
         )
         proofread_api_key = self.proofread_api_key or self.api_key
@@ -1906,7 +1962,7 @@ class JaZhTranslator:
         user_prompt = (
             "请逐项校对 JSON 数组中的中文初译，只修复 issues 指出的明确问题。\n"
             "prev/next 只是上下文参考，不要翻译 prev/next。\n"
-            "术语只在日文原文中独立命中且符合上下文时才修正；如果术语译法会破坏语义，保留初译。\n"
+            "术语只在日文原文中独立命中且符合上下文时才修正；仅供参考/上下文命中术语不得机械强改；保留原文术语必须保留源词；如果术语译法会破坏语义，保留初译。\n"
             "禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
             "必须只返回 JSON 对象，格式为：{\"items\":[{\"idx\":0,\"revised\":\"修正后的中文译文\"}]}。\n\n"
             f"【待校对项目】\n{json.dumps(prepared, ensure_ascii=False)}"
@@ -2572,6 +2628,41 @@ class JaZhTranslator:
         tone = self.proofread_tone if self.proofread_tone in TONE_LABELS else "neutral"
         return genre, tone, GENRE_LABELS.get(genre, "通用小说"), TONE_LABELS.get(tone, "中性口吻")
 
+    def _build_style_examples(self) -> str:
+        if not bool(getattr(self, "enable_prompt_examples", True)):
+            return ""
+        genre, tone, genre_label, tone_label = self._get_style_profile()
+        sections = []
+        genre_example = self.STYLE_FEW_SHOT_EXAMPLES.get(genre)
+        if genre_example:
+            src, dst = genre_example
+            sections.append(
+                f"{genre_label}示例（只学习处理方式，不复用内容）：\n"
+                f"日文：{src}\n中文：{dst}"
+            )
+        tone_example = self.TONE_FEW_SHOT_EXAMPLES.get(tone)
+        if tone_example:
+            src, dst = tone_example
+            sections.append(
+                f"{tone_label}示例（只学习语气，不添加示例内容）：\n"
+                f"日文：{src}\n中文：{dst}"
+            )
+        if not sections:
+            return ""
+        return "【示例引导】\n" + "\n\n".join(sections)
+
+    def _build_custom_prompt_guidance(self) -> str:
+        text = str(getattr(self, "prompt_extra_instruction", "") or "").strip()
+        if not text:
+            return ""
+        if len(text) > 1600:
+            text = text[:1600].rstrip() + "..."
+        return (
+            "【用户补充要求】\n"
+            "在不违反“准确、不新增剧情、不输出说明、保持段落结构”的前提下，遵守以下补充要求：\n"
+            f"{text}"
+        )
+
     def _build_style_guidance(self, stage: str) -> str:
         genre, tone, genre_label, tone_label = self._get_style_profile()
         genre_rules = {
@@ -2636,7 +2727,7 @@ class JaZhTranslator:
                 "必须遵守：\n"
                 "1. 不新增剧情、不删除信息、不改变原意。\n"
                 "2. 修正日文残留、漏译、明显错译、语病和不自然表达。\n"
-                "3. 专有名词必须按术语表翻译。\n"
+                "3. 专有名词按术语表策略处理：强制使用必须遵守；仅供参考/上下文命中不得机械强改；保留原文必须保留源词。\n"
                 "4. 保持原段落结构，不合并、不拆分段落。\n"
                 "5. 不解释原文，不输出注释，不输出修改说明。\n"
                 "6. 只输出修正后的中文译文。\n\n"
@@ -2648,13 +2739,58 @@ class JaZhTranslator:
                 f"- 叙事口吻：{tone_label}\n\n"
                 "请按上述类型与口吻进行初译，同时必须遵守：\n"
                 "1. 不新增剧情、不删除信息、不改变原意。\n"
-                "2. 专有名词必须按术语表翻译。\n"
+                "2. 专有名词按术语表策略处理：强制使用必须遵守；仅供参考/上下文命中需结合语境；保留原文不翻译。\n"
                 "3. 保持原段落结构，不合并、不拆分段落。\n"
                 "4. 保持人物语气、叙事节奏和情绪层次。\n"
                 "5. 只输出译文，不输出解释或注释。\n\n"
             )
 
-        return header + f"{genre_label}要求：\n{numbered(genre_rules[genre])}\n\n{tone_label}要求：\n{numbered(tone_rules[tone])}"
+        parts = [
+            header + f"{genre_label}要求：\n{numbered(genre_rules[genre])}\n\n{tone_label}要求：\n{numbered(tone_rules[tone])}"
+        ]
+        examples = self._build_style_examples()
+        if examples:
+            parts.append(examples)
+        custom_guidance = self._build_custom_prompt_guidance()
+        if custom_guidance:
+            parts.append(custom_guidance)
+        return "\n\n".join(parts)
+
+    def build_prompt_preview(self) -> str:
+        """Build a local preview of active prompt fragments without calling any API."""
+        translation_system = self._build_style_guidance("translation")
+        proofread_system = self._build_proofread_system_prompt()
+        sample_glossary = (
+            "术语A->译名A #强制使用\n"
+            "术语B->译名B #仅在上下文符合时使用；备注示例\n"
+            "术语C->术语C #保留原文不翻译"
+        )
+        single_user = (
+            f"【术语表】\n{sample_glossary}\n\n"
+            f"{self._translation_task_instruction()}\n"
+            "ここに翻訳対象の日本語が入ります。\n\n"
+            "【前文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】\n前一段文本预览\n\n"
+            "【后文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】\n后一段文本预览"
+        )
+        proofread_user = (
+            "【发现的问题】\n"
+            "- 译文中疑似残留日文假名\n"
+            "- 术语未按术语表翻译\n\n"
+            f"【术语表】\n{sample_glossary}\n\n"
+            "【日文原文】\nここに校对対象の日本語が入ります。\n\n"
+            "【中文初译】\n这里是中文初译。\n\n"
+            "【输出格式】\n只输出修正后的中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。"
+        )
+        return (
+            "【初译 System Prompt 片段】\n"
+            f"{translation_system}\n\n"
+            "【初译 User Prompt 模板】\n"
+            f"{single_user}\n\n"
+            "【译后校对 System Prompt 片段】\n"
+            f"{proofread_system}\n\n"
+            "【译后校对 User Prompt 模板】\n"
+            f"{proofread_user}"
+        )
 
 
     def _build_batch_system_prompt(self) -> str:

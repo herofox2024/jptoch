@@ -6,12 +6,24 @@ DEFAULT_GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Cr
 
 
 def normalize_policy(value: Any) -> str:
-    """Normalize glossary enforcement policy: force/reference/ignore or empty default."""
+    """Normalize glossary enforcement policy.
+
+    Supported values:
+    - force: must be enforced by proofreading
+    - reference: prompt-only hint, not enforced by proofreading
+    - contextual: use only when the note/context matches
+    - preserve: keep the source term unchanged in Chinese output
+    - ignore: never send/enforce this entry
+    """
     raw = str(value or "").strip().lower()
     if raw in {"force", "forced", "confirm", "confirmed", "strict", "强制", "强制使用", "固定", "已确认"}:
         return "force"
     if raw in {"reference", "ref", "weak", "suggestion", "参考", "仅供参考", "弱", "不强制"}:
         return "reference"
+    if raw in {"context", "contextual", "context-only", "上下文", "上下文命中", "按上下文", "语境命中"}:
+        return "contextual"
+    if raw in {"preserve", "keep", "keep-source", "keep_original", "保留", "保留原文", "不翻译"}:
+        return "preserve"
     if raw in {"ignore", "ignored", "off", "skip", "忽略", "忽略校对", "禁用"}:
         return "ignore"
     return ""
@@ -413,6 +425,23 @@ def build_glossary_text(
     categories: List[str],
     selected_entries: Optional[List[Dict[str, str]]] = None,
 ) -> str:
+    def _format_entry(original: str, translation: str, policy: str = "", info: str = "") -> str:
+        policy = normalize_policy(policy)
+        notes = []
+        if policy == "force":
+            notes.append("强制使用")
+        elif policy == "reference":
+            notes.append("仅供参考")
+        elif policy == "contextual":
+            notes.append("仅在上下文符合时使用")
+        elif policy == "preserve":
+            notes.append("保留原文不翻译")
+            translation = original
+        if info:
+            notes.append(str(info).strip())
+        suffix = f" #{'；'.join(notes)}" if notes else ""
+        return f"{original}->{translation}{suffix}"
+
     if selected_entries is not None:
         if not selected_entries:
             return "无术语表。"
@@ -421,7 +450,12 @@ def build_glossary_text(
             original = str(item.get("original", "")).strip()
             translation = str(item.get("translation", "")).strip()
             if original and translation:
-                lines.append(f"{original}->{translation}")
+                lines.append(_format_entry(
+                    original,
+                    translation,
+                    str(item.get("policy", "")).strip(),
+                    str(item.get("info", "")).strip(),
+                ))
         return "\n".join(lines) if lines else "无术语表。"
 
     if not glossary_snapshot:
@@ -439,16 +473,20 @@ def build_glossary_text(
                 original = entry.get("original", entry.get("src", ""))
                 translation = entry.get("translation", entry.get("dst", ""))
                 if original and translation:
-                    lines.append(f"{original}->{translation}")
+                    lines.append(_format_entry(
+                        str(original).strip(),
+                        str(translation).strip(),
+                        str(entry.get("policy", entry.get("enforcement", ""))).strip(),
+                        str(entry.get("info", "")).strip(),
+                    ))
     else:
         for k, v in glossary_snapshot.items():
             if isinstance(v, dict):
                 dst = str(v.get("dst", "")).strip()
                 info = str(v.get("info", "")).strip()
-                if dst and info:
-                    lines.append(f"{k}->{dst} #{info}")
-                elif dst:
-                    lines.append(f"{k}->{dst}")
+                policy = str(v.get("policy", v.get("enforcement", ""))).strip()
+                if dst:
+                    lines.append(_format_entry(str(k).strip(), dst, policy, info))
                 else:
                     lines.append(f"{k} => {json.dumps(v, ensure_ascii=False)}")
             else:

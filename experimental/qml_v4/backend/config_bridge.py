@@ -5,6 +5,7 @@
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -85,7 +86,7 @@ _CONFIG_KEYS = [
     "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
     "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
-    "allow_text_cache_reuse", "theme",
+    "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -189,6 +190,8 @@ class ConfigBridge(QObject):
     _proofreadProviderChanged = Signal()
     _proofreadApiKeyChanged = Signal()
     _proofreadApiUrlChanged = Signal()
+    _promptExtraInstructionChanged = Signal()
+    _enablePromptExamplesChanged = Signal()
     _themeChanged = Signal()
     japaneseResidueAllowlistChanged = Signal()
 
@@ -217,6 +220,8 @@ class ConfigBridge(QObject):
         self._proofread_api_url = ""
         self._proofread_model = ""   # P3-⑥: 校对专用模型（空=使用主模型）
         self._allow_text_cache_reuse = True
+        self._prompt_extra_instruction = ""
+        self._enable_prompt_examples = True
         self._theme = "light"
         self._autosave_enabled = False
         self._load_from_disk()
@@ -248,6 +253,8 @@ class ConfigBridge(QObject):
                     setattr(self, f"_{key}", data[key])
             if "allow_text_cache_reuse" not in data:
                 self._allow_text_cache_reuse = True
+            if "enable_prompt_examples" not in data:
+                self._enable_prompt_examples = True
             logger.info(f"配置已加载: {path}")
         except Exception as e:
             logger.warning(f"加载配置失败: {e}")
@@ -285,6 +292,34 @@ class ConfigBridge(QObject):
     def getPerfPreset(self, key: str):
         preset = PERF_UI_PRESETS.get(key, {})
         return preset.get("values", {})
+
+    @Slot(result=str)
+    def buildPromptPreview(self) -> str:
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            from translator import JaZhTranslator
+
+            genre = self._proofread_genre if self._proofread_genre != "auto" else "general"
+            tone = self._proofread_tone if self._proofread_tone != "auto" else "neutral"
+            translator = JaZhTranslator(
+                api_key="preview",
+                provider=self._provider if self._provider != "custom" else "deepseek",
+                api_url=self._api_url or None,
+                model=self._model or None,
+                enable_glossary=False,
+                cache_path=str(_data_dir() / ".prompt_preview_cache.json"),
+                enable_proofread=self._enable_proofread,
+                proofread_genre=genre,
+                proofread_tone=tone,
+                prompt_extra_instruction=self._prompt_extra_instruction,
+                enable_prompt_examples=self._enable_prompt_examples,
+            )
+            return translator.build_prompt_preview()
+        except Exception as exc:
+            logger.warning("生成 Prompt 预览失败: %s", exc)
+            return f"生成 Prompt 预览失败: {exc}"
 
     @Property(str, constant=True)
     def japaneseResidueAllowlistPath(self) -> str:
@@ -505,6 +540,22 @@ class ConfigBridge(QObject):
     def allowTextCacheReuse(self, val: bool):
         if val != self._allow_text_cache_reuse:
             self._allow_text_cache_reuse = val; self._emit_changed(self._allowTextCacheReuseChanged)
+
+    @Property(str, notify=_promptExtraInstructionChanged)
+    def promptExtraInstruction(self) -> str: return self._prompt_extra_instruction
+    @promptExtraInstruction.setter
+    def promptExtraInstruction(self, val: str):
+        val = str(val or "")
+        if val != self._prompt_extra_instruction:
+            self._prompt_extra_instruction = val; self._emit_changed(self._promptExtraInstructionChanged)
+
+    @Property(bool, notify=_enablePromptExamplesChanged)
+    def enablePromptExamples(self) -> bool: return self._enable_prompt_examples
+    @enablePromptExamples.setter
+    def enablePromptExamples(self, val: bool):
+        val = bool(val)
+        if val != self._enable_prompt_examples:
+            self._enable_prompt_examples = val; self._emit_changed(self._enablePromptExamplesChanged)
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

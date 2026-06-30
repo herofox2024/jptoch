@@ -133,6 +133,68 @@ def _estimate_translation_duration(total_chars, total_texts, cfg):
     return max(batch_seconds, char_seconds) + overhead_seconds
 
 
+def _build_quality_self_check_report(translator, cfg, proofread_style, total_texts, total_chars, elapsed, weak_residue_total, final_out):
+    stats = translator.get_stats() if translator else {}
+    api_total = int(stats.get("api_requests_total", 0))
+    api_failed = int(stats.get("api_requests_failed", 0))
+    dynamic_events = int(stats.get("dynamic_limit_events", 0))
+    batch_parse_fail = int(stats.get("batch_json_parse_fail", 0))
+    batch_lenient = int(stats.get("batch_json_lenient_success", 0))
+    proofread_suspicious = int(stats.get("proofread_suspicious", 0))
+    proofread_fixed = int(stats.get("proofread_fixed", 0))
+    proofread_rejected = int(stats.get("proofread_rejected", 0))
+    quality_retranslate = int(stats.get("quality_retranslate", 0))
+    tokens_total = int(stats.get("tokens_total", 0))
+
+    warnings = []
+    suggestions = []
+    if weak_residue_total:
+        warnings.append(f"发现 {weak_residue_total} 处弱日文残留，已提示但不阻塞保存。")
+        suggestions.append("抽查弱残留样例；只有确认必须保留的片段才加入白名单。")
+    if api_failed:
+        warnings.append(f"API 失败/异常次数 {api_failed} 次。")
+        suggestions.append("免费模型建议降低并发和批量；如果连续触发限流，切换付费模型或稍后恢复续译。")
+    if dynamic_events:
+        warnings.append(f"动态限流/格式降级触发 {dynamic_events} 次。")
+    if batch_parse_fail:
+        warnings.append(f"批量 JSON 解析失败 {batch_parse_fail} 次，宽松解析成功 {batch_lenient} 次。")
+        suggestions.append("如果 JSON 失败频繁，降低批量大小或对免费模型使用 batch_size=1。")
+    if proofread_rejected:
+        warnings.append(f"校对结果因疑似错误术语注入被拒绝 {proofread_rejected} 次。")
+        suggestions.append("检查术语表中多义词，优先标为“仅供参考”或“上下文命中”。")
+    if not bool(cfg.get("enable_proofread", False)):
+        warnings.append("译后校对未启用，本次未做日文残留/术语一致性 AI 校对。")
+        suggestions.append("正式出书建议启用译后校对，免费模型可使用低并发低批量。")
+
+    status = "通过" if not warnings else "有提醒"
+    style_text = getattr(proofread_style, "display_text", "") or "未识别"
+    metrics = [
+        f"输出文件: {final_out}",
+        f"文本块: {total_texts}",
+        f"总字符: {total_chars}",
+        f"耗时: {_format_duration(elapsed)}",
+        f"Prompt 风格: {style_text}",
+        f"API 请求: {api_total}",
+        f"Token: {tokens_total if tokens_total > 0 else '--'}",
+        f"可疑译文: {proofread_suspicious}",
+        f"校对修复: {proofread_fixed}",
+        f"重译次数: {quality_retranslate}",
+    ]
+    if not suggestions:
+        suggestions.append("本次没有发现明显流程风险；如修改 Prompt 或术语策略后需要重译，请先清理当前 EPUB 缓存。")
+    summary = (
+        f"本次翻译完成，质量自检结果：{status}。"
+        f"校对发现 {proofread_suspicious} 条可疑译文，修复 {proofread_fixed} 条。"
+    )
+    return {
+        "status": status,
+        "summary": summary,
+        "metricsText": "\n".join(metrics),
+        "warningsText": "\n".join(f"- {item}" for item in warnings) if warnings else "未发现需要阻塞保存的问题。",
+        "suggestionsText": "\n".join(f"- {item}" for item in suggestions),
+        "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
 
 class _TranslateWorker(QObject):
     finished = Signal(str)
@@ -144,6 +206,7 @@ class _TranslateWorker(QObject):
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
     qualityStatUpdate = Signal(int, int, int, int, int, int, int, int, int, int)
+    qualityReportReady = Signal("QVariantMap")
     errorDetail = Signal(str)
 
     def __init__(self, config: dict, cancel_event: threading.Event):
@@ -263,6 +326,8 @@ class _TranslateWorker(QObject):
                 proofread_api_key=cfg.get("proofread_api_key") or None,
                 proofread_api_url=cfg.get("proofread_api_url") or None,
                 allow_text_cache_reuse=bool(cfg.get("allow_text_cache_reuse", True)),
+                prompt_extra_instruction=cfg.get("prompt_extra_instruction", ""),
+                enable_prompt_examples=bool(cfg.get("enable_prompt_examples", True)),
             )
             self._translator = translator
             if self._bridge:
@@ -514,6 +579,18 @@ class _TranslateWorker(QObject):
 
             on_progress(total_texts, total_texts)
             translator.flush_cache()
+            quality_report = _build_quality_self_check_report(
+                translator,
+                cfg,
+                proofread_style,
+                total_texts,
+                total_chars,
+                max(0.0, time.time() - start_ts),
+                weak_residue_total,
+                final_out,
+            )
+            logger.info("翻译质量自检报告: %s", quality_report.get("summary", ""))
+            self.qualityReportReady.emit(quality_report)
             self.finished.emit(final_out)
 
         except Exception as e:
@@ -650,6 +727,7 @@ class TranslateBridge(QObject):
     statusChanged = Signal(str)
     statUpdate = Signal(int, int, int, int, int, float, int, int, int, int)
     qualityStatUpdate = Signal(int, int, int, int, int, int, int, int, int, int)
+    qualityReportReady = Signal("QVariantMap")
     finished = Signal(str)
     failed = Signal(str)
     errorDetail = Signal(str)
@@ -757,6 +835,8 @@ class TranslateBridge(QObject):
             "proofread_api_url": getattr(cfg, "proofreadApiUrl", ""),
             "proofread_model": getattr(cfg, "proofreadModel", ""),  # P3-⑥
             "allow_text_cache_reuse": getattr(cfg, "allowTextCacheReuse", True),
+            "prompt_extra_instruction": getattr(cfg, "promptExtraInstruction", ""),
+            "enable_prompt_examples": getattr(cfg, "enablePromptExamples", True),
         }
 
     @Slot("QVariant")
@@ -810,6 +890,7 @@ class TranslateBridge(QObject):
                 (worker.statusChanged, self.statusChanged),
                 (worker.statUpdate, self.statUpdate),
                 (worker.qualityStatUpdate, self.qualityStatUpdate),
+                (worker.qualityReportReady, self.qualityReportReady),
                 (worker.errorDetail, self.errorDetail),
                 (worker.finished, self._on_finished),
                 (worker.failed, self._on_failed),

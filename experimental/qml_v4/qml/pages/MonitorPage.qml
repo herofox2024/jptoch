@@ -42,6 +42,13 @@ Page {
     property string proofreadStyleMode: ""
     property int proofreadCount: 0
     property int proofreadMaxItems: 300
+    property bool qualityReportAvailable: false
+    property string qualityReportStatus: "等待完成"
+    property string qualityReportSummary: "翻译完成后自动生成本次质量自检报告。"
+    property string qualityReportMetrics: ""
+    property string qualityReportWarnings: ""
+    property string qualityReportSuggestions: ""
+    property string qualityReportGeneratedAt: ""
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     property real startTs: 0
@@ -165,6 +172,28 @@ Page {
         page.statQualityRetranslate = 0
         page.statJapaneseResidueRemaining = 0
         page.statTotalChars = 0
+        page.clearQualityReport()
+    }
+
+    function clearQualityReport() {
+        page.qualityReportAvailable = false
+        page.qualityReportStatus = "等待完成"
+        page.qualityReportSummary = "翻译完成后自动生成本次质量自检报告。"
+        page.qualityReportMetrics = ""
+        page.qualityReportWarnings = ""
+        page.qualityReportSuggestions = ""
+        page.qualityReportGeneratedAt = ""
+    }
+
+    function applyQualityReport(report) {
+        report = report || ({})
+        page.qualityReportAvailable = true
+        page.qualityReportStatus = report.status || "已生成"
+        page.qualityReportSummary = report.summary || "质量自检报告已生成。"
+        page.qualityReportMetrics = report.metricsText || ""
+        page.qualityReportWarnings = report.warningsText || "未发现需要阻塞保存的问题。"
+        page.qualityReportSuggestions = report.suggestionsText || ""
+        page.qualityReportGeneratedAt = report.generatedAt || ""
     }
 
     function clearRuntimeState(statusText) {
@@ -276,6 +305,10 @@ Page {
             page.proofreadStyleReason = reason || ""
             page.proofreadStyleConfidence = confidence || 0
             page.proofreadStyleMode = mode || "auto"
+        }
+
+        function onQualityReportReady(report) {
+            page.applyQualityReport(report)
         }
 
         function onRuntimeCleared() {
@@ -508,6 +541,7 @@ Page {
                 border.color: AppPalette.lineColor
             }
             TabButton { text: "运行概览" }
+            TabButton { text: "质量自检" }
             TabButton { text: "实时翻译" }
             TabButton { text: "校对详情" }
             TabButton { text: "错误诊断" }
@@ -566,6 +600,95 @@ Page {
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                color: AppPalette.cardBg
+                radius: AppPalette.radiusLarge
+                border.color: AppPalette.borderColor
+
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    clip: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                    ColumnLayout {
+                        width: parent.availableWidth
+                        spacing: 12
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.max(96, qualitySummaryColumn.implicitHeight + 28)
+                            radius: AppPalette.radiusMedium
+                            color: page.qualityReportAvailable
+                                   ? (page.qualityReportStatus === "通过" ? AppPalette.accentSoft : (AppPalette.dark ? "#3b2d1c" : "#f2e4cf"))
+                                   : AppPalette.cardAlt
+                            border.color: page.qualityReportStatus === "通过" ? AppPalette.accentColor : (page.qualityReportAvailable ? AppPalette.amberColor : AppPalette.lineColor)
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                spacing: 12
+
+                                Rectangle {
+                                    Layout.preferredWidth: 4
+                                    Layout.fillHeight: true
+                                    radius: 2
+                                    color: page.qualityReportStatus === "通过" ? AppPalette.accentColor : AppPalette.amberColor
+                                }
+
+                                ColumnLayout {
+                                    id: qualitySummaryColumn
+                                    Layout.fillWidth: true
+                                    spacing: 5
+
+                                    Label {
+                                        text: "本次质量自检"
+                                        color: AppPalette.textColor
+                                        font.pixelSize: 17
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: page.qualityReportSummary
+                                        color: AppPalette.textColor
+                                        wrapMode: Text.WordWrap
+                                        font.pixelSize: 13
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: page.qualityReportGeneratedAt ? ("生成时间：" + page.qualityReportGeneratedAt) : "等待翻译完成后生成"
+                                        color: AppPalette.mutedText
+                                        font.pixelSize: 11
+                                    }
+                                }
+
+                                IssueChip {
+                                    title: page.qualityReportStatus
+                                    tone: page.qualityReportStatus === "通过" ? "accent" : (page.qualityReportAvailable ? "amber" : "neutral")
+                                }
+                            }
+                        }
+
+                        ReportField {
+                            title: "关键指标"
+                            body: page.qualityReportMetrics
+                            tone: "normal"
+                        }
+                        ReportField {
+                            title: "提醒"
+                            body: page.qualityReportWarnings
+                            tone: page.qualityReportStatus === "通过" ? "normal" : "accent"
+                        }
+                        ReportField {
+                            title: "建议"
+                            body: page.qualityReportSuggestions
+                            tone: "accent"
                         }
                     }
                 }

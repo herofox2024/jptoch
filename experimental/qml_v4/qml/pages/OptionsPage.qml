@@ -25,6 +25,7 @@ Page {
     property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Gemini", "智谱 GLM", "文心一言", "自定义"]
     property string residueAllowlistPath: cfg ? cfg.japaneseResidueAllowlistPath : ""
     property string residueAllowlistStatus: ""
+    property string promptPreviewText: "点击“刷新 Prompt 预览”查看当前初译和校对提示词片段。"
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
     readonly property bool updaterBusy: updater ? (updater.checking || updater.downloading) : false
 
@@ -65,6 +66,11 @@ Page {
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
             result.ok ? ToastBridge.showSuccess(page.residueAllowlistStatus) : ToastBridge.showError(page.residueAllowlistStatus)
         }
+    }
+
+    function refreshPromptPreview() {
+        if (!cfg || !cfg.buildPromptPreview) return
+        page.promptPreviewText = cfg.buildPromptPreview()
     }
 
     Component.onCompleted: page.refreshJapaneseResidueAllowlist()
@@ -490,6 +496,106 @@ Page {
                             color: AppPalette.mutedText
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
+                        }
+
+                        CheckBox {
+                            text: "启用风格示例引导（会少量增加 Prompt 长度）"
+                            checked: cfg ? cfg.enablePromptExamples : true
+                            onCheckedChanged: {
+                                if (cfg) {
+                                    cfg.enablePromptExamples = checked
+                                    cfg.saveToDisk()
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "自定义补充要求"
+                            color: AppPalette.textColor
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                        }
+
+                        TextArea {
+                            id: promptExtraArea
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 96
+                            text: cfg ? cfg.promptExtraInstruction : ""
+                            placeholderText: "例如：历史捕物小说请保留时代称谓，不要改成现代网络口吻。"
+                            wrapMode: TextEdit.WordWrap
+                            selectByMouse: true
+                            color: AppPalette.textColor
+                            selectedTextColor: AppPalette.surfaceRaised
+                            selectionColor: AppPalette.accentColor
+                            background: Rectangle {
+                                radius: AppPalette.radiusMedium
+                                color: AppPalette.cardAlt
+                                border.color: promptExtraArea.activeFocus ? AppPalette.accentColor : AppPalette.lineColor
+                            }
+                            onTextChanged: {
+                                if (cfg && cfg.promptExtraInstruction !== text) {
+                                    cfg.promptExtraInstruction = text
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Button {
+                                text: "刷新 Prompt 预览"
+                                highlighted: true
+                                onClicked: page.refreshPromptPreview()
+                            }
+
+                            Button {
+                                text: "清空补充要求"
+                                onClicked: {
+                                    promptExtraArea.text = ""
+                                    if (cfg) {
+                                        cfg.promptExtraInstruction = ""
+                                        cfg.saveToDisk()
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "预览只在本地生成，不调用 API。"
+                                color: AppPalette.mutedText
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 280
+                            radius: AppPalette.radiusMedium
+                            color: AppPalette.cardAlt
+                            border.color: AppPalette.lineColor
+                            clip: true
+
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                clip: true
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                                TextArea {
+                                    width: parent.availableWidth
+                                    text: page.promptPreviewText
+                                    readOnly: true
+                                    wrapMode: TextEdit.WordWrap
+                                    selectByMouse: true
+                                    color: AppPalette.textColor
+                                    font.pixelSize: 12
+                                    background: Item {}
+                                }
+                            }
                         }
                     }
                 }
