@@ -520,18 +520,25 @@ Page {
                         TextArea {
                             id: promptExtraArea
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 96
+                            Layout.preferredHeight: 112
                             text: cfg ? cfg.promptExtraInstruction : ""
                             placeholderText: "例如：历史捕物小说请保留时代称谓，不要改成现代网络口吻。"
                             wrapMode: TextEdit.WordWrap
                             selectByMouse: true
+                            clip: true
+                            leftPadding: 14
+                            rightPadding: 14
+                            topPadding: 12
+                            bottomPadding: 12
                             color: AppPalette.textColor
                             selectedTextColor: AppPalette.surfaceRaised
                             selectionColor: AppPalette.accentColor
+                            font.pixelSize: 13
                             background: Rectangle {
                                 radius: AppPalette.radiusMedium
                                 color: AppPalette.cardAlt
                                 border.color: promptExtraArea.activeFocus ? AppPalette.accentColor : AppPalette.lineColor
+                                border.width: promptExtraArea.activeFocus ? 2 : 1
                             }
                             onTextChanged: {
                                 if (cfg && cfg.promptExtraInstruction !== text) {

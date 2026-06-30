@@ -517,18 +517,27 @@ def _fix_toc_uids(toc, counter=None):
     if counter is None:
         counter = [0]
 
+    def _fix_item_uid(item):
+        if isinstance(item, epub.Link) and item.uid is None:
+            counter[0] += 1
+            item.uid = f"navpoint-{counter[0]}"
+        elif hasattr(item, "uid") and getattr(item, "uid", None) is None:
+            counter[0] += 1
+            item.uid = f"navpoint-{counter[0]}"
+        return item
+
+    def _is_supported_toc_object(item):
+        return isinstance(item, (epub.Section, epub.Link, epub.EpubHtml)) or hasattr(item, "title")
+
     fixed = []
     for item in toc:
         # 处理嵌套结构 (section, children)
         if isinstance(item, (list, tuple)) and len(item) == 2:
             section, children = item
-            if hasattr(section, 'uid'):
-                if section.uid is None:
-                    counter[0] += 1
-                    section.uid = f"navpoint-{counter[0]}"
+            if _is_supported_toc_object(section):
+                section = _fix_item_uid(section)
                 fixed_children = _fix_toc_uids(children, counter)
-                if fixed_children:
-                    fixed.append((section, fixed_children))
+                fixed.append((section, fixed_children))
             elif isinstance(section, (list, tuple)):
                 # 元组形式: (uid, href, title)
                 section = list(section)
@@ -537,13 +546,10 @@ def _fix_toc_uids(toc, counter=None):
                     section[0] = f"navpoint-{counter[0]}"
                 section = tuple(section)
                 fixed_children = _fix_toc_uids(children, counter)
-                if fixed_children:
-                    fixed.append((section, fixed_children))
+                fixed.append((section, fixed_children))
         # 处理单独的对象项
-        elif hasattr(item, 'uid'):
-            if item.uid is None:
-                counter[0] += 1
-                item.uid = f"navpoint-{counter[0]}"
+        elif _is_supported_toc_object(item):
+            item = _fix_item_uid(item)
             fixed.append(item)
         elif isinstance(item, (list, tuple)) and len(item) >= 1:
             item = list(item)

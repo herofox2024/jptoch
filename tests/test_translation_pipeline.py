@@ -9,9 +9,9 @@ from pathlib import Path
 from unittest import mock
 
 from bs4 import BeautifulSoup
-from ebooklib import ITEM_DOCUMENT
+from ebooklib import ITEM_DOCUMENT, epub
 
-from epub_io import extract_visible_text, iter_text_nodes
+from epub_io import _fix_toc_uids, extract_toc_titles, extract_visible_text, iter_text_nodes
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError
@@ -110,6 +110,35 @@ class DummyTranslator(JaZhTranslator):
 
 
 class TranslatorTests(unittest.TestCase):
+    def test_fix_toc_uids_preserves_section_children_without_uid(self):
+        section = epub.Section("Magazine Excerpt", "text/part0003.html")
+        children = [
+            epub.Link("text/part0004.html", "Chapter 1", "num_2"),
+            epub.Link("text/part0005.html", "Chapter 2", None),
+        ]
+        book = type("Book", (), {"toc": [(section, children)]})()
+        original_titles = extract_toc_titles(book)
+
+        fixed = _fix_toc_uids(book.toc)
+        fixed_book = type("Book", (), {"toc": fixed})()
+
+        self.assertEqual(len(fixed), 1)
+        fixed_section, fixed_children = fixed[0]
+        self.assertIs(fixed_section, section)
+        self.assertEqual(len(fixed_children), 2)
+        self.assertEqual(fixed_children[0].uid, "num_2")
+        self.assertIsNotNone(fixed_children[1].uid)
+        self.assertEqual(extract_toc_titles(fixed_book), original_titles)
+
+    def test_fix_toc_uids_preserves_empty_section(self):
+        section = epub.Section("Empty Section", "text/empty.html")
+
+        fixed = _fix_toc_uids([(section, [])])
+
+        self.assertEqual(len(fixed), 1)
+        self.assertIs(fixed[0][0], section)
+        self.assertEqual(fixed[0][1], [])
+
     def test_iter_text_nodes_keeps_normal_paragraph_mode_and_skips_ruby_rt(self):
         html = """
         <html><body>
