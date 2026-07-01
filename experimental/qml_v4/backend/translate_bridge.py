@@ -20,6 +20,50 @@ CANCELLED_RESULT = "__CANCELLED__"
 STOPPED_RESULT = "__STOPPED__"
 logger = logging.getLogger(__name__)
 
+_FILENAME_EXPLANATION_MARKERS = (
+    "或依意译",
+    "意译处理",
+    "没有更多信息",
+    "没更多信息",
+    "暂无更多信息",
+    "暂无信息",
+    "这里保留",
+    "此处保留",
+    "可译为",
+    "也可译作",
+    "翻译为",
+    "译作",
+    "直译",
+    "音译",
+    "合适名",
+    "说明",
+    "注：",
+    "注:",
+)
+
+_TOC_EXPLANATION_MARKERS = _FILENAME_EXPLANATION_MARKERS + (
+    "简写",
+    "简称",
+    "希腊神话",
+    "神话中",
+    "之女",
+    "意为",
+    "意思是",
+    "指的是",
+    "源自",
+    "来自",
+    "出处",
+    "典故",
+    "可理解为",
+    "补充",
+    "背景",
+    "炫耀",
+    "射杀",
+    "化作",
+    "永远流动",
+)
+
+
 def _sanitize_filename(name):
     invalid = '<>:"/\\\\|?*'
     cleaned = ''.join('_' if c in invalid or ord(c) < 32 else c for c in name)
@@ -34,6 +78,107 @@ def _sanitize_filename(name):
     if cleaned.split('.', 1)[0].upper() in reserved:
         cleaned = cleaned + '_'
     return cleaned
+
+
+def _strip_model_explanation_notes(text, markers):
+    value = str(text or "").strip()
+    if not value:
+        return ""
+
+    # Remove model notes such as "（或依意译处理...这里保留...）" while keeping
+    # normal book-title/author parentheses.
+    changed = True
+    while changed:
+        changed = False
+        for left, right in (("（", "）"), ("(", ")"), ("【", "】"), ("[", "]")):
+            start = value.find(left)
+            while start != -1:
+                depth = 1
+                end = start + 1
+                while end < len(value) and depth > 0:
+                    if value.startswith(left, end):
+                        depth += 1
+                        end += len(left)
+                        continue
+                    if value.startswith(right, end):
+                        depth -= 1
+                        if depth == 0:
+                            break
+                        end += len(right)
+                        continue
+                    end += 1
+                if end == -1:
+                    break
+                if depth > 0:
+                    break
+                segment = value[start + 1:end]
+                if any(marker in segment for marker in markers):
+                    value = value[:start] + value[end + 1:]
+                    changed = True
+                    start = value.find(left, max(0, start - 1))
+                    continue
+                start = value.find(left, end + 1)
+
+    value = value.replace(" _ ", " ").replace("_", " ")
+    value = " ".join(value.split())
+    for mark in ("，)", "、)", "(，", "(、", "，）", "、）", "（，", "（、"):
+        value = value.replace(mark, mark[-1] if mark[0] in "，、" else mark[0])
+    value = value.replace(" ,", ",").replace(" ，", "，").replace(" 、", "、")
+    return value.strip(" ._+-＋，、")
+
+
+def _strip_filename_explanations(text):
+    return _strip_model_explanation_notes(text, _FILENAME_EXPLANATION_MARKERS)
+
+
+def _clean_translated_filename_candidate(candidate):
+    if _looks_like_model_refusal(candidate):
+        return ""
+    cleaned = _strip_filename_explanations(candidate)
+    if not cleaned:
+        return ""
+    if any(marker in cleaned for marker in _FILENAME_EXPLANATION_MARKERS):
+        return ""
+    return _sanitize_filename(cleaned)
+
+
+def _clean_translated_toc_title(candidate):
+    if _looks_like_model_refusal(candidate):
+        return ""
+    value = str(candidate or "").strip()
+    for marker in ("【前文", "【后文", "[前文", "[后文"):
+        index = value.find(marker)
+        if index > 0:
+            value = value[:index].strip()
+
+    for prefix in ("【待翻译文本】", "【待翻译标题】", "[待翻译文本]", "[待翻译标题]"):
+        if value.startswith(prefix):
+            value = value[len(prefix):].strip()
+
+    cleaned = _strip_model_explanation_notes(value, _TOC_EXPLANATION_MARKERS)
+    if not cleaned:
+        return ""
+
+    for prefix in ("译文：", "译文:", "翻译：", "翻译:", "标题：", "标题:"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+
+    for suffix in ("等内容", "等说明", "的说明", "的解释"):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)].strip(" ，,、")
+
+    # If explanatory prose survived outside brackets, keep only the title-like
+    # prefix. TOC entries should be short labels, not encyclopedia notes.
+    for marker in _TOC_EXPLANATION_MARKERS:
+        index = cleaned.find(marker)
+        if index > 0:
+            prefix = cleaned[:index].rstrip(" ，,、；;：:-—（(")
+            if prefix:
+                cleaned = prefix
+                break
+
+    return cleaned.strip(" ._+-＋，、")
+
 
 def _looks_like_model_refusal(text):
     value = str(text or "").strip().lower()
@@ -68,10 +213,7 @@ def _looks_like_model_refusal(text):
     return sentence_marks >= 2 and any(word in value for word in meta_words)
 
 def _is_usable_translated_filename(candidate):
-    if _looks_like_model_refusal(candidate):
-        return False
-    safe = _sanitize_filename(candidate)
-    return bool(safe)
+    return bool(_clean_translated_filename_candidate(candidate))
 
 def _source_title_for_filename(stem):
     value = str(stem or "").strip()
@@ -531,7 +673,11 @@ class _TranslateWorker(QObject):
                 original = all_texts[i]
                 translated = ordered_results[i] if ordered_results and i < len(ordered_results) else results.get(original)
                 if translated:
-                    toc_translations[original] = translated
+                    cleaned_title = _clean_translated_toc_title(translated)
+                    if cleaned_title:
+                        toc_translations[original] = cleaned_title
+                    elif not _looks_like_model_refusal(translated):
+                        toc_translations[original] = translated
 
             if toc_translations:
                 apply_toc_translations(book, toc_translations)
@@ -563,9 +709,9 @@ class _TranslateWorker(QObject):
                         candidates.append(str(tt))
                         break
                 for candidate in candidates:
-                    if not _is_usable_translated_filename(candidate):
+                    safe = _clean_translated_filename_candidate(candidate)
+                    if not safe:
                         continue
-                    safe = _sanitize_filename(candidate)
                     target = source_path.with_name(safe + ".epub")
                     if _os.path.normcase(_os.path.abspath(str(target))) == _os.path.normcase(_os.path.abspath(str(source_path))):
                         final_out = str(source_path)

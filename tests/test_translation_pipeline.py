@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import sys
 import threading
 import unittest
 import uuid
@@ -110,6 +111,49 @@ class DummyTranslator(JaZhTranslator):
 
 
 class TranslatorTests(unittest.TestCase):
+    def test_translated_filename_removes_model_explanation_notes(self):
+        qml_root = Path(__file__).resolve().parents[1] / "experimental" / "qml_v4"
+        if str(qml_root) not in sys.path:
+            sys.path.insert(0, str(qml_root))
+        from backend.translate_bridge import _clean_translated_filename_candidate
+
+        candidate = (
+            "恐怖 角川恐怖文库精选集(恒川光太郎、坂东真砂子、"
+            "宇佐美诚（颇 _ 或依意译处理为其它合适名，但没更多信息，这里保留“诚”的翻译 ）、"
+            "小林泰三、竹本健治、小松左京等)"
+        )
+
+        cleaned = _clean_translated_filename_candidate(candidate)
+
+        self.assertEqual(
+            cleaned,
+            "恐怖 角川恐怖文库精选集(恒川光太郎、坂东真砂子、宇佐美诚、小林泰三、竹本健治、小松左京等)",
+        )
+        self.assertNotIn("或依意译", cleaned)
+        self.assertNotIn("没更多信息", cleaned)
+
+    def test_translated_toc_title_removes_mythology_explanation_notes(self):
+        qml_root = Path(__file__).resolve().parents[1] / "experimental" / "qml_v4"
+        if str(qml_root) not in sys.path:
+            sys.path.insert(0, str(qml_root))
+        from backend.translate_bridge import _clean_translated_toc_title
+
+        candidate = (
+            "尼俄泊（尼俄柏之穴的简写（译者注），尼俄柏是希腊神话中坦塔罗斯之女，"
+            "因炫耀自己的子女，悲叹七子七女被阿波罗和阿尔忒弥斯射杀，"
+            "悲痛永无止息，身体化作泉水，永远流动。） 恒川光太郎\n\n"
+            "【前文（无需翻译）】\n《正月女》 坂东真砂子\n\n"
+            "【后文（无需翻译）】\n《某个堕落者的死亡》 平山梦明"
+        )
+
+        cleaned = _clean_translated_toc_title(candidate)
+
+        self.assertEqual(cleaned, "尼俄泊 恒川光太郎")
+        self.assertNotIn("希腊神话", cleaned)
+        self.assertNotIn("永远流动", cleaned)
+        self.assertNotIn("前文", cleaned)
+        self.assertNotIn("后文", cleaned)
+
     def test_fix_toc_uids_preserves_section_children_without_uid(self):
         section = epub.Section("Magazine Excerpt", "text/part0003.html")
         children = [
