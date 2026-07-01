@@ -590,17 +590,34 @@ class _TranslateWorker(QObject):
                 ordered_cursor += 1
                 return translated or results.get(original)
 
+            toc_title_set = set(toc_titles or [])
+
+            def clean_node_translation(original, translated, mode, tag=None):
+                if not translated:
+                    return translated
+                tag_name = str(getattr(tag, "name", "") or "").lower()
+                is_heading = tag_name in {"h1", "h2", "h3"}
+                if mode in ("single_anchor", "multi_anchor") or original in toc_title_set or is_heading:
+                    cleaned = _clean_translated_toc_title(translated)
+                    if cleaned:
+                        return cleaned
+                    if _looks_like_model_refusal(translated):
+                        return original
+                return translated
+
             for record in text_tag_map:
                 mode, _, tag = record[0], record[1], record[2]
                 if mode == "multi_anchor":
                     node_records = record[3]
                     for node, original in node_records:
                         translated = next_translated(original)
+                        translated = clean_node_translation(original, translated, mode, tag)
                         if translated:
                             node.replace_with(NavigableString(translated))
                     continue
                 original = record[3]
                 translated = next_translated(original)
+                translated = clean_node_translation(original, translated, mode, tag)
                 if not translated:
                     continue
                 if mode == "single_anchor":
