@@ -562,3 +562,12 @@ QML/PySide6、EPUB 解析、配置加载和 Python 运行时初始化都会增�
 ## License
 
 本项目用于个人学习和本地 EPUB 翻译工作流。请遵守原书版权、API 服务商条款和所在地区法律法规。不要传播未授权的翻译成品。
+## Star History
+
+<a href="https://www.star-history.com/?repos=herofox2024%2Fjptoch&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=herofox2024/jptoch&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=herofox2024/jptoch&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=herofox2024/jptoch&type=date&legend=top-left" />
+ </picture>
+</a>
