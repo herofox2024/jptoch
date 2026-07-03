@@ -760,6 +760,7 @@ class _TranslateWorker(QObject):
             if self._cancel_event.is_set():
                 self.finished.emit(CANCELLED_RESULT)
                 return
+            logger.exception("翻译任务失败")
             self.errorDetail.emit(traceback.format_exc())
             self.failed.emit(f"{e}\n{traceback.format_exc()}")
 
