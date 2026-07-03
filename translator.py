@@ -672,10 +672,24 @@ class JaZhTranslator:
         "longcat": "https://api.longcat.chat/openai/v1/chat/completions",
         "custom": "",
     }
+    _PROVIDER_MODELS: Dict[str, str] = {
+        "deepseek": DEEPSEEK_MODEL,
+        "doubao": DOUBAO_MODEL,
+        "sakura": SAKURA_MODEL,
+        "gemini": GEMINI_MODEL,
+        "glm": GLM_MODEL,
+        "wenxin": WENXIN_MODEL,
+        "longcat": LONGCAT_MODEL,
+        "custom": "",
+    }
 
     @classmethod
     def _get_provider_default_url(cls, provider: str) -> str:
         return cls._PROVIDER_URLS.get(provider, "")
+
+    @classmethod
+    def _get_provider_default_model(cls, provider: str) -> str:
+        return cls._PROVIDER_MODELS.get(provider, "")
 
     def _get_proofread_url(self) -> str:
         """获取校对专用 API URL。"""
@@ -3039,6 +3053,112 @@ JSON 顶层字段：
             return "请将以下日文准确、克制、自然地翻译为中文，不要自由润色、不要补充解释："
         return "请将以下日文翻译为优美流畅的中文："
 
+    def _get_moderation_fallback_config(self) -> Optional[Dict[str, str]]:
+        """Use the configured proofread model as a translation fallback after moderation blocks."""
+        configured = bool(
+            self.proofread_provider
+            or self._proofread_api_url
+            or self.proofread_model
+            or self.proofread_api_key
+        )
+        if not configured:
+            return None
+
+        provider = (self.proofread_provider or self.provider or "").strip().lower()
+        api_url = self._get_proofread_url() if (self.proofread_provider or self._proofread_api_url) else self.api_url
+        model = self.proofread_model or self._get_provider_default_model(provider) or self.model
+        api_key = self.proofread_api_key or (self.api_key if provider == self.provider else "")
+        if provider != self.provider and not self.proofread_api_key and provider != "sakura":
+            logger.warning("内容审核备用模型未配置校对 API Key，跳过备用翻译: provider=%s", provider)
+            return None
+        if not api_url or not model or (not api_key and provider != "sakura"):
+            return None
+        if (
+            provider == self.provider
+            and self._normalize_api_url(api_url) == self.api_url
+            and model == self.model
+            and (api_key or "") == (self.api_key or "")
+        ):
+            return None
+        return {"provider": provider, "api_url": self._normalize_api_url(api_url), "model": model, "api_key": api_key}
+
+    def _call_moderation_fallback_translation(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float,
+    ) -> Optional[SingleChunkResult]:
+        fallback = self._get_moderation_fallback_config()
+        if not fallback:
+            return None
+
+        provider = fallback["provider"]
+        payload = {
+            "model": fallback["model"],
+            "messages": messages,
+            "temperature": temperature,
+        }
+        self._apply_provider_payload_options(payload, provider)
+        headers = {
+            "Authorization": f"Bearer {fallback['api_key'] or 'sk-local'}",
+            "Content-Type": "application/json",
+        }
+        logger.info(
+            "主模型内容审核拦截，改用校对模型作为备用翻译: provider=%s, model=%s",
+            provider,
+            fallback["model"],
+        )
+
+        last_error = None
+        for attempt in range(2):
+            if self.cancel_event.is_set():
+                raise RuntimeError("翻译已取消")
+            try:
+                self._inc_stat("moderation_fallback_requests")
+                self._inc_stat("api_requests_total")
+                resp = self.session.post(
+                    fallback["api_url"],
+                    headers=headers,
+                    json=payload,
+                    timeout=self.API_TIMEOUT,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                self._accumulate_usage_tokens(data)
+                choices = data.get("choices", [])
+                if not choices:
+                    last_error = "备用模型响应缺少 choices"
+                    continue
+                content = ((choices[0].get("message", {}) or {}).get("content", "") or "").strip()
+                if not content:
+                    last_error = "备用模型响应缺少 content"
+                    continue
+                self._inc_stat("moderation_fallback_success")
+                return SingleChunkResult(
+                    content=content,
+                    finish_reason=self._get_finish_reason(data),
+                    is_truncated=self._get_finish_reason(data) == "length",
+                )
+            except requests.exceptions.HTTPError as e:
+                self._inc_stat("api_requests_failed")
+                self._log_http_error_response(
+                    e,
+                    "内容审核备用翻译",
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=provider,
+                    model=fallback["model"],
+                )
+                if self._is_content_moderation_http_error(e):
+                    last_error = "备用模型也被内容审核拦截"
+                    break
+                last_error = f"备用模型 HTTP 错误: {e}"
+            except Exception as e:
+                self._inc_stat("api_requests_failed")
+                last_error = str(e)
+                logger.warning("内容审核备用翻译失败 (尝试 %s/2): %s", attempt + 1, e)
+        logger.warning("内容审核备用翻译未成功: %s", last_error or "未知错误")
+        return None
+
     def _call_deepseek_single(
         self,
         text: str,
@@ -3237,6 +3357,12 @@ JSON 顶层字段：
                     last_error += f"; 响应体: {self._response_snippet(body_snippet, limit=240)}"
                 if self._is_content_moderation_http_error(e):
                     self._inc_stat("content_moderation_reject")
+                    fallback_result = self._call_moderation_fallback_translation(
+                        messages,
+                        float(payload.get("temperature", self.temperature) or 0.3),
+                    )
+                    if fallback_result is not None:
+                        return fallback_result
                     break
             except (json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
