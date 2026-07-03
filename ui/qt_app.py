@@ -683,6 +683,7 @@ class QtAppWindow(QWidget):
         ("Sakura", "sakura"),
         ("Gemini", "gemini"),
         ("GLM(Zhipu)", "glm"),
+        ("LongCat 2.0", "longcat"),
         ("Custom", "custom"),
     ]
 
@@ -1578,6 +1579,9 @@ class QtAppWindow(QWidget):
         elif provider == "glm":
             self.api_url_edit.setText("https://open.bigmodel.cn/api/paas/v4/chat/completions")
             self.model_edit.setText("glm-4-flash")
+        elif provider == "longcat":
+            self.api_url_edit.setText("https://api.longcat.chat/openai/v1/chat/completions")
+            self.model_edit.setText("LongCat-2.0")
         elif provider == "custom":
             self.api_url_edit.setText("")
             self.model_edit.setText("")
@@ -1870,7 +1874,7 @@ class QtAppWindow(QWidget):
         if not cfg.out:
             QMessageBox.critical(self, "错误", "请填写输出文件")
             return None
-        if cfg.provider in {"deepseek", "doubao", "gemini", "glm", "custom"} and not cfg.api_key:
+        if cfg.provider in {"deepseek", "doubao", "gemini", "glm", "longcat", "custom"} and not cfg.api_key:
             QMessageBox.critical(self, "错误", "该提供方需要 API Key")
             return None
         if not cfg.api_url or not cfg.model:

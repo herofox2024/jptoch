@@ -325,7 +325,7 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
         tk.Label(card, text="服务提供方:", bg=THEME["card_bg"], font=("Microsoft YaHei UI", 9)).grid(row=0, column=0, sticky="w", **pad)
         self.provider_combo = ttk.Combobox(
             card, textvariable=self.provider_display_var,
-            values=["DeepSeek", "Doubao", "Sakura", "Gemini", "自定义"],
+            values=["DeepSeek", "Doubao", "Sakura", "Gemini", "GLM(Zhipu)", "LongCat 2.0", "自定义"],
             state="readonly", width=14,
         )
         self.provider_combo.grid(row=0, column=1, sticky="w", **pad)
@@ -477,7 +477,7 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
     #  事件处理
     # ════════════════════════════════════════════════════════
     # 下拉框显示文本 -> 内部值映射
-    _PROVIDER_MAP = {"DeepSeek": "deepseek", "Doubao": "doubao", "Sakura": "sakura", "Gemini": "gemini", "GLM(Zhipu)": "glm", "自定义": "custom"}
+    _PROVIDER_MAP = {"DeepSeek": "deepseek", "Doubao": "doubao", "Sakura": "sakura", "Gemini": "gemini", "GLM(Zhipu)": "glm", "LongCat 2.0": "longcat", "自定义": "custom"}
 
     def _on_provider_combo_change(self, event=None):
         display = self.provider_combo.get()
@@ -498,6 +498,9 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
         elif provider == "glm":
             self.api_url_var.set("https://open.bigmodel.cn/api/paas/v4/chat/completions")
             self.model_var.set("glm-4-flash")
+        elif provider == "longcat":
+            self.api_url_var.set("https://api.longcat.chat/openai/v1/chat/completions")
+            self.model_var.set("LongCat-2.0")
         elif provider == "custom":
             self.api_url_var.set("")
             self.model_var.set("")
@@ -809,7 +812,7 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
         if not out:
             messagebox.showerror("错误", "请填写输出文件名")
             return
-        if provider in {"deepseek", "doubao", "gemini", "glm", "custom"} and not api_key:
+        if provider in {"deepseek", "doubao", "gemini", "glm", "longcat", "custom"} and not api_key:
             if provider == "deepseek":
                 provider_name = "DeepSeek"
             elif provider == "doubao":
@@ -818,6 +821,8 @@ class App((TkinterDnD.Tk if TkinterDnD is not None else tk.Tk)):
                 provider_name = "Gemini"
             elif provider == "glm":
                 provider_name = "GLM"
+            elif provider == "longcat":
+                provider_name = "LongCat 2.0"
             else:
                 provider_name = "自定义"
             messagebox.showerror("错误", f"请填写 {provider_name} API Key")

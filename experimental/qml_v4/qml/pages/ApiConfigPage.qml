@@ -11,8 +11,8 @@ Page {
 
     property var cfg: null
 
-    property var providerKeys: ["deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"]
-    property var providerLabels: ["DeepSeek", "豆包 (火山引擎)", "Sakura (本地)", "Gemini", "GLM (智谱)", "文心一言 (千帆)", "自定义"]
+    property var providerKeys: ["deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "longcat", "custom"]
+    property var providerLabels: ["DeepSeek", "豆包 (火山引擎)", "Sakura (本地)", "Gemini", "GLM (智谱)", "文心一言 (千帆)", "LongCat 2.0 (美团)", "自定义"]
     property var providerHints: ({
         "deepseek": "DeepSeek：推荐主力翻译；付费版支持高并发批量。",
         "doubao": "Doubao：火山方舟 OpenAI 兼容接口。",

@@ -80,6 +80,8 @@ GLM_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 GLM_MODEL = "glm-4-flash"
 WENXIN_API_URL = "https://qianfan.baidubce.com/v2/chat/completions"
 WENXIN_MODEL = "ernie-4.5-turbo-128k"
+LONGCAT_API_URL = "https://api.longcat.chat/openai/v1/chat/completions"
+LONGCAT_MODEL = "LongCat-2.0"
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 
 
@@ -667,6 +669,7 @@ class JaZhTranslator:
         "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         "glm": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
         "wenxin": "https://qianfan.baidubce.com/v2/chat/completions",
+        "longcat": "https://api.longcat.chat/openai/v1/chat/completions",
         "custom": "",
     }
 
@@ -730,7 +733,7 @@ class JaZhTranslator:
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
-        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "custom"}:
+        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "longcat", "custom"}:
             raise ValueError(f"不支持的提供方: {provider}")
 
         self.api_key = api_key or ""
@@ -743,6 +746,8 @@ class JaZhTranslator:
                 self.api_key = os.getenv("GLM_API_KEY", "") or os.getenv("ZHIPU_API_KEY", "")
             elif self.provider == "wenxin":
                 self.api_key = os.getenv("WENXIN_API_KEY", "") or os.getenv("QIANFAN_API_KEY", "")
+            elif self.provider == "longcat":
+                self.api_key = os.getenv("LONGCAT_API_KEY", "")
         if self.provider == "deepseek" and not self.api_key:
             raise ValueError("未找到 DeepSeek API Key，请在界面输入或设置环境变量 DEEPSEEK_API_KEY")
         if self.provider == "doubao" and not self.api_key:
@@ -774,6 +779,9 @@ class JaZhTranslator:
         elif self.provider == "wenxin":
             default_url = WENXIN_API_URL
             default_model = WENXIN_MODEL
+        elif self.provider == "longcat":
+            default_url = LONGCAT_API_URL
+            default_model = LONGCAT_MODEL
 
         raw_api_url = (api_url or default_url).strip()
         self.api_url = self._normalize_api_url(raw_api_url)
@@ -914,7 +922,7 @@ class JaZhTranslator:
     def _apply_provider_payload_options(self, payload: Dict[str, Any], provider: Optional[str] = None) -> None:
         """为特定提供方追加请求参数。"""
         active_provider = (provider or self.provider or "").lower()
-        if (not self.enable_thinking) and active_provider in {"deepseek", "doubao", "glm", "custom"}:
+        if (not self.enable_thinking) and active_provider in {"deepseek", "doubao", "glm", "longcat", "custom"}:
             # 用户要求关闭深度思考。
             payload["thinking"] = {"type": "disabled"}
 
