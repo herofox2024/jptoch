@@ -2588,18 +2588,39 @@ class JaZhTranslator:
         if not unique_texts:
             return 0
 
+        # Build lookup sets: plain原文, sha256, md5 — legacy cache.json stores
+        # entries under the plain source text, while newer builds use
+        # "v2:provider:model:<sha256>" / "v3ctx:..." keys. Match every form.
+        plain_texts = set(unique_texts)
+        digests = set()
+        for text in unique_texts:
+            raw = text.encode("utf-8")
+            digests.add(hashlib.sha256(raw).hexdigest())
+            digests.add(hashlib.md5(raw).hexdigest())
+
         removed = 0
         with self._cache_lock:
+            # If this translator instance was just constructed (e.g. from the
+            # QML "clear cache" button) its in-memory cache is empty even
+            # though cache.json on disk is populated. Load it first so we
+            # actually have something to clear.
+            if not self.cache:
+                try:
+                    loaded = self._load_json(self.cache_path, {})
+                    if isinstance(loaded, dict) and loaded:
+                        self.cache = loaded
+                        self._cache_dirty = False
+                except Exception as e:
+                    logger.warning(f"加载缓存以进行清理失败: {e}")
+
             if all_models:
-                digests = set()
-                for text in unique_texts:
-                    raw = text.encode("utf-8")
-                    digests.add(hashlib.sha256(raw).hexdigest())
-                    digests.add(hashlib.md5(raw).hexdigest())
-                keys_to_remove = [
-                    key for key in list(self.cache)
-                    if any(str(key).endswith(f":{digest}") or str(key) == digest for digest in digests)
-                ]
+                def _matches(key: str) -> bool:
+                    s = str(key)
+                    if s in plain_texts:
+                        return True
+                    return any(s.endswith(f":{d}") or s == d for d in digests)
+
+                keys_to_remove = [key for key in list(self.cache) if _matches(key)]
                 for key in keys_to_remove:
                     self.cache.pop(key, None)
                     removed += 1
@@ -2608,6 +2629,10 @@ class JaZhTranslator:
                     cache_key = self._cache_key(text)
                     if cache_key in self.cache:
                         self.cache.pop(cache_key, None)
+                        removed += 1
+                    # Legacy fallback: also drop a plain-text key if present.
+                    if text in self.cache and text != cache_key:
+                        self.cache.pop(text, None)
                         removed += 1
             if removed:
                 self._cache_dirty = True
