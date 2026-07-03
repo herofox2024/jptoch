@@ -488,11 +488,10 @@ def iter_text_nodes(book: epub.EpubBook) -> Generator[Tuple[Any, BeautifulSoup, 
             content = item.get_content()
             # Guard against empty/whitespace-only documents that cause
             # BeautifulSoup to raise Document is empty on Python 3.12+.
-            raw = content.decode("utf-8", errors="ignore") if isinstance(content, (bytes, bytearray)) else str(content or "")
-            if not raw.strip():
+            if content is None or not content.strip():
                 logger.debug("Skipping empty document: %s", getattr(item, "file_name", "?"))
                 continue
-            soup = BeautifulSoup(raw, "html.parser")
+            soup = BeautifulSoup(content, "html.parser")
             tags = soup.find_all(TARGET_TAGS)
             toc_link_tags = _find_inbook_toc_link_tags(soup, tags)
             if toc_link_tags:
@@ -603,7 +602,26 @@ def save_book(path: str, book: epub.EpubBook, chinese_mode: Optional[bool] = Non
     if chinese_mode is not None:
         _apply_reading_direction_to_book(book, chinese_mode)
 
-    epub.write_epub(path, book, {})
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_fd, temp_output = tempfile.mkstemp(
+        prefix=f".{output_path.stem}.",
+        suffix=".tmp.epub",
+        dir=str(output_path.parent),
+    )
+    os.close(temp_fd)
+    try:
+        # ebooklib's EPUB3 page-list generation fails on valid XHTML whose body
+        # contains direct text nodes but no child tags. Disable it; the normal
+        # table of contents is still written.
+        epub.write_epub(temp_output, book, {"epub3_pages": False})
+        os.replace(temp_output, path)
+    except Exception:
+        try:
+            os.remove(temp_output)
+        except OSError:
+            pass
+        raise
 
     temp_path = getattr(book, '_repaired_temp_path', None)
     if temp_path and os.path.exists(temp_path):
