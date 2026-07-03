@@ -87,6 +87,17 @@ class FastFailError(RuntimeError):
     """用于标识应立即中断流程的不可恢复错误（如明确配置的 HTTP 502）。"""
 
 
+class ContentModerationError(RuntimeError):
+    """Raised when an upstream provider rejects the batch because its content
+    moderation filter flags one or more source texts. Unlike FastFailError this
+    does NOT abort the whole pipeline — callers should split the batch and retry
+    each item on its own so only the offending text is lost."""
+
+    def __init__(self, message: str, offending_indices: Optional[List[int]] = None):
+        super().__init__(message)
+        self.offending_indices = list(offending_indices or [])
+
+
 class TranslationIncompleteError(RuntimeError):
     """Raised when some texts could not be safely translated."""
 
@@ -1053,6 +1064,34 @@ class JaZhTranslator:
             return text[:limit] + "..."
         return text
 
+    # LongCat / LongCat-like providers return a 400 with a JSON body whose
+    # ``error.code`` is ``security_audit_fail`` when their content moderation
+    # filter blocks a request. Detect it here so callers can split the batch and
+    # retry items one-by-one instead of losing the whole batch.
+    _CONTENT_MODERATION_SNIPPETS = (
+        "security_audit_fail",
+        "security_error",
+        "内容审核拦截",
+        "内容审核未通过",
+        "违规信息",
+        "content_moderation",
+        "content moderation",
+    )
+
+    @classmethod
+    def _is_content_moderation_http_error(cls, error: requests.exceptions.HTTPError) -> bool:
+        resp = getattr(error, "response", None)
+        if resp is None or resp.status_code != 400:
+            return False
+        body = ""
+        try:
+            body = (resp.text or "").lower()
+        except Exception:
+            return False
+        if not body:
+            return False
+        return any(snippet in body for snippet in cls._CONTENT_MODERATION_SNIPPETS)
+
     def _log_http_error_response(
         self,
         error: requests.exceptions.HTTPError,
@@ -1475,6 +1514,31 @@ class JaZhTranslator:
         """Public helper for diagnostics; weak residue should not block saving."""
         return JaZhTranslator._has_weak_japanese_residue(text)
 
+    @classmethod
+    def _has_only_trivial_japanese_noise(cls, text: str) -> bool:
+        """Return True when the bulk of *text* is Chinese and any leftover kana
+        is just a couple of isolated name / term fragments. Today's logs show
+        a pattern where LongCat leaves one stray kana (e.g. ``ひょう`` or
+        ``キヨ``) inside an otherwise complete Chinese sentence — that is a
+        real defect, but not severe enough to discard the whole translation.
+        Treat those as 'trivial noise' so callers can decide locally how to
+        count them."""
+        if not text:
+            return False
+        stripped = cls._strip_allowed_japanese_notation(text)
+        if not cls.JAPANESE_KANA_RE.search(stripped):
+            return False
+        # Count Chinese characters (CJK Unified Ideographs). If the piece is
+        # mostly Chinese and only a few kana fragments remain, it is "trivial".
+        han_count = len(re.findall(r"[一-鿿]", stripped))
+        kana_fragments = [f for f in cls.JAPANESE_KANA_FRAGMENT_RE.findall(stripped) if f.strip()]
+        total_kana = sum(len(f) for f in kana_fragments)
+        if han_count < 8:
+            return False
+        if len(kana_fragments) > 3 or total_kana > max(3, han_count * 0.05):
+            return False
+        return True
+
     @staticmethod
     def japanese_residue_fragments(text: str) -> List[str]:
         """Public helper for diagnostics and UI messages."""
@@ -1488,8 +1552,16 @@ class JaZhTranslator:
         if not translated:
             return True
         if cls._has_blocking_japanese_residue(translated):
+            # Single stray kana fragments inside an otherwise solid Chinese
+            # sentence are treated as a minor defect, not a hard failure.
+            # Discarding the whole sentence for "ひょう" loses more quality
+            # than it saves.
+            if cls._has_only_trivial_japanese_noise(translated):
+                return False
             return True
         if source and translated == source and cls._has_blocking_japanese_residue(source):
+            if cls._has_only_trivial_japanese_noise(source):
+                return False
             return True
         return False
 
@@ -2012,6 +2084,10 @@ class JaZhTranslator:
                     logger.warning("批量校对请求遇到 502，回退单条校对")
                     return {}
                 resp.raise_for_status()
+                if resp.status_code in (401, 403):
+                    # Surface-auth failures individually so the caller can
+                    # report them as "proofread skipped" rather than "fixed".
+                    return None
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
 
@@ -3365,6 +3441,18 @@ JSON 顶层字段：
             except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
                 if isinstance(e, requests.exceptions.HTTPError):
+                    if self._is_content_moderation_http_error(e):
+                        self._inc_stat("batch_moderation_reject")
+                        logger.warning(
+                            "批量 JSON 翻译被内容审核拦截 (尝试 %s/%s): %s",
+                            attempt + 1,
+                            max_retries,
+                            e,
+                        )
+                        raise ContentModerationError(
+                            f"内容审核拦截: {e}",
+                            offending_indices=list(range(len(texts))),
+                        )
                     self._log_http_error_response(
                         e,
                         "批量 JSON 翻译",
@@ -3805,14 +3893,21 @@ JSON 顶层字段：
             key = str(text or "")
             if not key:
                 return
+            # merge consecutive identical reasons for content-moderation failures
+            prev_reason = failed_texts.get(key)
+            if prev_reason and prev_reason != reason and "内容审核拦截" in prev_reason and "内容审核拦截" in reason:
+                return
             if translated is not None:
                 translated = self._postprocess_translation(key, translated)
-            failed_texts.setdefault(key, reason)
+            failed_texts[key] = reason
             if translated is not None and self._has_blocking_japanese_residue(translated):
-                residue_texts.setdefault(key, translated)
+                residue_texts[key] = translated
 
         def accept_translation(original: str, translated: Optional[str], reason: str = "") -> Optional[str]:
             cleaned = self._postprocess_translation(original, translated)
+            if not cleaned:
+                mark_incomplete(original, reason or "译文为空（可能是模型内容审核拦截）", cleaned)
+                return None
             if self._is_incomplete_translation(original, cleaned):
                 mark_incomplete(original, reason or "译文为空或仍有日文残留", cleaned)
                 return None
@@ -4100,6 +4195,7 @@ JSON 顶层字段：
             repaired = list(pairs)
             fixed_count = 0
             proofread_fixed = 0
+            proofread_skipped = 0
             batch_proofread_revisions: Dict[int, str] = {}
             proofread_only_idx = sorted(set(proofread_issues) - suspicious_idx)
             if enable_proofread and len(proofread_only_idx) >= 2:
@@ -4119,7 +4215,15 @@ JSON 顶层字段：
                     )
                 try:
                     batch_proofread_revisions = self._proofread_translations_batch(batch_items)
-                    if batch_proofread_revisions:
+                    if batch_proofread_revisions is None:
+                        # 401 / 403 from proofread API — skip proofread for these
+                        # items rather than silently treating draft as revised.
+                        proofread_skipped += len(batch_items)
+                        batch_proofread_revisions = {}
+                        logger.warning(
+                            f"批量校对认证失败，跳过 {len(batch_items)} 条校对"
+                        )
+                    elif batch_proofread_revisions:
                         logger.info(
                             f"批量校对完成: {len(batch_proofread_revisions)}/{len(batch_items)} 条"
                         )
@@ -4204,7 +4308,13 @@ JSON 顶层字段：
                     logger.warning(f"质检重译失败 [{i}]: {e}")
             if proofread_fixed:
                 self._inc_stat("proofread_fixed", proofread_fixed)
-            logger.info(f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条")
+            if proofread_skipped:
+                logger.info(
+                    f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条，"
+                    f"因认证失败跳过校对 {proofread_skipped} 条"
+                )
+            else:
+                logger.info(f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条")
             return repaired
 
         def translate_one_batch(batch: List[str]) -> List[Tuple[str, str, str]]:
@@ -4243,6 +4353,24 @@ JSON 顶层字段：
                     prev_text=batch_prev_ctx,
                     next_text=batch_next_ctx,
                 )
+            except ContentModerationError as moderation_exc:
+                logger.warning(
+                    "批量 JSON 被内容审核拦截，拆单条重试: %s",
+                    moderation_exc,
+                )
+                self._inc_stat("batch_moderation_fallback")
+                single_parts: List[Optional[str]] = []
+                for task_key, text in zip(batch, batch_texts):
+                    try:
+                        retry_prev, retry_next = get_context_for_task(task_key)
+                        single_parts.append(call_translate_chunk(text, retry_prev, retry_next))
+                    except Exception as single_exc:
+                        logger.warning(
+                            "内容审核拦截后的单条重试失败: %s",
+                            single_exc,
+                        )
+                        single_parts.append(None)
+                return repair_batch_quality(batch, list(zip(batch, batch_texts, single_parts)))
 
             # Case 1: 全部成功（所有 idx 都有有效译文）
             if result.translations is not None and not result.missing_indices:
@@ -4356,9 +4484,16 @@ JSON 顶层字段：
                     submit_available_batches()
                     continue
 
+                # Remove completed futures from future_order first so the deque
+                # is not resized mid-iteration by worker callbacks. See #71.
+                done_set = set(done)
+                new_future_order = deque(f for f in future_order if f not in done_set)
+                future_order.clear()
+                future_order.extend(new_future_order)
                 for future in done:
-                    future_order = deque(f for f in future_order if f is not future)
-                    batch = futures.pop(future)
+                    batch = futures.pop(future, None)
+                    if batch is None:
+                        continue
                     try:
                         batch_results = future.result()
                         for task_key, original, translated in batch_results:
