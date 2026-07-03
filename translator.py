@@ -457,6 +457,10 @@ class JaZhTranslator:
     ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
         r"[「『“\"'（(【\[]?\s*[\u30a0-\u30ff\uff66-\uff9f]\s*[」』”\"'）)】\]]?\s*(?:の\s*)?(?:字形|字型|字状|形|型|状|字)"
     )
+    ALLOWED_LATIN_MIDDLE_DOT_RE = re.compile(r"(?<=[A-Za-z0-9])・(?=[A-Za-z0-9])")
+    JAPANESE_EXPLANATORY_QUOTE_CUE_RE = re.compile(
+        r"(?:说法|所谓|写作|写成|写出来|读作|读成|发音|原文|日文|词语|词|意思|叫做|称作|表示)"
+    )
 
     # ---- Phase 1-③: 本地预翻译规则表（高频短句直接替换，跳过 API）----
     PRE_TRANSLATE_RULES: Dict[str, str] = {
@@ -786,6 +790,19 @@ class JaZhTranslator:
             batch_size = min(batch_size, 2)
             max_batch_length = min(max_batch_length, 500)
             max_text_size_for_batch = min(max_text_size_for_batch, 150)
+        endpoint_hint = f"{self.api_url} {self.model}".lower()
+        if "longcat" in endpoint_hint:
+            old_workers, old_batch = max_workers, batch_size
+            max_workers = min(max_workers, 8)
+            batch_size = min(batch_size, 9)
+            if (old_workers, old_batch) != (max_workers, batch_size):
+                logger.info(
+                    "LongCat 稳定性保护: 并发 %s→%s，批量 %s→%s",
+                    old_workers,
+                    max_workers,
+                    old_batch,
+                    batch_size,
+                )
 
         data_dir = get_data_dir()
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
@@ -829,6 +846,7 @@ class JaZhTranslator:
         self._dynamic_backoff_until = 0.0
         self._dynamic_limit_events = 0
         self._dynamic_success_count = 0
+        self._proofread_auth_failed = False
         self.cancel_event = cancel_event or threading.Event()
         self.session = requests.Session()
         # 连接池大小与并发数匹配，避免 "Connection pool is full" 警告
@@ -1074,6 +1092,11 @@ class JaZhTranslator:
         "内容审核拦截",
         "内容审核未通过",
         "违规信息",
+        "contentfilter",
+        "content filter",
+        "code\":\"1301",
+        "不安全或敏感内容",
+        "敏感内容",
         "content_moderation",
         "content moderation",
     )
@@ -1092,6 +1115,16 @@ class JaZhTranslator:
             return False
         return any(snippet in body for snippet in cls._CONTENT_MODERATION_SNIPPETS)
 
+    @staticmethod
+    def _is_auth_http_error(error: requests.exceptions.HTTPError) -> bool:
+        resp = getattr(error, "response", None)
+        return bool(resp is not None and resp.status_code in (401, 403))
+
+    def _mark_proofread_auth_failed(self) -> None:
+        if not getattr(self, "_proofread_auth_failed", False):
+            logger.warning("校对 API 认证失败，本次任务后续校对将直接跳过")
+        self._proofread_auth_failed = True
+
     def _log_http_error_response(
         self,
         error: requests.exceptions.HTTPError,
@@ -1100,7 +1133,7 @@ class JaZhTranslator:
         max_retries: Optional[int] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
-    ) -> str:
+    ) -> Optional[str]:
         """Log HTTP error response body without leaking request headers/API keys."""
         resp = getattr(error, "response", None)
         if resp is None:
@@ -1375,7 +1408,8 @@ class JaZhTranslator:
         """Ignore approved literal Japanese snippets that are not untranslated residue."""
         if not text:
             return ""
-        stripped = JaZhTranslator.ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", text)
+        stripped = JaZhTranslator.ALLOWED_LATIN_MIDDLE_DOT_RE.sub("", text)
+        stripped = JaZhTranslator.ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", stripped)
         stripped = JaZhTranslator._strip_builtin_allowed_quoted_literals(stripped)
         return JaZhTranslator._strip_user_allowed_japanese_literals(stripped)
 
@@ -1389,6 +1423,12 @@ class JaZhTranslator:
             literal = (match.group(1) or "").strip()
             if cls.JAPANESE_SINGLE_KATAKANA_RE.fullmatch(literal):
                 return ""
+            if cls.JAPANESE_KANA_RE.search(literal):
+                context_start = max(0, match.start() - 30)
+                context_end = min(len(text), match.end() + 30)
+                context = text[context_start:context_end]
+                if cls.JAPANESE_EXPLANATORY_QUOTE_CUE_RE.search(context):
+                    return ""
             return match.group(0)
 
         return cls.JAPANESE_QUOTED_TEXT_RE.sub(replace, text)
@@ -1872,6 +1912,8 @@ class JaZhTranslator:
         """Ask the model to fix only detected translation/proper-noun issues."""
         if not bool(getattr(self, "enable_proofread", False)) or not issues:
             return draft
+        if getattr(self, "_proofread_auth_failed", False):
+            return None
 
         selected_entries = self._select_proofread_glossary_entries(src, max_terms=30)
         glossary_text = self._build_glossary_text(selected_entries)
@@ -1970,6 +2012,9 @@ class JaZhTranslator:
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                 )
+                if self._is_auth_http_error(e):
+                    self._mark_proofread_auth_failed()
+                    return None
                 if attempt == 1:
                     return draft
             except Exception as e:
@@ -1978,10 +2023,12 @@ class JaZhTranslator:
                     return draft
         return draft
 
-    def _proofread_translations_batch(self, items: List[Dict[str, Any]]) -> Dict[int, str]:
+    def _proofread_translations_batch(self, items: List[Dict[str, Any]]) -> Optional[Dict[int, str]]:
         """Proofread multiple suspicious translations with one JSON API request."""
         if not bool(getattr(self, "enable_proofread", False)) or not items:
             return {}
+        if getattr(self, "_proofread_auth_failed", False):
+            return None
 
         prepared: List[Dict[str, Any]] = []
         allowed_entries_by_idx: Dict[int, List[Dict[str, str]]] = {}
@@ -2083,11 +2130,22 @@ class JaZhTranslator:
                 if resp.status_code == 502:
                     logger.warning("批量校对请求遇到 502，回退单条校对")
                     return {}
-                resp.raise_for_status()
                 if resp.status_code in (401, 403):
-                    # Surface-auth failures individually so the caller can
-                    # report them as "proofread skipped" rather than "fixed".
+                    self._inc_stat("api_requests_failed")
+                    try:
+                        resp.raise_for_status()
+                    except requests.exceptions.HTTPError as e:
+                        self._log_http_error_response(
+                            e,
+                            "批量校对",
+                            attempt=attempt,
+                            max_retries=2,
+                            provider=self.proofread_provider or self.provider,
+                            model=proofread_model,
+                        )
+                    self._mark_proofread_auth_failed()
                     return None
+                resp.raise_for_status()
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
 
@@ -2188,6 +2246,9 @@ class JaZhTranslator:
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                 )
+                if self._is_auth_http_error(e):
+                    self._mark_proofread_auth_failed()
+                    return None
                 if attempt == 1:
                     return {}
             except Exception as e:
@@ -3166,6 +3227,9 @@ JSON 顶层字段：
                 last_error = f"HTTP 错误: {e}"
                 if body_snippet:
                     last_error += f"; 响应体: {self._response_snippet(body_snippet, limit=240)}"
+                if self._is_content_moderation_http_error(e):
+                    self._inc_stat("content_moderation_reject")
+                    break
             except (json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
                 last_error = f"API 响应格式错误: {e}"
@@ -4261,6 +4325,9 @@ JSON 顶层字段：
                     if enable_proofread and i in proofread_issues and i not in suspicious_idx:
                         draft = repaired[i][2]
                         issues = list(proofread_issues[i])
+                        if getattr(self, "_proofread_auth_failed", False):
+                            proofread_skipped += 1
+                            continue
                         if i in batch_proofread_revisions:
                             revised = batch_proofread_revisions[i]
                         else:
@@ -4279,6 +4346,9 @@ JSON 顶层字段：
                                     revised = self._proofread_translation(src, draft, issues)
                                 else:
                                     raise
+                        if revised is None:
+                            proofread_skipped += 1
+                            continue
                         revised = self._postprocess_translation(src, revised)
                         if (
                             any("日文" in issue or "假名" in issue for issue in issues)
