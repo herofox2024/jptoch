@@ -486,7 +486,13 @@ def iter_text_nodes(book: epub.EpubBook) -> Generator[Tuple[Any, BeautifulSoup, 
     for item in book.get_items():
         if _is_document_item(item):
             content = item.get_content()
-            soup = BeautifulSoup(content, "html.parser")
+            # Guard against empty/whitespace-only documents that cause
+            # BeautifulSoup to raise Document is empty on Python 3.12+.
+            raw = content.decode("utf-8", errors="ignore") if isinstance(content, (bytes, bytearray)) else str(content or "")
+            if not raw.strip():
+                logger.debug("Skipping empty document: %s", getattr(item, "file_name", "?"))
+                continue
+            soup = BeautifulSoup(raw, "html.parser")
             tags = soup.find_all(TARGET_TAGS)
             toc_link_tags = _find_inbook_toc_link_tags(soup, tags)
             if toc_link_tags:
