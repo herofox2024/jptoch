@@ -1,4 +1,5 @@
 import logging
+import html
 import os
 import re
 import shutil
@@ -34,6 +35,14 @@ BLOCK_SPLIT_TAGS = {
     "table",
     "ul",
 }
+
+DEFAULT_TRANSLATION_NOTICE_TEXT = (
+    "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n"
+    "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
+    "请支持并购买正版书籍。"
+)
+TRANSLATION_NOTICE_UID = "ai-jp-zh-translation-notice"
+TRANSLATION_NOTICE_FILE_NAME = "translation_notice.xhtml"
 
 
 def extract_visible_text(node: Any) -> str:
@@ -592,6 +601,121 @@ def _apply_reading_direction_to_book(book: epub.EpubBook, chinese_mode: bool) ->
         if not (len(entry) >= 2 and isinstance(entry[1], dict) and entry[1].get("name") == "primary-writing-mode")
     ]
     metadata_list.setdefault("meta", []).append((None, {"name": "primary-writing-mode", "content": writing_mode}))
+
+
+def _translation_notice_html(notice_text: str) -> str:
+    text = (notice_text or DEFAULT_TRANSLATION_NOTICE_TEXT).strip() or DEFAULT_TRANSLATION_NOTICE_TEXT
+    paragraphs = [
+        f"<p>{html.escape(line.strip())}</p>"
+        for line in text.splitlines()
+        if line.strip()
+    ]
+    body = "\n        ".join(paragraphs) or f"<p>{html.escape(DEFAULT_TRANSLATION_NOTICE_TEXT)}</p>"
+    return f"""<html>
+  <head>
+    <style>
+      body {{ margin: 2.5em; line-height: 1.8; font-family: serif; }}
+      h1 {{ font-size: 1.4em; margin-bottom: 1.5em; }}
+      p {{ margin: 0 0 0.9em 0; }}
+    </style>
+  </head>
+  <body>
+    <section epub:type="notice">
+      <h1>版权提示</h1>
+      {body}
+    </section>
+  </body>
+</html>
+"""
+
+
+def add_translation_notice_page(book: epub.EpubBook, notice_text: Optional[str] = None) -> None:
+    """Insert a standalone notice page after the cover when it can be detected."""
+    def _resolve_spine_entry(entry: Any) -> Any:
+        candidate = entry[0] if isinstance(entry, tuple) and entry else entry
+        if isinstance(candidate, str):
+            try:
+                return book.get_item_with_id(candidate)
+            except Exception:
+                return None
+        return candidate
+
+    def _spine_entry_key(entry: Any) -> str:
+        original = entry[0] if isinstance(entry, tuple) and entry else entry
+        resolved = _resolve_spine_entry(entry)
+        if resolved is None:
+            return str(original or "").lower()
+        parts = [
+            str(original or ""),
+            str(getattr(resolved, "id", "") or ""),
+            str(getattr(resolved, "file_name", "") or ""),
+            str(getattr(resolved, "title", "") or ""),
+            str(getattr(resolved, "media_type", "") or ""),
+        ]
+        if hasattr(resolved, "get_id"):
+            try:
+                parts.append(str(resolved.get_id() or ""))
+            except Exception:
+                pass
+        return " ".join(parts).lower()
+
+    def _is_cover_spine_entry(entry: Any) -> bool:
+        key = _spine_entry_key(entry)
+        if any(marker in key for marker in ("cover", "frontcover", "titlepage", "封面")):
+            return True
+        item = _resolve_spine_entry(entry)
+        if item is None:
+            return False
+        try:
+            raw = item.get_content() if hasattr(item, "get_content") else getattr(item, "content", b"")
+        except Exception:
+            raw = getattr(item, "content", b"")
+        if isinstance(raw, bytes):
+            markup = raw.decode("utf-8", errors="ignore")
+        else:
+            markup = str(raw or "")
+        if not markup:
+            return False
+        soup = BeautifulSoup(markup, "html.parser")
+        has_cover_image = soup.find(["img", "svg", "image"]) is not None
+        visible = extract_visible_text(soup.body or soup)
+        return has_cover_image and _compact_text_len(visible) <= 20
+
+    def _is_notice_spine_entry(entry: Any) -> bool:
+        item = _resolve_spine_entry(entry)
+        if item is existing:
+            return True
+        key = _spine_entry_key(entry)
+        return TRANSLATION_NOTICE_UID in key or TRANSLATION_NOTICE_FILE_NAME.lower() in key
+
+    existing = None
+    for item in book.get_items():
+        item_id = item.get_id() if hasattr(item, "get_id") else getattr(item, "uid", None)
+        if item_id == TRANSLATION_NOTICE_UID:
+            existing = item
+            break
+
+    content = _translation_notice_html(notice_text)
+    if existing is None:
+        existing = epub.EpubHtml(
+            uid=TRANSLATION_NOTICE_UID,
+            file_name=TRANSLATION_NOTICE_FILE_NAME,
+            title="版权提示",
+            lang="zh-CN",
+        )
+        book.add_item(existing)
+
+    existing.set_content(content.encode("utf-8"))
+
+    spine = list(getattr(book, "spine", []) or [])
+    spine = [entry for entry in spine if not _is_notice_spine_entry(entry)]
+    insert_at = 0
+    for index, entry in enumerate(spine[:3]):
+        if _is_cover_spine_entry(entry):
+            insert_at = index + 1
+            break
+    spine.insert(insert_at, existing)
+    book.spine = spine
 
 
 def save_book(path: str, book: epub.EpubBook, chinese_mode: Optional[bool] = None) -> None:

@@ -1,5 +1,8 @@
 import logging
+import os
+import tempfile
 import time
+from pathlib import Path
 
 from translator import get_data_dir
 
@@ -24,8 +27,22 @@ def setup_logging() -> None:
         isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == log_file
         for h in root.handlers
     ):
-        file_handler = logging.FileHandler(log_path, encoding="utf-8")
-        file_handler.setFormatter(formatter)
-        root.addHandler(file_handler)
+        file_handler = None
+        log_candidates = [
+            log_path,
+            logs_dir / f"app-{time.strftime('%Y%m%d')}-{os.getpid()}.log",
+            Path(tempfile.gettempdir()) / f"epub-translator-{time.strftime('%Y%m%d')}-{os.getpid()}.log",
+        ]
+        for candidate in log_candidates:
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                file_handler = logging.FileHandler(candidate, encoding="utf-8")
+                log_path = candidate
+                break
+            except OSError:
+                continue
+        if file_handler is not None:
+            file_handler.setFormatter(formatter)
+            root.addHandler(file_handler)
 
     logging.getLogger(__name__).info("日志文件: %s", log_path)

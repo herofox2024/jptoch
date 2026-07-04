@@ -12,7 +12,13 @@ from unittest import mock
 from bs4 import BeautifulSoup
 from ebooklib import ITEM_DOCUMENT, epub
 
-from epub_io import _fix_toc_uids, extract_toc_titles, extract_visible_text, iter_text_nodes
+from epub_io import (
+    _fix_toc_uids,
+    add_translation_notice_page,
+    extract_toc_titles,
+    extract_visible_text,
+    iter_text_nodes,
+)
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError
@@ -182,6 +188,73 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(len(fixed), 1)
         self.assertIs(fixed[0][0], section)
         self.assertEqual(fixed[0][1], [])
+
+    def test_add_translation_notice_page_inserts_standalone_spine_item(self):
+        book = epub.EpubBook()
+        chapter = epub.EpubHtml(uid="chap1", file_name="chap1.xhtml", title="Chapter 1")
+        chapter.content = "<html><body><p>正文</p></body></html>"
+        book.add_item(chapter)
+        book.spine = [chapter]
+
+        add_translation_notice_page(book, "提示 A\n提示 B")
+
+        notice_items = [
+            item for item in book.get_items()
+            if item.get_id() == "ai-jp-zh-translation-notice"
+        ]
+        self.assertEqual(len(notice_items), 1)
+        self.assertIs(book.spine[0], notice_items[0])
+        self.assertIn("提示 A".encode("utf-8"), notice_items[0].content)
+        self.assertIn("提示 B".encode("utf-8"), notice_items[0].content)
+        self.assertIs(book.spine[1], chapter)
+
+    def test_add_translation_notice_page_inserts_after_cover(self):
+        book = epub.EpubBook()
+        cover = epub.EpubHtml(uid="cover", file_name="cover.xhtml", title="Cover")
+        cover.content = "<html><body><p>Cover</p></body></html>"
+        chapter = epub.EpubHtml(uid="chap1", file_name="chap1.xhtml", title="Chapter 1")
+        chapter.content = "<html><body><p>正文</p></body></html>"
+        book.add_item(cover)
+        book.add_item(chapter)
+        book.spine = [cover, chapter]
+
+        add_translation_notice_page(book, "提示")
+
+        self.assertIs(book.spine[0], cover)
+        self.assertEqual(book.spine[1].get_id(), "ai-jp-zh-translation-notice")
+        self.assertIs(book.spine[2], chapter)
+
+    def test_add_translation_notice_page_inserts_after_image_only_cover(self):
+        book = epub.EpubBook()
+        cover = epub.EpubHtml(uid="page001", file_name="Text/part0001.xhtml", title="")
+        cover.content = '<html><body><img src="../Images/cover.jpg" alt=""/></body></html>'
+        chapter = epub.EpubHtml(uid="chap1", file_name="chap1.xhtml", title="Chapter 1")
+        chapter.content = "<html><body><p>正文</p></body></html>"
+        book.add_item(cover)
+        book.add_item(chapter)
+        book.spine = [cover, chapter]
+
+        add_translation_notice_page(book, "提示")
+
+        self.assertIs(book.spine[0], cover)
+        self.assertEqual(book.spine[1].get_id(), "ai-jp-zh-translation-notice")
+        self.assertIs(book.spine[2], chapter)
+
+    def test_add_translation_notice_page_resolves_string_spine_cover(self):
+        book = epub.EpubBook()
+        cover = epub.EpubHtml(uid="page001", file_name="Text/part0001.xhtml", title="")
+        cover.content = "<html><body><svg><image href='../Images/cover.jpg'/></svg></body></html>"
+        chapter = epub.EpubHtml(uid="chap1", file_name="chap1.xhtml", title="Chapter 1")
+        chapter.content = "<html><body><p>正文</p></body></html>"
+        book.add_item(cover)
+        book.add_item(chapter)
+        book.spine = ["page001", "chap1"]
+
+        add_translation_notice_page(book, "提示")
+
+        self.assertEqual(book.spine[0], "page001")
+        self.assertEqual(book.spine[1].get_id(), "ai-jp-zh-translation-notice")
+        self.assertEqual(book.spine[2], "chap1")
 
     def test_iter_text_nodes_keeps_normal_paragraph_mode_and_skips_ruby_rt(self):
         html = """

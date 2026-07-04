@@ -10,7 +10,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
@@ -371,6 +371,7 @@ class _TranslateWorker(QObject):
                 extract_toc_titles,
                 apply_toc_translations,
                 extract_visible_text,
+                add_translation_notice_page,
             )
             from text_utils import is_translatable
 
@@ -704,6 +705,10 @@ class _TranslateWorker(QObject):
             if toc_translations:
                 apply_toc_translations(book, toc_translations)
 
+            if bool(cfg.get("enable_notice_page", False)):
+                add_translation_notice_page(book, cfg.get("notice_page_text") or "")
+                logger.info("已添加版权提示页")
+
             try:
                 logger.info("开始保存 EPUB: %s", cfg["out"])
                 save_book(cfg["out"], book, chinese_mode=(cfg["direction"] == "zh"))
@@ -1011,6 +1016,8 @@ class TranslateBridge(QObject):
             "allow_text_cache_reuse": getattr(cfg, "allowTextCacheReuse", True),
             "prompt_extra_instruction": getattr(cfg, "promptExtraInstruction", ""),
             "enable_prompt_examples": getattr(cfg, "enablePromptExamples", True),
+            "enable_notice_page": getattr(cfg, "enableNoticePage", False),
+            "notice_page_text": getattr(cfg, "noticePageText", ""),
         }
 
     @Slot("QVariant")
@@ -1168,6 +1175,66 @@ class TranslateBridge(QObject):
             ],
             [worker.finished, worker.failed],
         )
+
+    @Slot("QVariant", str, result="QVariantMap")
+    def addNoticePageToBooks(self, paths: Any, notice_text: str):
+        try:
+            from epub_io import load_book, save_book, add_translation_notice_page
+
+            if hasattr(paths, "toVariant"):
+                paths = paths.toVariant()
+            if isinstance(paths, (str, bytes)):
+                paths = [paths]
+            if paths is None:
+                paths = []
+
+            source_paths = []
+            for item in paths:
+                path = str(item or "").strip()
+                if path.lower().startswith("file:///"):
+                    path = path[8:]
+                elif path.lower().startswith("file://"):
+                    path = path[7:]
+                path = path.replace("/", os.sep)
+                if path and path.lower().endswith(".epub") and os.path.exists(path):
+                    source_paths.append(path)
+
+            source_paths = list(dict.fromkeys(source_paths))
+            if not source_paths:
+                return {"ok": False, "message": "请选择有效的 EPUB 文件", "succeeded": 0, "failed": 0}
+
+            succeeded = 0
+            failed = []
+            for source in source_paths:
+                try:
+                    book = load_book(source)
+                    add_translation_notice_page(book, notice_text)
+                    src_path = Path(source)
+                    out_path = _unique_epub_path(src_path.with_name(src_path.stem + "_notice.epub"))
+                    save_book(str(out_path), book, chinese_mode=True)
+                    succeeded += 1
+                    logger.info("已添加版权提示页: %s -> %s", source, out_path)
+                except Exception as exc:
+                    failed.append(f"{Path(source).name}: {exc}")
+                    logger.exception("批量添加版权提示页失败: %s", source)
+
+            if failed:
+                message = f"版权提示页批量处理完成: 成功 {succeeded} 本，失败 {len(failed)} 本"
+                return {
+                    "ok": succeeded > 0,
+                    "message": message + "\n" + "\n".join(failed[:5]),
+                    "succeeded": succeeded,
+                    "failed": len(failed),
+                }
+            return {
+                "ok": True,
+                "message": f"已为 {succeeded} 本 EPUB 生成 _notice 副本",
+                "succeeded": succeeded,
+                "failed": 0,
+            }
+        except Exception as exc:
+            logger.exception("批量添加版权提示页异常")
+            return {"ok": False, "message": f"批量添加失败: {exc}", "succeeded": 0, "failed": 0}
 
     def _on_cache_clear_finished(self, removed, total_texts):
         self.cacheClearFinished.emit(removed, total_texts)

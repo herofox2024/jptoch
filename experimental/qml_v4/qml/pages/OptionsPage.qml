@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import ".."
 import "../components"
@@ -10,6 +11,7 @@ Page {
     padding: 0
     background: Item {}
     property var cfg: null
+    property var tbridge: null
     property var updater: null
 
     property string activePreset: "custom"
@@ -71,6 +73,19 @@ Page {
     function refreshPromptPreview() {
         if (!cfg || !cfg.buildPromptPreview) return
         page.promptPreviewText = cfg.buildPromptPreview()
+    }
+
+    function batchAddNoticePages(files) {
+        if (!page.tbridge || !files || files.length === 0) return
+        var paths = []
+        for (var i = 0; i < files.length; i++) {
+            paths.push(FilePathUtils.normalizeFileUrl(files[i]))
+        }
+        var result = page.tbridge.addNoticePageToBooks(paths, noticePageTextEdit.text)
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result.ok ? ToastBridge.showSuccess(result.message || "批量处理完成")
+                      : ToastBridge.showError(result.message || "批量处理失败")
+        }
     }
 
     Component.onCompleted: page.refreshJapaneseResidueAllowlist()
@@ -432,6 +447,111 @@ Page {
                             text: "保持原版"
                             checked: cfg ? cfg.direction === "ja" : false
                             onClicked: { if (cfg) cfg.direction = "ja" }
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: "版权提示页"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 12
+
+                        CheckBox {
+                            text: "在输出 EPUB 开头添加版权提示页"
+                            checked: cfg ? cfg.enableNoticePage : false
+                            onCheckedChanged: {
+                                if (cfg) {
+                                    cfg.enableNoticePage = checked
+                                    cfg.saveToDisk()
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            id: noticePageTextBox
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 184
+                            Layout.minimumHeight: 168
+                            enabled: cfg ? cfg.enableNoticePage : false
+                            clip: true
+                            radius: AppPalette.radiusMedium
+                            color: AppPalette.cardAlt
+                            border.color: noticePageTextEdit.activeFocus ? AppPalette.accentColor : AppPalette.lineColor
+                            border.width: noticePageTextEdit.activeFocus ? 2 : 1
+                            opacity: enabled ? 1.0 : 0.72
+
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                clip: true
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                                TextEdit {
+                                    id: noticePageTextEdit
+                                    width: Math.max(0, noticePageTextBox.width - 36)
+                                    text: cfg ? cfg.noticePageText : ""
+                                    enabled: noticePageTextBox.enabled
+                                    wrapMode: TextEdit.WordWrap
+                                    selectByMouse: true
+                                    color: enabled ? AppPalette.textColor : AppPalette.mutedText
+                                    selectedTextColor: AppPalette.surfaceRaised
+                                    selectionColor: AppPalette.accentColor
+                                    font.pixelSize: 13
+                                    textFormat: TextEdit.PlainText
+                                    onTextChanged: {
+                                        if (cfg && cfg.noticePageText !== text) {
+                                            cfg.noticePageText = text
+                                        }
+                                    }
+                                    onActiveFocusChanged: {
+                                        if (!activeFocus && cfg) cfg.saveToDisk()
+                                    }
+                                }
+                            }
+
+                            Label {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: 16
+                                visible: !noticePageTextEdit.text && !noticePageTextEdit.activeFocus
+                                text: "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n请支持并购买正版书籍。"
+                                color: AppPalette.mutedText
+                                font.pixelSize: 13
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        Button {
+                            text: "恢复默认提示"
+                            enabled: cfg ? cfg.enableNoticePage : false
+                            Layout.alignment: Qt.AlignLeft
+                            onClicked: {
+                                noticePageTextEdit.text = "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n请支持并购买正版书籍。"
+                                if (cfg) {
+                                    cfg.noticePageText = noticePageTextEdit.text
+                                    cfg.saveToDisk()
+                                }
+                            }
+                        }
+
+                        Button {
+                            text: "批量添加到已有 EPUB"
+                            highlighted: true
+                            Layout.alignment: Qt.AlignLeft
+                            onClicked: noticeBatchDialog.open()
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "提示页会作为独立 XHTML 页面写入，不修改正文内容。批量处理会在原文件旁生成 _notice.epub 副本。"
+                            color: AppPalette.mutedText
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }
@@ -967,6 +1087,15 @@ Page {
             width: Math.max(0, pane.availableWidth)
             spacing: 14
         }
+    }
+
+
+    FileDialog {
+        id: noticeBatchDialog
+        title: "选择需要添加版权提示页的 EPUB"
+        nameFilters: ["EPUB 文件 (*.epub)"]
+        fileMode: FileDialog.OpenFiles
+        onAccepted: page.batchAddNoticePages(selectedFiles)
     }
 
 

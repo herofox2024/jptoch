@@ -92,10 +92,16 @@ _CONFIG_KEYS = [
     "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
     "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
+    "enable_notice_page", "notice_page_text",
 ]
 
 CONFIG_FILE_NAME = "config.json"
 JAPANESE_RESIDUE_ALLOWLIST_FILE_NAME = "japanese_residue_allowlist.json"
+DEFAULT_NOTICE_PAGE_TEXT = (
+    "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n"
+    "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
+    "请支持并购买正版书籍。"
+)
 _RESIDUE_QUOTE_CHARS = "「」『』“”\"'（）()【】[]"
 
 
@@ -197,6 +203,8 @@ class ConfigBridge(QObject):
     _proofreadApiUrlChanged = Signal()
     _promptExtraInstructionChanged = Signal()
     _enablePromptExamplesChanged = Signal()
+    _enableNoticePageChanged = Signal()
+    _noticePageTextChanged = Signal()
     _themeChanged = Signal()
     japaneseResidueAllowlistChanged = Signal()
 
@@ -227,9 +235,12 @@ class ConfigBridge(QObject):
         self._allow_text_cache_reuse = True
         self._prompt_extra_instruction = ""
         self._enable_prompt_examples = True
+        self._enable_notice_page = False
+        self._notice_page_text = DEFAULT_NOTICE_PAGE_TEXT
         self._theme = "light"
         self._autosave_enabled = False
         self._load_from_disk()
+        self._last_saved_config_text = self._current_config_json()
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(600)
@@ -260,6 +271,10 @@ class ConfigBridge(QObject):
                 self._allow_text_cache_reuse = True
             if "enable_prompt_examples" not in data:
                 self._enable_prompt_examples = True
+            if "enable_notice_page" not in data:
+                self._enable_notice_page = False
+            if not str(getattr(self, "_notice_page_text", "") or "").strip():
+                self._notice_page_text = DEFAULT_NOTICE_PAGE_TEXT
             logger.info(f"配置已加载: {path}")
         except Exception as e:
             logger.warning(f"加载配置失败: {e}")
@@ -268,17 +283,24 @@ class ConfigBridge(QObject):
     def saveToDisk(self):
         """持久化当前配置到 JSON 文件。"""
         path = _config_path()
+        config_text = self._current_config_json()
+        if path.exists() and config_text == getattr(self, "_last_saved_config_text", ""):
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(config_text, encoding="utf-8")
+            self._last_saved_config_text = config_text
+            logger.info(f"配置已保存: {path}")
+        except Exception as e:
+            logger.warning(f"保存配置失败: {e}")
+
+    def _current_config_json(self) -> str:
         data = {}
         for key in _CONFIG_KEYS:
             val = getattr(self, f"_{key}", None)
             if val is not None:
                 data[key] = val
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-            logger.info(f"配置已保存: {path}")
-        except Exception as e:
-            logger.warning(f"保存配置失败: {e}")
+        return json.dumps(data, indent=2, ensure_ascii=False)
 
     @Slot(str, result="QVariantMap")
     def getProviderDefaults(self, provider: str):
@@ -561,6 +583,22 @@ class ConfigBridge(QObject):
         val = bool(val)
         if val != self._enable_prompt_examples:
             self._enable_prompt_examples = val; self._emit_changed(self._enablePromptExamplesChanged)
+
+    @Property(bool, notify=_enableNoticePageChanged)
+    def enableNoticePage(self) -> bool: return self._enable_notice_page
+    @enableNoticePage.setter
+    def enableNoticePage(self, val: bool):
+        val = bool(val)
+        if val != self._enable_notice_page:
+            self._enable_notice_page = val; self._emit_changed(self._enableNoticePageChanged)
+
+    @Property(str, notify=_noticePageTextChanged)
+    def noticePageText(self) -> str: return self._notice_page_text
+    @noticePageText.setter
+    def noticePageText(self, val: str):
+        val = str(val or "")
+        if val != self._notice_page_text:
+            self._notice_page_text = val; self._emit_changed(self._noticePageTextChanged)
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

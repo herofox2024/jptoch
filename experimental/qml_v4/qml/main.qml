@@ -460,6 +460,7 @@ ApplicationWindow {
                     scale: appWindow.currentPageIndex === 5 ? 1.0 : 0.992
                     sourceComponent: OptionsPage {
                         cfg: appWindow.cfg
+                        tbridge: appWindow.tbridge
                         updater: appWindow.updater
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
