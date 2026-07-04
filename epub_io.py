@@ -614,9 +614,13 @@ def save_book(path: str, book: epub.EpubBook, chinese_mode: Optional[bool] = Non
         # ebooklib's EPUB3 page-list generation fails on valid XHTML whose body
         # contains direct text nodes but no child tags. Disable it; the normal
         # table of contents is still written.
+        logger.info("正在写入 EPUB (page-list 已禁用)...")
         epub.write_epub(temp_output, book, {"epub3_pages": False})
+        logger.info("EPUB 已写入临时文件: %s (%d bytes)", temp_output, os.path.getsize(temp_output))
         os.replace(temp_output, path)
+        logger.info("EPUB 已保存: %s (%d bytes)", path, os.path.getsize(path))
     except Exception:
+        logger.exception("EPUB 写入失败，路径: %s", path)
         try:
             os.remove(temp_output)
         except OSError:

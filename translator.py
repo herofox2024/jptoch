@@ -439,6 +439,7 @@ class JaZhTranslator:
     JAPANESE_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
     JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
     JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]]")
+    JAPANESE_SHORT_QUOTED_TEXT_RE = re.compile(r"^[「『“\"'（(【\[]\s*([^\r\n]{1,6}?)\s*[」』”\"'）)】\]]$")
     JAPANESE_SINGLE_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\uff66-\uff9f]$")
     SHA256_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
     JAPANESE_O_NAME_PREFIX_RE = re.compile(r"お[\u3400-\u9fff々]{1,3}(?![\u3400-\u9fff々])")
@@ -1392,10 +1393,22 @@ class JaZhTranslator:
     @classmethod
     def _has_blocking_japanese_residue(cls, text: str) -> bool:
         """Return True only for residue that should block cache/save completion."""
-        stripped = cls._strip_allowed_japanese_notation(text or "")
+        raw = text or ""
+        if cls._is_short_quoted_japanese_literal(raw):
+            return False
+        stripped = cls._strip_allowed_japanese_notation(raw)
         if not cls.JAPANESE_KANA_RE.search(stripped):
             return False
         return not cls._has_weak_japanese_residue(stripped)
+
+    @classmethod
+    def _is_short_quoted_japanese_literal(cls, text: str) -> bool:
+        """Short quoted literals can be dialogue particles, clues, or terms."""
+        match = cls.JAPANESE_SHORT_QUOTED_TEXT_RE.fullmatch((text or "").strip())
+        if not match:
+            return False
+        literal = (match.group(1) or "").strip()
+        return bool(literal and cls.JAPANESE_KANA_RE.search(literal))
 
     @classmethod
     def _postprocess_translation(cls, src: str, dst: Optional[str]) -> str:
@@ -1633,16 +1646,15 @@ class JaZhTranslator:
 
     @classmethod
     def _is_incomplete_translation(cls, src: str, dst: Optional[str]) -> bool:
-        """Return True when a translation is unsafe to cache or write to EPUB."""
         source = (src or "").strip()
         translated = cls._postprocess_translation(source, dst)
         if not translated:
             return True
+        if source and translated == source:
+            bare = source.strip('「」『』').strip()
+            if len(bare) <= 6:
+                return False
         if cls._has_blocking_japanese_residue(translated):
-            # Single stray kana fragments inside an otherwise solid Chinese
-            # sentence are treated as a minor defect, not a hard failure.
-            # Discarding the whole sentence for "ひょう" loses more quality
-            # than it saves.
             if cls._has_only_trivial_japanese_noise(translated):
                 return False
             return True
@@ -3938,8 +3950,8 @@ JSON 顶层字段：
 
     # ---- Phase 1-③: 本地预翻译 ----
     def _pre_translate(self, text: str) -> Optional[str]:
-        """本地规则预翻译，命中则返回译文，否则返回 None。"""
         stripped = text.strip()
+        stripped = stripped.strip('「」『』')
         if stripped in self.PRE_TRANSLATE_RULES:
             return self.PRE_TRANSLATE_RULES[stripped]
         return None

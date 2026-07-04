@@ -596,6 +596,20 @@ class TranslatorTests(unittest.TestCase):
         self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(text))
         self.assertTrue(JaZhTranslator._is_incomplete_translation("source", text))
 
+    def test_pre_translate_strips_japanese_quotes(self):
+        t = DummyTranslator()
+        result = t._pre_translate("「はい」")
+        self.assertEqual(result, "是的")
+
+    def test_short_quoted_text_same_as_source_is_not_incomplete(self):
+        self.assertFalse(JaZhTranslator._is_incomplete_translation("「猿とな」", "「猿とな」"))
+        self.assertFalse(JaZhTranslator.has_blocking_japanese_residue("「猿とな」"))
+
+    def test_long_text_same_as_source_with_kana_is_still_incomplete(self):
+        long_text = "彼女は笑った。そして走った。そして泣いた。"
+        self.assertTrue(JaZhTranslator._is_incomplete_translation(long_text, long_text))
+        self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(long_text))
+
     def test_proofread_detects_glossary_mismatch(self):
         t = DummyTranslator()
         t.glossary = {

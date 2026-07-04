@@ -662,6 +662,11 @@ class _TranslateWorker(QObject):
             if residue_total:
                 translator.flush_cache()
                 samples = "\n".join(f"- {text}" for text in residue_samples)
+                logger.error(
+                    "保存前检查发现 %s 处疑似日文残留，已阻止保存。样例:\n%s",
+                    residue_total,
+                    samples,
+                )
                 message = (
                     f"保存前检查发现 {residue_total} 处疑似日文残留。"
                     "已阻止保存完成品，请调整参数或切换模型后恢复续译。"
@@ -699,7 +704,12 @@ class _TranslateWorker(QObject):
             if toc_translations:
                 apply_toc_translations(book, toc_translations)
 
-            save_book(cfg["out"], book, chinese_mode=(cfg["direction"] == "zh"))
+            try:
+                logger.info("开始保存 EPUB: %s", cfg["out"])
+                save_book(cfg["out"], book, chinese_mode=(cfg["direction"] == "zh"))
+            except Exception:
+                logger.exception("EPUB 保存失败: %s", cfg["out"])
+                raise
             final_out = cfg["out"]
 
             # Smart output filename: translate the EPUB filename
