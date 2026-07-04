@@ -571,6 +571,31 @@ class TranslatorTests(unittest.TestCase):
         issues = t._find_proofread_issues("彼女は笑った。", "她は笑った。")
         self.assertTrue(any("日文" in issue for issue in issues))
 
+    def test_reading_puzzle_kana_runs_do_not_block_completion(self):
+        samples = [
+            (
+                "小、日、死、轩、园、之、信、煮，这几个字之间本无任何关联。"
+                "可若是只取每个字的首音连起来，便是コ、ニ、シ、ノ、ソ、ノ、シ、ニ。"
+                "换成横排书写后，我试着从左往右读，就成了ニ、シ、ノ、ソ、ノ、シ、ニ、コ，"
+                "一个名字赫然浮现了出来。"
+            ),
+            (
+                "这串字符从左往右读的话，就是ク、ハ、ク、タ、ノ、ミ、マ、ス。"
+                "把前后所有内容连起来，就是ニシノソノシニコクハクタノミマス。"
+                "如此一来，便组成了一句表意完整的话。"
+            ),
+        ]
+        for text in samples:
+            with self.subTest(text=text):
+                self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(text))
+                self.assertFalse(JaZhTranslator._is_incomplete_translation("source", text))
+                self.assertEqual(JaZhTranslator.japanese_residue_fragments(text), [])
+
+    def test_reading_puzzle_rule_does_not_allow_ordinary_kana_residue(self):
+        text = "她は笑った。"
+        self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(text))
+        self.assertTrue(JaZhTranslator._is_incomplete_translation("source", text))
+
     def test_proofread_detects_glossary_mismatch(self):
         t = DummyTranslator()
         t.glossary = {

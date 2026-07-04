@@ -463,6 +463,14 @@ class JaZhTranslator:
     JAPANESE_EXPLANATORY_QUOTE_CUE_RE = re.compile(
         r"(?:说法|所谓|写作|写成|写出来|读作|读成|发音|原文|日文|词语|词|意思|叫做|称作|表示)"
     )
+    JAPANESE_READING_PUZZLE_RUN_RE = re.compile(
+        r"(?<![A-Za-z0-9])[\u30a0-\u30ff\uff66-\uff9f](?:[、,，・･\s]*[\u30a0-\u30ff\uff66-\uff9f]){2,}(?![A-Za-z0-9])"
+    )
+    JAPANESE_READING_PUZZLE_CONTEXT_RE = re.compile(
+        r"(?:首音|读|讀|发音|發音|音读|音讀|读音|讀音|拼读|拼讀|"
+        r"左往右|右往左|从左|從左|从右|從右|横排|橫排|竖排|豎排|"
+        r"连起来|連起來|串字符|字符|字串|片假名|假名|暗号|谜题|謎題|谜面|謎面|藏头|藏尾)"
+    )
 
     # ---- Phase 1-③: 本地预翻译规则表（高频短句直接替换，跳过 API）----
     PRE_TRANSLATE_RULES: Dict[str, str] = {
@@ -1433,6 +1441,7 @@ class JaZhTranslator:
         stripped = JaZhTranslator.ALLOWED_LATIN_MIDDLE_DOT_RE.sub("", text)
         stripped = JaZhTranslator.ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", stripped)
         stripped = JaZhTranslator._strip_builtin_allowed_quoted_literals(stripped)
+        stripped = JaZhTranslator._strip_builtin_allowed_reading_puzzle_runs(stripped)
         return JaZhTranslator._strip_user_allowed_japanese_literals(stripped)
 
     @classmethod
@@ -1454,6 +1463,22 @@ class JaZhTranslator:
             return match.group(0)
 
         return cls.JAPANESE_QUOTED_TEXT_RE.sub(replace, text)
+
+    @classmethod
+    def _strip_builtin_allowed_reading_puzzle_runs(cls, text: str) -> str:
+        """Allow kana spelling runs when Chinese context explains a reading puzzle."""
+        if not text:
+            return ""
+
+        def replace(match: re.Match) -> str:
+            context_start = max(0, match.start() - 60)
+            context_end = min(len(text), match.end() + 60)
+            context = text[context_start:context_end]
+            if cls.JAPANESE_READING_PUZZLE_CONTEXT_RE.search(context):
+                return ""
+            return match.group(0)
+
+        return cls.JAPANESE_READING_PUZZLE_RUN_RE.sub(replace, text)
 
     @classmethod
     def japanese_residue_allowlist_path(cls) -> str:
@@ -4111,6 +4136,7 @@ JSON 顶层字段：
             translated = self._postprocess_translation(text, translated)
             ordered_results[idx] = translated
             results.setdefault(text, translated)
+            mark_complete(text)
 
         def mark_incomplete(text: str, reason: str, translated: Optional[str] = None) -> None:
             key = str(text or "")
@@ -4126,6 +4152,13 @@ JSON 顶层字段：
             if translated is not None and self._has_blocking_japanese_residue(translated):
                 residue_texts[key] = translated
 
+        def mark_complete(text: str) -> None:
+            key = str(text or "")
+            if not key:
+                return
+            failed_texts.pop(key, None)
+            residue_texts.pop(key, None)
+
         def accept_translation(original: str, translated: Optional[str], reason: str = "") -> Optional[str]:
             cleaned = self._postprocess_translation(original, translated)
             if not cleaned:
@@ -4134,6 +4167,7 @@ JSON 顶层字段：
             if self._is_incomplete_translation(original, cleaned):
                 mark_incomplete(original, reason or "译文为空或仍有日文残留", cleaned)
                 return None
+            mark_complete(original)
             return cleaned
 
         # Phase 1-③: 预翻译计数
