@@ -18,11 +18,21 @@ from epub_io import (
     extract_toc_titles,
     extract_visible_text,
     iter_text_nodes,
+    load_book,
+    save_book,
 )
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError
 from glossary_store import rebuild_glossary_index
+from provider_registry import normalize_api_url, provider_default_model, provider_default_url
+from quality_rules import is_suspicious_translation_pair
+from experimental.qml_v4.backend.diagnostics import build_redacted_config_snapshot
+from experimental.qml_v4.backend.book_translation_service import (
+    apply_translations_to_book,
+    build_book_text_plan,
+    scan_japanese_residue_in_docs,
+)
 
 
 @contextmanager
@@ -255,6 +265,98 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(book.spine[0], "page001")
         self.assertEqual(book.spine[1].get_id(), "ai-jp-zh-translation-notice")
         self.assertEqual(book.spine[2], "chap1")
+
+    def test_real_epub_notice_page_roundtrip_stays_after_image_cover(self):
+        def spine_ids(book):
+            result = []
+            for entry in list(getattr(book, "spine", []) or []):
+                candidate = entry[0] if isinstance(entry, tuple) and entry else entry
+                if isinstance(candidate, str):
+                    result.append(candidate)
+                elif hasattr(candidate, "get_id"):
+                    result.append(candidate.get_id())
+            return result
+
+        png_1x1 = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+            b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00"
+            b"\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+        book = epub.EpubBook()
+        book.set_identifier("real-notice-test")
+        book.set_title("Real Notice Test")
+        book.set_language("ja")
+        cover_img = epub.EpubItem(
+            uid="cover-image",
+            file_name="Images/cover.png",
+            media_type="image/png",
+            content=png_1x1,
+        )
+        cover = epub.EpubHtml(uid="page001", file_name="Text/page001.xhtml", title="")
+        cover.set_content(b'<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="../Images/cover.png" alt=""/></body></html>')
+        chapter = epub.EpubHtml(uid="chap1", file_name="Text/chapter.xhtml", title="Chapter")
+        chapter.set_content("<html><body><p>本文です。</p></body></html>".encode("utf-8"))
+        book.add_item(cover_img)
+        book.add_item(cover)
+        book.add_item(chapter)
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = [cover, chapter]
+        book.toc = [epub.Link("Text/chapter.xhtml", "Chapter", "chap1")]
+
+        add_translation_notice_page(book, "notice")
+
+        with temp_test_dir() as d:
+            path = os.path.join(d, "notice.epub")
+            save_book(path, book, chinese_mode=True)
+            loaded = load_book(path, try_repair=False)
+
+        ids = spine_ids(loaded)
+        self.assertGreaterEqual(len(ids), 3)
+        self.assertEqual(ids[0], "page001")
+        self.assertEqual(ids[1], "ai-jp-zh-translation-notice")
+
+    def test_real_epub_save_handles_body_direct_text_node(self):
+        book = epub.EpubBook()
+        book.set_identifier("direct-text-test")
+        book.set_title("Direct Text Test")
+        book.set_language("ja")
+        chapter = epub.EpubHtml(uid="chap1", file_name="Text/chapter.xhtml", title="Chapter")
+        chapter.set_content("<html><body>直接テキストです。</body></html>".encode("utf-8"))
+        book.add_item(chapter)
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = [chapter]
+        book.toc = [epub.Link("Text/chapter.xhtml", "Chapter", "chap1")]
+
+        with temp_test_dir() as d:
+            path = os.path.join(d, "direct-text.epub")
+            save_book(path, book, chinese_mode=True)
+            self.assertTrue(os.path.getsize(path) > 0)
+            loaded = load_book(path, try_repair=False)
+
+        self.assertTrue(getattr(loaded, "spine", None))
+
+    def test_qml_diagnostic_config_snapshot_redacts_api_keys(self):
+        snapshot = build_redacted_config_snapshot(
+            {
+                "provider": "deepseek",
+                "api_key": "sk-1234567890",
+                "proofread_api_key": "short",
+                "model": "deepseek-v4-flash",
+            }
+        )
+        payload = json.dumps(snapshot, ensure_ascii=False)
+
+        self.assertNotIn("api_key", snapshot)
+        self.assertNotIn("proofread_api_key", snapshot)
+        self.assertEqual(snapshot["api_key_masked"], "sk-1***7890")
+        self.assertEqual(snapshot["proofread_api_key_masked"], "*****")
+        self.assertEqual(snapshot["provider"], "deepseek")
+        self.assertNotIn("sk-1234567890", payload)
+        self.assertNotIn("short", payload)
 
     def test_iter_text_nodes_keeps_normal_paragraph_mode_and_skips_ruby_rt(self):
         html = """
@@ -623,6 +725,23 @@ class TranslatorTests(unittest.TestCase):
             self.assertEqual(t.provider, "wenxin")
             self.assertEqual(t.api_url, "https://qianfan.baidubce.com/v2/chat/completions")
             self.assertEqual(t.model, "ernie-4.5-turbo-128k")
+
+    def test_provider_registry_drives_translator_defaults(self):
+        self.assertEqual(provider_default_url("longcat"), "https://api.longcat.chat/openai/v1/chat/completions")
+        self.assertEqual(provider_default_model("longcat"), "LongCat-2.0")
+        self.assertEqual(
+            normalize_api_url("https://example.com/v1"),
+            "https://example.com/v1/chat/completions",
+        )
+        self.assertEqual(
+            JaZhTranslator._get_provider_default_url("longcat"),
+            provider_default_url("longcat"),
+        )
+
+    def test_quality_rule_detects_suspicious_translation_pairs(self):
+        self.assertTrue(is_suspicious_translation_pair("長い原文です。" * 3, "x"))
+        self.assertTrue(is_suspicious_translation_pair("原文", "哈哈哈哈哈哈哈哈"))
+        self.assertFalse(is_suspicious_translation_pair("彼女は笑った。", "她笑了。"))
 
     def test_discard_cache_writes_and_clear_texts(self):
         t = DummyTranslator()
@@ -1200,6 +1319,35 @@ class AppLogicTests(unittest.TestCase):
         self.assertTrue(is_translatable("こんにちは"))
         self.assertTrue(is_translatable("漢字だけ"))
         self.assertFalse(is_translatable("Hello world"))
+
+    def test_book_translation_service_replaces_multi_anchor_text_without_removing_links(self):
+        html = '<html><body><p>前文 <a href="a">リンクA</a> 中間 <a href="b">リンクB</a> 後文</p></body></html>'
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+        plan = build_book_text_plan(docs, [])
+
+        apply_translations_to_book(
+            plan,
+            {},
+            ["前文ZH", "链接AZH", "中间ZH", "链接BZH", "后文ZH"],
+            lambda text: text,
+            lambda text: False,
+        )
+
+        rendered = str(docs[0][1])
+        self.assertIn('href="a"', rendered)
+        self.assertIn('href="b"', rendered)
+        self.assertIn("链接AZH", rendered)
+        self.assertIn("链接BZH", rendered)
+
+    def test_book_translation_service_scans_blocking_japanese_residue(self):
+        html = "<html><body><p>逃げる</p><rt>よみ</rt><p>她笑了。</p></body></html>"
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+
+        scan = scan_japanese_residue_in_docs(docs)
+
+        self.assertEqual(scan.blocking_total, 1)
+        self.assertEqual(scan.weak_total, 0)
+        self.assertIn("逃げる", scan.blocking_samples[0])
 
     def test_multi_anchor_node_replacement(self):
         html = '<p>前文 <a href="a">链接A</a> 中间 <a href="b">链接B</a> 后文</p>'

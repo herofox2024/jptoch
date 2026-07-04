@@ -362,7 +362,6 @@ class _TranslateWorker(QObject):
         cfg = self._config
         start_ts = time.time()
         try:
-            from bs4 import NavigableString
             from translator import JaZhTranslator, TranslationIncompleteError
             from epub_io import (
                 load_book,
@@ -370,40 +369,19 @@ class _TranslateWorker(QObject):
                 iter_text_nodes,
                 extract_toc_titles,
                 apply_toc_translations,
-                extract_visible_text,
                 add_translation_notice_page,
+            )
+            from backend.book_translation_service import (
+                BookTranslationService,
             )
             from text_utils import is_translatable
 
             book = load_book(cfg["inp"])
             docs = list(iter_text_nodes(book))
             toc_titles = extract_toc_titles(book)
-
-            all_texts = []
-            text_tag_map = []
-
-            for doc_idx, (_, _, tags) in enumerate(docs):
-                for tag in tags:
-                    anchors = tag.find_all("a")
-                    if len(anchors) > 1:
-                        node_records = []
-                        for node in tag.find_all(string=True):
-                            raw = str(node).strip()
-                            if is_translatable(raw):
-                                all_texts.append(raw)
-                                node_records.append((node, raw))
-                        if node_records:
-                            text_tag_map.append(("multi_anchor", doc_idx, tag, node_records))
-                        continue
-                    text = extract_visible_text(tag)
-                    if is_translatable(text):
-                        all_texts.append(text)
-                        mode = "single_anchor" if len(anchors) == 1 else "plain"
-                        text_tag_map.append((mode, doc_idx, tag, text))
-
-            toc_indices_start = len(all_texts)
-            all_texts.extend(toc_titles)
-            toc_indices_end = len(all_texts)
+            book_service = BookTranslationService()
+            book_text_plan = book_service.build_text_plan(docs, toc_titles)
+            all_texts = book_text_plan.all_texts
 
             # ====== 管线方式：风格检测阶段 ======
             from backend.pipeline import (
@@ -581,84 +559,19 @@ class _TranslateWorker(QObject):
             ordered_results = getattr(translator, "last_ordered_results", [])
             if not isinstance(ordered_results, list) or len(ordered_results) != len(all_texts):
                 ordered_results = []
-            ordered_cursor = 0
+            book_service.apply_translations(
+                book_text_plan,
+                results,
+                ordered_results,
+                _clean_translated_toc_title,
+                _looks_like_model_refusal,
+            )
 
-            def next_translated(original):
-                nonlocal ordered_cursor
-                translated = None
-                if ordered_results and ordered_cursor < len(ordered_results):
-                    translated = ordered_results[ordered_cursor]
-                ordered_cursor += 1
-                return translated or results.get(original)
-
-            toc_title_set = set(toc_titles or [])
-
-            def clean_node_translation(original, translated, mode, tag=None):
-                if not translated:
-                    return translated
-                tag_name = str(getattr(tag, "name", "") or "").lower()
-                is_heading = tag_name in {"h1", "h2", "h3"}
-                if mode in ("single_anchor", "multi_anchor") or original in toc_title_set or is_heading:
-                    cleaned = _clean_translated_toc_title(translated)
-                    if cleaned:
-                        return cleaned
-                    if _looks_like_model_refusal(translated):
-                        return original
-                return translated
-
-            for record in text_tag_map:
-                mode, _, tag = record[0], record[1], record[2]
-                if mode == "multi_anchor":
-                    node_records = record[3]
-                    for node, original in node_records:
-                        translated = next_translated(original)
-                        translated = clean_node_translation(original, translated, mode, tag)
-                        if translated:
-                            node.replace_with(NavigableString(translated))
-                    continue
-                original = record[3]
-                translated = next_translated(original)
-                translated = clean_node_translation(original, translated, mode, tag)
-                if not translated:
-                    continue
-                if mode == "single_anchor":
-                    anchor = tag.find("a")
-                    if anchor:
-                        for child in list(tag.contents):
-                            if child is not anchor:
-                                child.extract()
-                        anchor.clear()
-                        anchor.append(NavigableString(translated))
-                        continue
-                tag.clear()
-                tag.append(NavigableString(translated))
-
-            hidden_tags = {"rt", "rp", "script", "style", "noscript"}
-            residue_samples = []
-            residue_total = 0
-            weak_residue_samples = []
-            weak_residue_total = 0
-            for _, soup, _ in docs:
-                root = soup.find("body") or soup
-                for node in root.find_all(string=True):
-                    parent_name = getattr(getattr(node, "parent", None), "name", "")
-                    if parent_name in hidden_tags:
-                        continue
-                    raw = str(node).strip()
-                    if not raw:
-                        continue
-                    if JaZhTranslator.has_blocking_japanese_residue(raw):
-                        residue_total += 1
-                        if len(residue_samples) < 8:
-                            fragments = JaZhTranslator.japanese_residue_fragments(raw)
-                            fragment_text = "、".join(fragments[:5]) if fragments else "未知片段"
-                            residue_samples.append(f"片段: {fragment_text} | 文本: {raw[:120]}")
-                    elif JaZhTranslator.has_weak_japanese_residue(raw):
-                        weak_residue_total += 1
-                        if len(weak_residue_samples) < 5:
-                            fragments = JaZhTranslator.japanese_residue_fragments(raw)
-                            fragment_text = "、".join(fragments[:5]) if fragments else "未知片段"
-                            weak_residue_samples.append(f"片段: {fragment_text} | 文本: {raw[:120]}")
+            residue_scan = book_service.scan_japanese_residue(docs)
+            residue_total = residue_scan.blocking_total
+            residue_samples = residue_scan.blocking_samples
+            weak_residue_total = residue_scan.weak_total
+            weak_residue_samples = residue_scan.weak_samples
 
             if residue_total:
                 translator.flush_cache()
@@ -691,16 +604,13 @@ class _TranslateWorker(QObject):
             for item, soup, _ in docs:
                 item.set_content(str(soup).encode("utf-8"))
 
-            toc_translations = {}
-            for i in range(toc_indices_start, toc_indices_end):
-                original = all_texts[i]
-                translated = ordered_results[i] if ordered_results and i < len(ordered_results) else results.get(original)
-                if translated:
-                    cleaned_title = _clean_translated_toc_title(translated)
-                    if cleaned_title:
-                        toc_translations[original] = cleaned_title
-                    elif not _looks_like_model_refusal(translated):
-                        toc_translations[original] = translated
+            toc_translations = book_service.build_toc_translation_map(
+                book_text_plan,
+                results,
+                ordered_results,
+                _clean_translated_toc_title,
+                _looks_like_model_refusal,
+            )
 
             if toc_translations:
                 apply_toc_translations(book, toc_translations)
@@ -1347,18 +1257,21 @@ class TranslateBridge(QObject):
     @Slot(str, result=bool)
     def exportDiagnostic(self, output_path):
         """Export diagnostic bundle as ZIP: config + logs + glossary."""
+        import json
         import zipfile
-        import os as _os
-        from pathlib import Path as _Path
+        from backend.diagnostics import load_redacted_config_snapshot
         from translator import get_data_dir
 
         try:
             data_dir = get_data_dir()
             with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                # Config
                 config_path = data_dir / "config.json"
                 if config_path.exists():
-                    zf.write(str(config_path), "config.json")
+                    snapshot = load_redacted_config_snapshot(config_path)
+                    zf.writestr(
+                        "config_snapshot.json",
+                        json.dumps(snapshot, ensure_ascii=False, indent=2),
+                    )
                 # Glossary
                 glossary_path = data_dir / "glossary.json"
                 if glossary_path.exists():

@@ -316,12 +316,10 @@ V4.1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 │  │                                                      │    │
 │  │  ┌─────────────────┐  ┌──────────────────────────┐  │    │
 │  │  │ ServiceContainer│  │  TranslationPipeline     │  │    │
-│  │  │ (P1 新增)       │  │  (P1 新增)               │  │    │
 │  │  │ init_light()    │  │  StyleDetectStage        │  │    │
-│  │  │ init_heavy()    │  │  CacheLookupStage (可选)  │  │    │
-│  │  │ get_translator()│  │  TranslateStage  (可选)  │  │    │
-│  │  └─────────────────┘  │  ProofreadStage  (可选)  │  │    │
-│  │                       └──────────────────────────┘  │    │
+│  │  │ init_heavy()    │  │  当前仅承载风格检测       │  │    │
+│  │  │ get_translator()│  │  翻译/缓存/校对在引擎层   │  │    │
+│  │  └─────────────────┘  └──────────────────────────┘  │    │
 │  │                                                      │    │
 │  │  ┌──────────────────────────────────────────────┐    │    │
 │  │  │           JaZhTranslator (核心引擎)            │    │    │

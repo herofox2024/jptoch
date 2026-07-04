@@ -1,23 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-翻译管线阶段抽象模块
+Lightweight pipeline primitives for QML/V4.
 
-参考 manga-translator-ui 的 dispatch 模式，将翻译流程拆分为可独立配置、
-可开关的管线阶段。每阶段实现 prepare() → process() 接口。
-
-阶段列表（按执行顺序）：
-    1. StyleDetectStage  — 风格检测（genre/tone）
-    2. CacheLookupStage  — 缓存查找
-    3. TranslateStage    — 批量翻译（核心）
-    4. ProofreadStage    — 校对修正
-
-用法：
-    pipeline = TranslationPipeline()
-    pipeline.add_stage(StyleDetectStage(enabled=True))
-    pipeline.add_stage(CacheLookupStage(enabled=True))
-    pipeline.add_stage(TranslateStage(enabled=True))
-    pipeline.add_stage(ProofreadStage(enabled=True))
-    results = pipeline.run(context)
+Only StyleDetectStage is currently wired into the production flow. Translation,
+cache lookup, proofreading, and EPUB mutation stay in the translator/service
+layer until they are fully migrated and covered by tests.
 """
 
 import logging
@@ -125,125 +112,11 @@ class StyleDetectStage(PipelineStage):
         return ctx
 
 
-class CacheLookupStage(PipelineStage):
-    """
-    缓存查找阶段：从翻译缓存中查找已有结果，减少 API 调用。
-    """
-
-    def __init__(self, enabled: bool = True):
-        super().__init__("cache_lookup", enabled)
-
-    def process(self, ctx: PipelineContext) -> PipelineContext:
-        if not self.enabled:
-            logger.debug("[cache_lookup] 阶段已禁用，跳过")
-            return ctx
-
-        translator = ctx.translator
-        if not translator or not ctx.texts:
-            return ctx
-
-        hit_count = 0
-        uncached = []
-        for text in ctx.texts:
-            cache_key = translator._cache_key(text)
-            with translator._cache_lock:
-                if cache_key in translator.cache:
-                    ctx.results[text] = translator.cache[cache_key]
-                    hit_count += 1
-                else:
-                    uncached.append(text)
-
-        ctx.extra["uncached_texts"] = uncached
-        logger.info(f"[cache_lookup] 缓存命中: {hit_count}/{len(ctx.texts)}")
-
-        if ctx.progress_callback:
-            ctx.progress_callback(hit_count, len(ctx.texts))
-
-        return ctx
-
-
-class TranslateStage(PipelineStage):
-    """
-    翻译阶段：将未缓存的文本批量发送到 LLM API 进行翻译。
-    """
-
-    def __init__(self, enabled: bool = True):
-        super().__init__("translate", enabled)
-
-    def process(self, ctx: PipelineContext) -> PipelineContext:
-        if not self.enabled:
-            logger.debug("[translate] 阶段已禁用，跳过")
-            return ctx
-
-        translator = ctx.translator
-        uncached = ctx.extra.get("uncached_texts", ctx.texts)
-
-        if not translator or not uncached:
-            return ctx
-
-        logger.info(f"[translate] 开始翻译 {len(uncached)} 条文本")
-        try:
-            new_results = translator.translate_batch(
-                uncached,
-                progress_callback=ctx.progress_callback,
-                item_callback=ctx.item_callback,
-                proofread_callback=None,  # Proofread 由独立阶段处理
-            )
-            ctx.results.update(new_results or {})
-        except Exception as e:
-            logger.error(f"[translate] 翻译失败: {e}")
-            raise
-
-        return ctx
-
-
-class ProofreadStage(PipelineStage):
-    """
-    校对阶段：检查翻译结果中的日语残留、术语不一致、格式异常。
-    参考 manga-translator-ui 的 multi-stage pipeline 设计。
-    """
-
-    def __init__(self, enabled: bool = True):
-        super().__init__("proofread", enabled)
-
-    def process(self, ctx: PipelineContext) -> PipelineContext:
-        if not self.enabled:
-            logger.debug("[proofread] 阶段已禁用，跳过")
-            return ctx
-
-        cfg = ctx.config
-        if not cfg.get("enable_proofread", False):
-            logger.debug("[proofread] 校对功能未开启")
-            return ctx
-
-        translator = ctx.translator
-        if not translator or not ctx.results:
-            return ctx
-
-        # 校对在 translator.translate_batch 内部已通过 proofread_callback 处理
-        # 此阶段负责将 proofread_style 设置到 translator 上
-        if ctx.proofread_style:
-            translator.proofread_genre = ctx.proofread_style.genre
-            translator.proofread_tone = ctx.proofread_style.tone
-            logger.info(f"[proofread] 校对参数已设置: genre={ctx.proofread_style.genre}, tone={ctx.proofread_style.tone}")
-
-        return ctx
-
-
 # ---------------------------------------------------------------------------
 # 管线编排器
 # ---------------------------------------------------------------------------
 class TranslationPipeline:
-    """
-    翻译管线编排器。
-
-    用法：
-        pipeline = TranslationPipeline()
-        pipeline.add_stage(StyleDetectStage())
-        pipeline.add_stage(TranslateStage())
-        ctx = PipelineContext(config={...}, texts=[...], translator=t)
-        result_ctx = pipeline.run(ctx)
-    """
+    """Run enabled pipeline stages in order. Currently used for style detection."""
 
     def __init__(self):
         self._stages: List[PipelineStage] = []

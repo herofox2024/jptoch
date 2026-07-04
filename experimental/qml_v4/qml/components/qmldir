@@ -1,3 +1,4 @@
 module components
 Toast 1.0 Toast.qml
+NoticePageSettings 1.0 NoticePageSettings.qml
 singleton ThemeRegistry 1.0 ThemeRegistry.qml

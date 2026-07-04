@@ -23,7 +23,24 @@ from glossary_store import build_glossary_text as gs_build_glossary_text
 from glossary_store import rebuild_glossary_index as gs_rebuild_glossary_index
 from glossary_store import has_valid_glossary_match as gs_has_valid_glossary_match
 from glossary_store import normalize_policy as gs_normalize_policy
+from provider_registry import (
+    API_KEY_REQUIRED_PROVIDERS,
+    PROVIDER_DEFAULTS,
+    SUPPORTED_PROVIDERS,
+    normalize_api_url,
+    provider_default_model,
+    provider_default_url,
+    provider_env_api_key,
+)
+from quality_rules import is_suspicious_translation_pair
 from style_detector import GENRE_LABELS, TONE_LABELS
+from translation_cache import (
+    cache_digest as tc_cache_digest,
+    context_cache_key as tc_context_cache_key,
+    model_cache_key as tc_model_cache_key,
+    parse_model_cache_key as tc_parse_model_cache_key,
+    text_cache_key as tc_text_cache_key,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -68,20 +85,20 @@ def _get_yaml():
 
 logger = logging.getLogger(__name__)
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-v4-flash"
-DOUBAO_API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
-DOUBAO_MODEL = "Doubao-Seed-1.6-flash"
-SAKURA_API_URL = "http://127.0.0.1:8080/v1/chat/completions"
-SAKURA_MODEL = "sakura-v1.0"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-GEMINI_MODEL = "gemini-2.5-flash"
-GLM_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-GLM_MODEL = "glm-4-flash"
-WENXIN_API_URL = "https://qianfan.baidubce.com/v2/chat/completions"
-WENXIN_MODEL = "ernie-4.5-turbo-128k"
-LONGCAT_API_URL = "https://api.longcat.chat/openai/v1/chat/completions"
-LONGCAT_MODEL = "LongCat-2.0"
+DEEPSEEK_API_URL = provider_default_url("deepseek")
+DEEPSEEK_MODEL = provider_default_model("deepseek")
+DOUBAO_API_URL = provider_default_url("doubao")
+DOUBAO_MODEL = provider_default_model("doubao")
+SAKURA_API_URL = provider_default_url("sakura")
+SAKURA_MODEL = provider_default_model("sakura")
+GEMINI_API_URL = provider_default_url("gemini")
+GEMINI_MODEL = provider_default_model("gemini")
+GLM_API_URL = provider_default_url("glm")
+GLM_MODEL = provider_default_model("glm")
+WENXIN_API_URL = provider_default_url("wenxin")
+WENXIN_MODEL = provider_default_model("wenxin")
+LONGCAT_API_URL = provider_default_url("longcat")
+LONGCAT_MODEL = provider_default_model("longcat")
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 
 
@@ -671,34 +688,16 @@ class JaZhTranslator:
     ]
 
     # P3-⑥: 提供方默认 URL 映射
-    _PROVIDER_URLS: Dict[str, str] = {
-        "deepseek": "https://api.deepseek.com/chat/completions",
-        "doubao": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
-        "sakura": "http://127.0.0.1:8080/v1/chat/completions",
-        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        "glm": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-        "wenxin": "https://qianfan.baidubce.com/v2/chat/completions",
-        "longcat": "https://api.longcat.chat/openai/v1/chat/completions",
-        "custom": "",
-    }
-    _PROVIDER_MODELS: Dict[str, str] = {
-        "deepseek": DEEPSEEK_MODEL,
-        "doubao": DOUBAO_MODEL,
-        "sakura": SAKURA_MODEL,
-        "gemini": GEMINI_MODEL,
-        "glm": GLM_MODEL,
-        "wenxin": WENXIN_MODEL,
-        "longcat": LONGCAT_MODEL,
-        "custom": "",
-    }
+    _PROVIDER_URLS: Dict[str, str] = {key: value.api_url for key, value in PROVIDER_DEFAULTS.items()}
+    _PROVIDER_MODELS: Dict[str, str] = {key: value.model for key, value in PROVIDER_DEFAULTS.items()}
 
     @classmethod
     def _get_provider_default_url(cls, provider: str) -> str:
-        return cls._PROVIDER_URLS.get(provider, "")
+        return provider_default_url(provider)
 
     @classmethod
     def _get_provider_default_model(cls, provider: str) -> str:
-        return cls._PROVIDER_MODELS.get(provider, "")
+        return provider_default_model(provider)
 
     def _get_proofread_url(self) -> str:
         """获取校对专用 API URL。"""
@@ -756,55 +755,19 @@ class JaZhTranslator:
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
-        if self.provider not in {"deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "longcat", "custom"}:
+        if self.provider not in SUPPORTED_PROVIDERS:
             raise ValueError(f"不支持的提供方: {provider}")
 
-        self.api_key = api_key or ""
-        if not self.api_key:
-            if self.provider == "deepseek":
-                self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
-            elif self.provider == "doubao":
-                self.api_key = os.getenv("DOUBAO_API_KEY", "") or os.getenv("ARK_API_KEY", "")
-            elif self.provider == "glm":
-                self.api_key = os.getenv("GLM_API_KEY", "") or os.getenv("ZHIPU_API_KEY", "")
-            elif self.provider == "wenxin":
-                self.api_key = os.getenv("WENXIN_API_KEY", "") or os.getenv("QIANFAN_API_KEY", "")
-            elif self.provider == "longcat":
-                self.api_key = os.getenv("LONGCAT_API_KEY", "")
-        if self.provider == "deepseek" and not self.api_key:
-            raise ValueError("未找到 DeepSeek API Key，请在界面输入或设置环境变量 DEEPSEEK_API_KEY")
-        if self.provider == "doubao" and not self.api_key:
-            raise ValueError("未找到豆包 API Key，请在界面输入或设置环境变量 DOUBAO_API_KEY / ARK_API_KEY")
-        if self.provider == "gemini" and not self.api_key:
-            raise ValueError("未找到 Gemini API Key，请在界面输入")
-        if self.provider == "wenxin" and not self.api_key:
-            raise ValueError("未找到文心一言/千帆 API Key，请在界面输入或设置环境变量 WENXIN_API_KEY / QIANFAN_API_KEY")
+        self.api_key = api_key or provider_env_api_key(self.provider)
         if self.provider == "sakura" and not self.api_key:
             # Sakura 本地服务通常可无鉴权，默认给一个占位 key，兼容部分网关。
             self.api_key = "sk-local"
-        if self.provider == "custom" and not self.api_key:
-            raise ValueError("未找到自定义 API Key，请在界面输入")
+        if not self.api_key:
+            if self.provider in API_KEY_REQUIRED_PROVIDERS:
+                raise ValueError(f"未找到 {self.provider} API Key，请在界面输入或设置对应环境变量")
 
-        default_url = DEEPSEEK_API_URL
-        default_model = DEEPSEEK_MODEL
-        if self.provider == "sakura":
-            default_url = SAKURA_API_URL
-            default_model = SAKURA_MODEL
-        elif self.provider == "doubao":
-            default_url = DOUBAO_API_URL
-            default_model = DOUBAO_MODEL
-        elif self.provider == "gemini":
-            default_url = GEMINI_API_URL
-            default_model = GEMINI_MODEL
-        elif self.provider == "glm":
-            default_url = GLM_API_URL
-            default_model = GLM_MODEL
-        elif self.provider == "wenxin":
-            default_url = WENXIN_API_URL
-            default_model = WENXIN_MODEL
-        elif self.provider == "longcat":
-            default_url = LONGCAT_API_URL
-            default_model = LONGCAT_MODEL
+        default_url = provider_default_url(self.provider)
+        default_model = provider_default_model(self.provider)
 
         raw_api_url = (api_url or default_url).strip()
         self.api_url = self._normalize_api_url(raw_api_url)
@@ -965,18 +928,7 @@ class JaZhTranslator:
     @staticmethod
     def _normalize_api_url(url: str) -> str:
         """兼容填写根地址或 /v1 的场景，自动补全到 chat completions 端点。"""
-        u = (url or "").strip()
-        if not u:
-            return u
-        u = u.rstrip("/")
-        lower = u.lower()
-        if lower.endswith("/chat/completions"):
-            return u
-        if lower.endswith("/v1"):
-            return u + "/chat/completions"
-        if lower.endswith("/v1/chat"):
-            return u + "/completions"
-        return u + "/chat/completions"
+        return normalize_api_url(url)
 
     @staticmethod
     def _extract_json_object(raw: str) -> Optional[dict]:
@@ -2422,9 +2374,7 @@ class JaZhTranslator:
 
     def _cache_key(self, text: str) -> str:
         """Include provider/model in primary cache keys; cross-model resume uses a digest index."""
-        provider_model = f"{self.provider}:{self.model}".lower()
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        return f"v2:{provider_model}:{digest}"
+        return tc_model_cache_key(self.provider, self.model, text)
 
     def _is_context_cache_text(self, text: str) -> bool:
         """Short dialogue fragments are context-sensitive and should not share one global cache entry."""
@@ -2450,15 +2400,14 @@ class JaZhTranslator:
         text = (text or "").strip()
         if not self._is_context_cache_text(text) or not (prev_text or next_text):
             return self._cache_key(text)
-        provider_model = f"{self.provider}:{self.model}".lower()
-        text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        prev_preview = (prev_text or "")[: self.CONTEXT_PREVIEW_LEN]
-        next_preview = (next_text or "")[: self.CONTEXT_PREVIEW_LEN]
-        context_digest = hashlib.sha256(
-            f"{prev_preview}\n<<<TEXT>>>\n{text}\n<<<NEXT>>>\n{next_preview}".encode("utf-8")
-        ).hexdigest()
-        # Keep text_digest at the end so all-model cache clearing can remove context keys by original text.
-        return f"v3ctx:{provider_model}:{context_digest}:{text_digest}"
+        return tc_context_cache_key(
+            self.provider,
+            self.model,
+            text,
+            prev_text,
+            next_text,
+            self.CONTEXT_PREVIEW_LEN,
+        )
 
     @property
     def last_ordered_results(self) -> List[Optional[str]]:
@@ -2486,27 +2435,16 @@ class JaZhTranslator:
 
     def _text_cache_key(self, text: str) -> str:
         """纯文本缓存键（不绑定 provider/model）。"""
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return tc_text_cache_key(text)
 
     @classmethod
     def _cache_digest(cls, text: str) -> str:
-        return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+        return tc_cache_digest(text)
 
     @classmethod
     def _parse_model_cache_key(cls, key: str) -> Tuple[str, Optional[str], Optional[str]]:
         """Return (kind, text_digest, context_digest) for v2/v3 cache keys."""
-        key = str(key or "")
-        parts = key.split(":")
-        if key.startswith("v3ctx:") and len(parts) >= 4:
-            context_digest = parts[-2]
-            text_digest = parts[-1]
-            if cls.SHA256_DIGEST_RE.fullmatch(context_digest) and cls.SHA256_DIGEST_RE.fullmatch(text_digest):
-                return "context", text_digest, context_digest
-        if key.startswith("v2:") and parts:
-            text_digest = parts[-1]
-            if cls.SHA256_DIGEST_RE.fullmatch(text_digest):
-                return "text", text_digest, None
-        return "", None, None
+        return tc_parse_model_cache_key(key)
 
     def _ensure_cross_model_cache_index(self) -> None:
         """Build digest indexes so a new provider/model can reuse previous model-cache entries."""
@@ -4370,21 +4308,6 @@ JSON 顶层字段：
                     return self._translate_chunk(text)
                 raise
 
-        def is_suspicious_pair(src: str, dst: str) -> bool:
-            src = (src or "").strip()
-            dst = (dst or "").strip()
-            if not dst:
-                return True
-            if len(src) >= 20 and len(dst) <= 1:
-                return True
-            if len(dst) >= 8:
-                most_common = max(dst.count(ch) for ch in set(dst))
-                if most_common / max(1, len(dst)) >= 0.65:
-                    return True
-            if re.search(r"(.{2,10})\1{3,}", dst):
-                return True
-            return False
-
         proofread_residue_fragments_seen: Dict[str, int] = {}
         proofread_residue_fragments_lock = threading.Lock()
 
@@ -4408,7 +4331,7 @@ JSON 顶层字段：
 
             for i, (_, src, dst) in enumerate(pairs):
                 clean_dst = (dst or "").strip()
-                if is_suspicious_pair(src, clean_dst):
+                if is_suspicious_translation_pair(src, clean_dst):
                     suspicious_idx.add(i)
                     continue
                 if clean_dst and dup_counter.get(clean_dst, 0) >= 3 and len(set(batch_text_values)) >= 3:
