@@ -61,7 +61,6 @@ ApplicationWindow {
     Connections {
         target: cfg
         function onThemeChanged() {
-            if (cfg) cfg.saveToDisk()
             if (typeof ToastBridge !== "undefined" && ToastBridge !== null) {
                 var label = typeof ThemeRegistry !== "undefined"
                     ? ThemeRegistry.labelFor(cfg.theme) : cfg.theme

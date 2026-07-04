@@ -25,7 +25,6 @@ GroupBox {
             onCheckedChanged: {
                 if (root.cfg) {
                     root.cfg.enableNoticePage = checked
-                    root.cfg.saveToDisk()
                 }
             }
         }
@@ -67,9 +66,6 @@ GroupBox {
                             root.cfg.noticePageText = text
                         }
                     }
-                    onActiveFocusChanged: {
-                        if (!activeFocus && root.cfg) root.cfg.saveToDisk()
-                    }
                 }
             }
 
@@ -94,7 +90,6 @@ GroupBox {
                 noticePageTextEdit.text = root.defaultNoticeText
                 if (root.cfg) {
                     root.cfg.noticePageText = noticePageTextEdit.text
-                    root.cfg.saveToDisk()
                 }
             }
         }

@@ -4,6 +4,7 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import ".."
+import "../components"
 
 Page {
     id: page
@@ -577,14 +578,14 @@ Page {
                             Layout.fillWidth: true
                             spacing: overviewGrid.gap
 
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "速度"; value: page.statSpeed > 0 ? page.statSpeed + "条/分" : (page.isBusy() ? "0条/分" : "--") }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "字符速度"; value: page.statCharSpeed > 0 ? page.statCharSpeed + "字/秒" : (page.isBusy() ? "0字/秒" : "--"); tone: "accent" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "API 次数"; value: page.statApiTotal > 0 ? page.statApiTotal : "--" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "Token"; value: page.statTokenTotal > 0 ? page.statTokenTotal : "--" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "失败数"; value: page.statFailCount > 0 ? page.statFailCount : "0"; tone: page.statFailCount > 0 ? "error" : "" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "成功率"; value: page.isBusy() && page.statApiTotal === 0 ? "--" : (page.statApiTotal === 0 && page.statCompleted === 0 ? "--" : page.statSuccessRate.toFixed(1) + "%"); tone: "success" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "新术语"; value: page.statTerms; tone: "amber" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "文本块"; value: page.statCompleted + " / " + (page.statTotal > 0 ? page.statTotal : "--") }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "速度"; value: page.statSpeed > 0 ? page.statSpeed + "条/分" : (page.isBusy() ? "0条/分" : "--") }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "字符速度"; value: page.statCharSpeed > 0 ? page.statCharSpeed + "字/秒" : (page.isBusy() ? "0字/秒" : "--"); tone: "accent" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "API 次数"; value: page.statApiTotal > 0 ? page.statApiTotal : "--" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "Token"; value: page.statTokenTotal > 0 ? page.statTokenTotal : "--" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "失败数"; value: page.statFailCount > 0 ? page.statFailCount : "0"; tone: page.statFailCount > 0 ? "error" : "" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "成功率"; value: page.isBusy() && page.statApiTotal === 0 ? "--" : (page.statApiTotal === 0 && page.statCompleted === 0 ? "--" : page.statSuccessRate.toFixed(1) + "%"); tone: "success" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "新术语"; value: page.statTerms; tone: "amber" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "文本块"; value: page.statCompleted + " / " + (page.statTotal > 0 ? page.statTotal : "--") }
                         }
 
                         RowLayout {
@@ -592,11 +593,11 @@ Page {
                             spacing: overviewGrid.gap
 
 
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "Prompt风格"; value: page.proofreadStyleText; tone: "amber" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "限流事件"; value: page.statDynamicLimitEvents > 0 ? page.statDynamicLimitEvents : "0"; tone: page.statDynamicLimitEvents > 0 ? "error" : "" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "运行并发"; value: page.statDynamicWorkers > 0 ? page.statDynamicWorkers : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "运行批量"; value: page.statDynamicBatchSize > 0 ? page.statDynamicBatchSize : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
-                            StatCard { cardWidth: overviewGrid.itemWidth; title: "批量校对"; value: page.statProofreadBatchRequests > 0 ? (page.statProofreadBatchSuccess + " / " + page.statProofreadBatchRequests) : "--"; tone: "accent" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "Prompt风格"; value: page.proofreadStyleText; tone: "amber" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "限流事件"; value: page.statDynamicLimitEvents > 0 ? page.statDynamicLimitEvents : "0"; tone: page.statDynamicLimitEvents > 0 ? "error" : "" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "运行并发"; value: page.statDynamicWorkers > 0 ? page.statDynamicWorkers : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "运行批量"; value: page.statDynamicBatchSize > 0 ? page.statDynamicBatchSize : "--"; tone: page.statRateLimitEvents > 0 ? "amber" : "" }
+                            StatCard { viewportWidth: page.width; cardWidth: overviewGrid.itemWidth; title: "批量校对"; value: page.statProofreadBatchRequests > 0 ? (page.statProofreadBatchSuccess + " / " + page.statProofreadBatchRequests) : "--"; tone: "accent" }
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
                             Item { Layout.fillWidth: true; Layout.preferredWidth: overviewGrid.itemWidth }
@@ -983,299 +984,11 @@ Page {
         }
     }
 
-    component StatCard: Rectangle {
-        property string title: ""
-        property var value: ""
-        property string tone: ""
-        property real cardWidth: 112
-
-        Layout.fillWidth: true
-        Layout.preferredWidth: cardWidth
-        Layout.minimumWidth: 96
-        Layout.preferredHeight: page.width > 760 ? 76 : 70
-        radius: AppPalette.radiusMedium
-        color: AppPalette.surfaceRaised
-        border.color: AppPalette.lineColor
-
-        readonly property color toneColor: tone === "accent"
-                                           ? AppPalette.accentColor
-                                           : tone === "amber"
-                                             ? AppPalette.amberColor
-                                             : tone === "success"
-                                               ? AppPalette.successColor
-                                               : tone === "error"
-                                                 ? AppPalette.errorColor
-                                                 : AppPalette.textColor
-
-        Rectangle {
-            width: 26
-            height: 3
-            radius: 2
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.leftMargin: 10
-            anchors.topMargin: 9
-            color: parent.toneColor
-            opacity: 0.85
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 10
-            anchors.topMargin: 18
-            spacing: 4
-            Label {
-                Layout.fillWidth: true
-                text: title
-                color: AppPalette.mutedText
-                font.pixelSize: 10
-                elide: Text.ElideRight
-            }
-            Label {
-                text: value !== undefined ? value.toString() : "0"
-                color: parent.parent.toneColor
-                font.pixelSize: page.width > 760 ? 15 : 14
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
-                Layout.fillWidth: true
-            }
-        }
-    }
-
-    component ProgressMetric: Rectangle {
-        property string title: ""
-        property string value: ""
-        property string tone: ""
-
-        Layout.fillWidth: true
-        Layout.preferredHeight: 60
-        radius: AppPalette.radiusMedium
-        color: AppPalette.cardBg
-        border.color: AppPalette.lineColor
-
-        readonly property color toneColor: tone === "accent"
-                                           ? AppPalette.accentColor
-                                           : tone === "amber"
-                                             ? AppPalette.amberColor
-                                             : AppPalette.textColor
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 12
-            spacing: 2
-            Label {
-                Layout.fillWidth: true
-                text: title
-                color: AppPalette.mutedText
-                font.pixelSize: 11
-                elide: Text.ElideRight
-            }
-            Label {
-                Layout.fillWidth: true
-                text: value
-                color: parent.parent.toneColor
-                font.pixelSize: 17
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
-            }
-        }
-    }
-
-    component RealtimeTextPanel: Rectangle {
-        id: realtimePanel
-        property alias text: realtimeText.text
-        property string title: ""
-        property string placeholder: ""
-        property color textColor: AppPalette.textColor
-
-        radius: AppPalette.radiusMedium
-        color: AppPalette.fieldBg
-        border.color: AppPalette.lineColor
-        clip: true
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 12
-            spacing: 8
-
-            Label {
-                Layout.fillWidth: true
-                text: realtimePanel.title
-                color: AppPalette.mutedText
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
-            }
-
-            TextArea {
-                id: realtimeText
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                readOnly: true
-                placeholderText: realtimePanel.placeholder
-                font.pixelSize: 13
-                wrapMode: Text.WordWrap
-                color: realtimePanel.textColor
-                padding: 10
-                leftPadding: 10
-                rightPadding: 10
-                topPadding: 8
-                bottomPadding: 8
-                clip: true
-                selectByMouse: true
-                background: Rectangle {
-                    radius: AppPalette.radiusSmall
-                    color: AppPalette.cardBg
-                    border.color: AppPalette.lineColor
-                }
-            }
-        }
-    }
-
-    component IssueChip: Rectangle {
-        property string title: ""
-        property string tone: "neutral"
-
-        width: Math.max(82, chipLabel.implicitWidth + 22)
-        height: 28
-        radius: 14
-        color: tone === "error"
-               ? (AppPalette.dark ? "#3a2420" : "#f6ded9")
-               : tone === "amber"
-                 ? (AppPalette.dark ? "#3b2d1c" : "#f2e4cf")
-                 : tone === "accent"
-                   ? AppPalette.accentSoft
-                   : AppPalette.cardAlt
-        border.color: tone === "error"
-                      ? AppPalette.errorColor
-                      : tone === "amber"
-                        ? AppPalette.amberColor
-                        : tone === "accent"
-                          ? AppPalette.accentColor
-                          : AppPalette.lineColor
-
-        Label {
-            id: chipLabel
-            anchors.centerIn: parent
-            text: title
-            color: parent.border.color
-            font.pixelSize: 11
-            font.weight: Font.DemiBold
-        }
-    }
-
-    component ReportField: Rectangle {
-        property string title: ""
-        property string body: ""
-        property string tone: "normal"
-        property int maxLines: 0
-
-        Layout.fillWidth: true
-        Layout.preferredHeight: reportText.paintedHeight + reportTitle.implicitHeight + 24
-        Layout.minimumHeight: Layout.preferredHeight
-        radius: AppPalette.radiusSmall
-        color: AppPalette.fieldBg
-        border.color: tone === "accent" ? AppPalette.accentColor : AppPalette.lineColor
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 10
-            spacing: 5
-
-            Label {
-                id: reportTitle
-                Layout.fillWidth: true
-                text: title
-                color: tone === "accent" ? AppPalette.accentColor : AppPalette.mutedText
-                font.pixelSize: 11
-                font.weight: Font.DemiBold
-            }
-            Label {
-                id: reportText
-                Layout.fillWidth: true
-                text: body && body !== "" ? body : "-"
-                color: tone === "accent" ? AppPalette.accentColor : AppPalette.textColor
-                wrapMode: Text.WordWrap
-                maximumLineCount: maxLines > 0 ? maxLines : 1000000
-                elide: maxLines > 0 ? Text.ElideRight : Text.ElideNone
-                font.pixelSize: 12
-            }
-        }
-    }
-
-    Dialog {
+    ProofreadDetailDialog {
         id: proofreadDetailDialog
-        title: "\u6821\u5bf9\u5b8c\u6574\u8be6\u60c5 " + page.detailIndexText
-        modal: true
-        standardButtons: Dialog.Close
-        width: Math.min(page.width - 48, 900)
-        height: Math.min(page.height - 60, 680)
+        host: page
         anchors.centerIn: parent
-
-        contentItem: ScrollView {
-            clip: true
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-            ColumnLayout {
-                width: proofreadDetailDialog.availableWidth
-                spacing: 12
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: detailHeaderColumn.implicitHeight + 28
-                    radius: AppPalette.radiusMedium
-                    color: AppPalette.surfaceRaised
-                    border.color: AppPalette.lineColor
-
-                    ColumnLayout {
-                        id: detailHeaderColumn
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 8
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: page.detailTimeText + "  \u00b7  " + page.detailReason
-                            color: AppPalette.textColor
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: 13
-                            font.weight: Font.DemiBold
-                        }
-
-                        Flow {
-                            Layout.fillWidth: true
-                            spacing: 8
-                            IssueChip { title: page.detailChanged; tone: page.detailChanged === "\u6709\u53d8\u5316" ? "amber" : "accent" }
-                            IssueChip { title: "\u65e5\u6587\u6b8b\u7559: " + page.detailJapaneseResidue; tone: page.detailJapaneseResidue === "\u662f" ? "error" : "neutral" }
-                            IssueChip { title: "\u672f\u8bed\u4e0d\u4e00\u81f4: " + page.detailGlossaryMismatch; tone: page.detailGlossaryMismatch === "\u662f" ? "amber" : "neutral" }
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: page.detailChangedHint
-                            color: AppPalette.mutedText
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: 12
-                        }
-                    }
-                }
-
-                ReportField { title: "\u539f\u6587"; body: page.detailOriginal; tone: "normal" }
-                ReportField { title: "\u521d\u8bd1"; body: page.detailDraft; tone: "normal" }
-                ReportField { title: "\u6821\u5bf9\u540e\u8bd1\u6587"; body: page.detailRevised; tone: "accent" }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Item { Layout.fillWidth: true }
-                    Button {
-                        text: "\u4eba\u5de5\u4fee\u6539\u6b64\u6761"
-                        enabled: page.detailOriginal !== ""
-                        onClicked: page.requestManualEdit(page.detailOriginal, page.detailRevised !== "" ? page.detailRevised : page.detailDraft)
-                    }
-                }
-            }
-        }
     }
-
     FileDialog {
         id: diagExportDialog
         title: "导出诊断包"

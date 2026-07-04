@@ -259,6 +259,7 @@ V4.1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 .
 ├─ experimental/qml_v4/        # QML/V4.1 当前主力版本
 │  ├─ main.py                  # V4 启动入口（PySide6 + QML）
+│  ├─ qml_smoke_test.py        # QML 无窗口加载检查脚本
 │  ├─ qml/                     # QML 页面与主题
 │  │  ├─ main.qml              # 主窗口（导航栏、页面切换、主题绑定）
 │  │  ├─ AppPalette.qml        # 全局调色板（Light/Dark/Glass 三态响应式）
@@ -549,6 +550,13 @@ QML/PySide6、EPUB 解析、配置加载和 Python 运行时初始化都会增�
 - 术语是否一致。
 - 暂停、恢复、停止是否符合预期。
 - 日志是否存在连续 API 错误。
+
+开发验证命令：
+
+```powershell
+python experimental/qml_v4/qml_smoke_test.py
+python -m pytest -q
+```
 
 ---
 

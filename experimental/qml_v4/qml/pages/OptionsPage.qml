@@ -471,7 +471,6 @@ Page {
                             onCheckedChanged: {
                                 if (cfg) {
                                     cfg.enableProofread = checked
-                                    cfg.saveToDisk()
                                 }
                             }
                         }
@@ -491,7 +490,6 @@ Page {
                                 onActivated: function(index) {
                                     if (cfg) {
                                         cfg.proofreadGenre = page.proofreadGenreValue(index)
-                                        cfg.saveToDisk()
                                     }
                                 }
                             }
@@ -505,7 +503,6 @@ Page {
                                 onActivated: function(index) {
                                     if (cfg) {
                                         cfg.proofreadTone = page.proofreadToneValue(index)
-                                        cfg.saveToDisk()
                                     }
                                 }
                             }
@@ -525,7 +522,6 @@ Page {
                             onCheckedChanged: {
                                 if (cfg) {
                                     cfg.enablePromptExamples = checked
-                                    cfg.saveToDisk()
                                 }
                             }
                         }
@@ -584,7 +580,6 @@ Page {
                                     promptExtraArea.text = ""
                                     if (cfg) {
                                         cfg.promptExtraInstruction = ""
-                                        cfg.saveToDisk()
                                     }
                                 }
                             }
@@ -670,7 +665,6 @@ Page {
                                         cfg.proofreadApiUrl = defaults.url || ""
                                         cfg.proofreadModel = defaults.model || ""
                                     }
-                                    cfg.saveToDisk()
                                 }
                             }
 
@@ -685,7 +679,6 @@ Page {
                                 echoMode: TextInput.Password
                                 selectByMouse: true
                                 onTextChanged: { if (cfg) cfg.proofreadApiKey = text }
-                                onEditingFinished: { if (cfg) cfg.saveToDisk() }
                             }
 
                             Label {
@@ -698,7 +691,6 @@ Page {
                                 text: cfg ? cfg.proofreadApiUrl : ""
                                 selectByMouse: true
                                 onTextChanged: { if (cfg) cfg.proofreadApiUrl = text }
-                                onEditingFinished: { if (cfg) cfg.saveToDisk() }
                             }
 
                             Label {
@@ -711,7 +703,6 @@ Page {
                                 text: cfg ? cfg.proofreadModel : ""
                                 selectByMouse: true
                                 onTextChanged: { if (cfg) cfg.proofreadModel = text }
-                                onEditingFinished: { if (cfg) cfg.saveToDisk() }
                             }
                         }
                     }
@@ -864,7 +855,6 @@ Page {
                             onCheckedChanged: {
                                 if (cfg) {
                                     cfg.allowTextCacheReuse = checked
-                                    cfg.saveToDisk()
                                 }
                             }
                         }
@@ -973,20 +963,6 @@ Page {
                     }
                 }
             }
-        }
-    }
-
-    component SettingsPane: ScrollView {
-        id: pane
-        default property alias paneChildren: paneColumn.data
-        clip: true
-        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-        ColumnLayout {
-            id: paneColumn
-            width: Math.max(0, pane.availableWidth)
-            spacing: 14
         }
     }
 

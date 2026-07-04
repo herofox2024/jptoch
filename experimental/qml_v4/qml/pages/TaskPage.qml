@@ -4,6 +4,7 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import ".."
+import "../components"
 
 Page {
     id: taskPage
@@ -42,13 +43,7 @@ Page {
     signal navigateToStatus()
 
     function openManualEdit(src, dst) {
-        manualEditDialog.srcText = (src || "").trim()
-        manualEditDialog.dstText = (dst || "").trim()
-        srcSearchField.text = manualEditDialog.srcText
-        dstEditField.text = manualEditDialog.dstText
-        manualEditStatus.text = ""
-        manualEditDialog.keepPreset = true
-        manualEditDialog.open()
+        manualEditDialog.openWith(src, dst)
     }
 
     ColumnLayout {
@@ -594,78 +589,6 @@ Page {
         Item { Layout.fillHeight: true }
     }
 
-    component TaskActionButton: Rectangle {
-        id: actionRoot
-        property string label: ""
-        property string hint: ""
-        property bool primary: false
-        property bool danger: false
-        signal clicked()
-
-        implicitWidth: primary ? 320 : 132
-        implicitHeight: primary ? 64 : 40
-        radius: primary ? 24 : 18
-        color: !enabled
-               ? AppPalette.cardAlt
-               : (primary ? AppPalette.accentColor : (danger ? Qt.rgba(0.80, 0.24, 0.20, AppPalette.glass ? 0.18 : 0.10) : AppPalette.cardBg))
-        border.color: !enabled
-                      ? AppPalette.lineColor
-                      : (primary ? AppPalette.accentColor : (danger ? AppPalette.errorColor : AppPalette.borderColor))
-        border.width: primary ? 0 : 1
-        opacity: enabled ? 1.0 : 0.52
-        scale: actionMouse.containsMouse && enabled ? 1.012 : 1.0
-
-        Behavior on scale {
-            NumberAnimation { duration: 110; easing.type: Easing.OutCubic }
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            radius: parent.radius
-            color: "transparent"
-            border.color: actionMouse.containsMouse && actionRoot.enabled ? AppPalette.amberColor : "transparent"
-            border.width: 1
-            opacity: actionMouse.containsMouse ? 0.7 : 0
-        }
-
-        ColumnLayout {
-            anchors.centerIn: parent
-            width: parent.width - 20
-            spacing: primary ? 5 : 1
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: actionRoot.label
-                color: !actionRoot.enabled
-                       ? AppPalette.mutedText
-                       : (actionRoot.primary ? "#ffffff" : (actionRoot.danger ? AppPalette.errorColor : AppPalette.textColor))
-                font.pixelSize: actionRoot.primary ? 18 : 13
-                font.weight: Font.DemiBold
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                maximumLineCount: 1
-            }
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                visible: actionRoot.hint !== ""
-                text: actionRoot.hint
-                color: actionRoot.primary ? Qt.rgba(1, 1, 1, 0.82) : AppPalette.mutedText
-                font.pixelSize: actionRoot.primary ? 11 : 9
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                maximumLineCount: 1
-            }
-        }
-
-        MouseArea {
-            id: actionMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            enabled: actionRoot.enabled
-            cursorShape: Qt.PointingHandCursor
-            onClicked: actionRoot.clicked()
-        }
-    }
-
     FileDialog {
         id: inputDialog
         title: "选择 EPUB 文件"
@@ -693,138 +616,17 @@ Page {
         }
     }
 
-    Dialog {
+    ClearCacheDialog {
         id: clearCacheDialog
-        title: "清理当前 EPUB 缓存"
-        modal: true
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        cfg: taskPage.cfg
+        tbridge: taskPage.tbridge
         anchors.centerIn: parent
-
-        ColumnLayout {
-            width: 420
-            spacing: 10
-            Label {
-                Layout.fillWidth: true
-                text: "将清理���前源文件对应的翻译缓存，包括所有模型下的 cache.json 条目和跨模型 text_cache.json 条目。"
-                color: AppPalette.textColor
-                wrapMode: Text.WordWrap
-            }
-            Label {
-                Layout.fillWidth: true
-                text: "不会删除 EPUB 文件，也不会清空术语表。清理后再次翻译会重新请求 API。"
-                color: AppPalette.mutedText
-                font.pixelSize: 12
-                wrapMode: Text.WordWrap
-            }
-        }
-
-        onAccepted: {
-            if (taskPage.tbridge) {
-                taskPage.tbridge.clearCurrentBookCache(cfg)
-            }
-        }
     }
-
-    Dialog {
+    ManualEditDialog {
         id: manualEditDialog
-        title: "人工修改译文"
-        modal: true
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        tbridge: taskPage.tbridge
         anchors.centerIn: parent
-        width: 640
-
-        property string srcText: ""
-        property string dstText: ""
-        property bool keepPreset: false
-
-        ColumnLayout {
-            width: parent.width - 40
-            spacing: 14
-
-            Label {
-                Layout.fillWidth: true
-                text: "输入日文原文查找已缓存译文，也可以直接填写中文译文。保存后写入人工译文缓存，恢复续译或下次翻译时优先使用，不会直接修改已经生成的 EPUB。"
-                color: AppPalette.mutedText
-                wrapMode: Text.WordWrap
-                font.pixelSize: 12
-            }
-
-            Label {
-                text: "日文原文（必须与 EPUB 中的原文一致）:"
-                color: AppPalette.textColor
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
-            }
-            TextField {
-                id: srcSearchField
-                Layout.fillWidth: true
-                placeholderText: "输入日文原文来查找或保存人工译文..."
-                selectByMouse: true
-            }
-
-            Button {
-                text: "查找译文"
-                Layout.alignment: Qt.AlignLeft
-                onClicked: {
-                    manualEditDialog.srcText = srcSearchField.text.trim()
-                    if (taskPage.tbridge && manualEditDialog.srcText) {
-                        taskPage.tbridge.lookupTranslation(manualEditDialog.srcText)
-                    }
-                }
-            }
-
-            Label {
-                text: "中文译文（可直接编辑）:"
-                color: AppPalette.textColor
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
-            }
-            TextArea {
-                id: dstEditField
-                Layout.fillWidth: true
-                Layout.preferredHeight: 120
-                placeholderText: '点击"查找译文"后，译文会显示在这里；也可以直接输入人工译文。'
-                wrapMode: TextArea.Wrap
-                selectByMouse: true
-            }
-
-            Label {
-                id: manualEditStatus
-                Layout.fillWidth: true
-                text: ""
-                color: AppPalette.mutedText
-                font.pixelSize: 12
-                visible: text !== ""
-            }
-        }
-
-        onOpened: {
-            if (!keepPreset) {
-                srcSearchField.text = ""
-                dstEditField.text = ""
-                manualEditDialog.srcText = ""
-                manualEditDialog.dstText = ""
-            }
-            keepPreset = false
-            manualEditStatus.text = ""
-        }
-
-        onAccepted: {
-            var src = manualEditDialog.srcText
-            var dst = dstEditField.text.trim()
-            if (!src || !dst) {
-                manualEditStatus.text = "原文和译文不能为空"
-                manualEditStatus.color = AppPalette.errorColor
-                return
-            }
-            if (taskPage.tbridge) {
-                taskPage.tbridge.saveManualTranslation(src, dst)
-                manualEditStatus.text = "已保存，恢复续译或下次翻译时会优先使用"
-                manualEditStatus.color = AppPalette.successColor
-            }
-        }
     }
-
     Timer {
         id: estimateTimer
         interval: 300
@@ -850,21 +652,18 @@ Page {
             }
         }
         function onManualTranslationLookup(result) {
-            if (typeof manualEditDialog !== "undefined" && manualEditDialog.visible && result) {
-                dstEditField.text = result
-                manualEditStatus.text = ""
+            if (typeof manualEditDialog !== "undefined") {
+                manualEditDialog.setLookupResult(result)
             }
         }
         function onManualTranslationSaved(result) {
-            if (typeof manualEditDialog !== "undefined" && manualEditDialog.visible) {
-                manualEditStatus.text = "已保存，恢复续译或下次翻译时会优先使用"
-                manualEditStatus.color = AppPalette.successColor
+            if (typeof manualEditDialog !== "undefined") {
+                manualEditDialog.showSaved()
             }
         }
         function onFailed(err) {
-            if (typeof manualEditDialog !== "undefined" && manualEditDialog.visible) {
-                manualEditStatus.text = err
-                manualEditStatus.color = AppPalette.errorColor
+            if (typeof manualEditDialog !== "undefined") {
+                manualEditDialog.showError(err)
             }
         }
     }
@@ -928,34 +727,5 @@ Page {
         })
     }
 
-    component SummaryChip: Rectangle {
-        property string title: ""
-        property string value: ""
-
-        width: Math.min(240, Math.max(88, chipRow.implicitWidth + 22))
-        height: 28
-        radius: 15
-        color: AppPalette.cardBg
-        border.color: AppPalette.lineColor
-
-        RowLayout {
-            id: chipRow
-            anchors.centerIn: parent
-            spacing: 5
-            Label {
-                text: title + ":"
-                color: AppPalette.mutedText
-                font.pixelSize: 11
-            }
-            Label {
-                text: value
-                color: AppPalette.textColor
-                font.pixelSize: 11
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
-                maximumLineCount: 1
-            }
-        }
-    }
 }
 
