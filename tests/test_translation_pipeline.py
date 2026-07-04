@@ -678,6 +678,10 @@ class TranslatorTests(unittest.TestCase):
         self.assertFalse(JaZhTranslator._is_incomplete_translation("「猿とな」", "「猿とな」"))
         self.assertFalse(JaZhTranslator.has_blocking_japanese_residue("「猿とな」"))
 
+    def test_short_unquoted_japanese_same_as_source_is_incomplete(self):
+        src = "\u9003\u3052\u308b"
+        self.assertTrue(JaZhTranslator._is_incomplete_translation(src, src))
+
     def test_long_text_same_as_source_with_kana_is_still_incomplete(self):
         long_text = "彼女は笑った。そして走った。そして泣いた。"
         self.assertTrue(JaZhTranslator._is_incomplete_translation(long_text, long_text))

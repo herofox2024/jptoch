@@ -1651,6 +1651,10 @@ class JaZhTranslator:
         if not translated:
             return True
         if source and translated == source:
+            if cls._has_blocking_japanese_residue(source):
+                if cls._has_only_trivial_japanese_noise(source):
+                    return False
+                return True
             bare = source.strip('「」『』').strip()
             if len(bare) <= 6:
                 return False
