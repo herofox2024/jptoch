@@ -44,15 +44,15 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        anchors.topMargin: 18
-        spacing: 4
+        anchors.margins: AppStyle.spacingMedium
+        anchors.topMargin: AppStyle.sectionGap
+        spacing: AppStyle.spacingXSmall
 
         Label {
             Layout.fillWidth: true
             text: root.title
             color: AppPalette.mutedText
-            font.pixelSize: 10
+            font.pixelSize: AppStyle.fontTiny
             elide: Text.ElideRight
         }
 
@@ -60,7 +60,7 @@ Rectangle {
             Layout.fillWidth: true
             text: root.value !== undefined ? root.value.toString() : "0"
             color: root.toneColor
-            font.pixelSize: root.viewportWidth > 760 ? 15 : 14
+            font.pixelSize: root.viewportWidth > 760 ? AppStyle.fontBodyLarge + 1 : AppStyle.fontBodyLarge
             font.weight: Font.DemiBold
             elide: Text.ElideRight
         }

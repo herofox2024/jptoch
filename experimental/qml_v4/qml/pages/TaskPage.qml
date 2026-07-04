@@ -8,7 +8,7 @@ import "../components"
 
 Page {
     id: taskPage
-    padding: 24
+    padding: AppStyle.pagePadding
     background: Item {
         Rectangle {
             anchors.fill: parent
@@ -48,26 +48,26 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 18
+        spacing: AppStyle.sectionGap
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 14
+            spacing: AppStyle.spacingXLarge
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: AppStyle.spacingTight
                 Label {
                     text: "任务"
                     color: AppPalette.textColor
                     font.family: taskPage.titleFont
-                    font.pixelSize: 28
+                    font.pixelSize: AppStyle.fontPageTitle
                     font.weight: Font.DemiBold
                 }
                 Label {
                     text: "把 EPUB 放到工作台上，确认源文件和输出文件，然后开始翻译或断点续译。"
                     color: AppPalette.mutedText
-                    font.pixelSize: 13
+                    font.pixelSize: AppStyle.fontBody
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -75,7 +75,7 @@ Page {
 
             Rectangle {
                 Layout.preferredWidth: 128
-                Layout.preferredHeight: 34
+                Layout.preferredHeight: AppStyle.buttonHeightSmall
                 radius: 17
                 color: AppPalette.accentSoft
                 border.color: AppPalette.borderColor
@@ -83,7 +83,7 @@ Page {
                     anchors.centerIn: parent
                     text: taskPage.busy ? "翻译运行中" : "等待任务"
                     color: taskPage.busy ? AppPalette.accentColor : AppPalette.mutedText
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
                 }
             }
@@ -122,11 +122,11 @@ Page {
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 22
-                    spacing: 16
+                    spacing: AppStyle.spacingXXLarge
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 12
+                        spacing: AppStyle.spacingLarge
 
                         Rectangle {
                             Layout.preferredWidth: 48
@@ -138,24 +138,24 @@ Page {
                                 anchors.centerIn: parent
                                 text: "EPUB"
                                 color: AppPalette.accentColor
-                                font.pixelSize: 10
+                                font.pixelSize: AppStyle.fontTiny
                                 font.weight: Font.DemiBold
                             }
                         }
 
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 2
+                            spacing: AppStyle.spacingTight
                             Label {
                                 text: "把书放到工作台上"
                                 color: AppPalette.textColor
-                                font.pixelSize: 19
+                                font.pixelSize: AppStyle.fontHeader
                                 font.weight: Font.DemiBold
                             }
                             Label {
                                 text: "拖入新文件会自动生成当前书名对应的 _zh.epub 输出路径。"
                                 color: AppPalette.mutedText
-                                font.pixelSize: 12
+                                font.pixelSize: AppStyle.fontSmall
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
                             }
@@ -190,19 +190,19 @@ Page {
 
                         ColumnLayout {
                             anchors.centerIn: parent
-                            spacing: 7
+                            spacing: AppStyle.spacingCompact
                             Label {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: dropCard.hovering ? "释放 EPUB 文件" : "拖放 EPUB 文件到这里"
                                 color: AppPalette.textColor
-                                font.pixelSize: 19
+                                font.pixelSize: AppStyle.fontHeader
                                 font.weight: Font.DemiBold
                             }
                             Label {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: "或使用右侧“选择源文件”按钮"
                                 color: AppPalette.mutedText
-                                font.pixelSize: 12
+                                font.pixelSize: AppStyle.fontSmall
                             }
                         }
 
@@ -225,7 +225,7 @@ Page {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 320
-                spacing: 14
+                spacing: AppStyle.spacingXLarge
 
                 Rectangle {
                     Layout.fillWidth: true
@@ -237,7 +237,7 @@ Page {
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 18
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -245,14 +245,14 @@ Page {
                                 Layout.fillWidth: true
                                 text: "源文件"
                                 color: AppPalette.textColor
-                                font.pixelSize: 17
+                                font.pixelSize: AppStyle.fontSection
                                 font.weight: Font.DemiBold
                             }
                             Label {
                                 Layout.preferredWidth: 150
                                 text: taskPage.compactEstimateText(estimateLabel.text)
                                 color: AppPalette.accentColor
-                                font.pixelSize: 11
+                                font.pixelSize: AppStyle.fontCaption
                                 font.weight: Font.DemiBold
                                 horizontalAlignment: Text.AlignRight
                                 elide: Text.ElideRight
@@ -263,13 +263,13 @@ Page {
                             Layout.fillWidth: true
                             text: taskPage.pathDisplay(cfg ? cfg.inp : "")
                             color: (cfg && cfg.inp !== "") ? AppPalette.textColor : AppPalette.mutedText
-                            font.pixelSize: 13
+                            font.pixelSize: AppStyle.fontBody
                             elide: Text.ElideMiddle
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 10
+                            spacing: AppStyle.spacingMedium
                             TextField {
                                 id: inpField
                                 Layout.fillWidth: true
@@ -310,7 +310,7 @@ Page {
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 18
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -318,13 +318,13 @@ Page {
                                 Layout.fillWidth: true
                                 text: "输出文件"
                                 color: AppPalette.textColor
-                                font.pixelSize: 17
+                                font.pixelSize: AppStyle.fontSection
                                 font.weight: Font.DemiBold
                             }
                             Label {
                                 text: "EPUB"
                                 color: AppPalette.amberColor
-                                font.pixelSize: 11
+                                font.pixelSize: AppStyle.fontCaption
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -333,13 +333,13 @@ Page {
                             Layout.fillWidth: true
                             text: taskPage.pathDisplay(cfg ? cfg.out : "")
                             color: (cfg && cfg.out !== "") ? AppPalette.textColor : AppPalette.mutedText
-                            font.pixelSize: 13
+                            font.pixelSize: AppStyle.fontBody
                             elide: Text.ElideMiddle
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 10
+                            spacing: AppStyle.spacingMedium
                             TextField {
                                 id: outField
                                 Layout.fillWidth: true
@@ -397,29 +397,29 @@ Page {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 18
-                spacing: 10
+                spacing: AppStyle.spacingMedium
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    spacing: AppStyle.spacingMedium
                     Label {
                         Layout.fillWidth: true
                         text: "准备翻译"
                         color: AppPalette.textColor
-                        font.pixelSize: 18
+                        font.pixelSize: AppStyle.fontSubHeader
                         font.weight: Font.DemiBold
                     }
                     Rectangle {
                         Layout.preferredWidth: 86
                         Layout.preferredHeight: 24
                         radius: 12
-                        color: taskPage.readyToStart ? AppPalette.cardBg : AppPalette.cardAlt
+                        color: taskPage.readyToStart ? AppPalette.cardBg : AppStyle.statusNeutralBg
                         border.color: AppPalette.lineColor
                         Label {
                             anchors.centerIn: parent
                             text: taskPage.readyToStart ? "可开始" : "待选择"
                             color: taskPage.readyToStart ? AppPalette.successColor : AppPalette.mutedText
-                            font.pixelSize: 11
+                            font.pixelSize: AppStyle.fontCaption
                             font.weight: Font.DemiBold
                         }
                     }
@@ -428,12 +428,12 @@ Page {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.preferredHeight: taskPage.width > 900 ? 150 : 224
-                    spacing: 8
+                    spacing: AppStyle.spacingSmall
 
                     TaskActionButton {
                         id: startBtn
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 64
+                        Layout.preferredHeight: AppStyle.buttonHeightPrimary
                         primary: true
                         label: taskPage.busy ? "翻译中..." : "开始翻译"
                         hint: taskPage.readyToStart ? "使用当前模型与参数启动任务" : "请先选择源文件和输出文件"
@@ -448,7 +448,7 @@ Page {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 12
+                        spacing: AppStyle.spacingLarge
 
                         GridLayout {
                             Layout.fillWidth: true
@@ -459,7 +459,7 @@ Page {
                             TaskActionButton {
                                 id: pauseBtn
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
+                                Layout.preferredHeight: AppStyle.buttonHeightNormal
                                 label: "暂停"
                                 hint: "保留已写入缓存"
                                 enabled: taskPage.busy
@@ -469,7 +469,7 @@ Page {
                             TaskActionButton {
                                 id: resumeBtn
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
+                                Layout.preferredHeight: AppStyle.buttonHeightNormal
                                 label: "恢复"
                                 hint: "继续断点任务"
                                 enabled: taskPage.readyToStart && !taskPage.busy
@@ -484,7 +484,7 @@ Page {
                             TaskActionButton {
                                 id: stopBtn
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
+                                Layout.preferredHeight: AppStyle.buttonHeightNormal
                                 label: "停止"
                                 hint: "取消并清空本次缓存"
                                 danger: true
@@ -499,7 +499,7 @@ Page {
                             TaskActionButton {
                                 id: clearCacheBtn
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
+                                Layout.preferredHeight: AppStyle.buttonHeightNormal
                                 label: "清缓存"
                                 hint: "重新翻译当前书"
                                 enabled: taskPage.readyToStart && !taskPage.busy
@@ -509,7 +509,7 @@ Page {
                             TaskActionButton {
                                 id: manualEditBtn
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
+                                Layout.preferredHeight: AppStyle.buttonHeightNormal
                                 label: "人工修改"
                                 hint: "编辑单条译文"
                                 enabled: !taskPage.busy
@@ -520,7 +520,7 @@ Page {
 
                     Flow {
                         Layout.fillWidth: true
-                        spacing: 7
+                        spacing: AppStyle.spacingCompact
                         SummaryChip { title: "模型"; value: taskPage.modelSummary() }
                         SummaryChip { title: "并发"; value: taskPage.valueOrDash(cfg ? cfg.maxWorkers : "") }
                         SummaryChip { title: "批量"; value: taskPage.valueOrDash(cfg ? cfg.batchSize : "") }
@@ -530,7 +530,7 @@ Page {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 44
+                    Layout.preferredHeight: AppStyle.infoBarHeight
                     Layout.bottomMargin: 2
                     radius: 22
                     color: AppPalette.fieldBg
@@ -542,7 +542,7 @@ Page {
                         anchors.rightMargin: 10
                         anchors.topMargin: 6
                         anchors.bottomMargin: 6
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
                         Rectangle {
                             Layout.preferredWidth: 8
                             Layout.preferredHeight: 8
@@ -554,22 +554,22 @@ Page {
                             text: "暂停会保留已写入缓存的内容，切换模型后点“恢复”可续译；停止会取消任务并清空本次已翻译缓存。"
                             color: AppPalette.mutedText
                             wrapMode: Text.NoWrap
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             maximumLineCount: 1
                             elide: Text.ElideRight
                         }
                         Rectangle {
                             visible: taskPage.width > 880
                             Layout.preferredWidth: 104
-                            Layout.preferredHeight: 28
+                            Layout.preferredHeight: AppStyle.buttonHeightCompact
                             radius: 14
-                            color: taskPage.readyToStart ? AppPalette.accentSoft : AppPalette.cardAlt
+                            color: taskPage.readyToStart ? AppPalette.accentSoft : AppStyle.statusNeutralBg
                             border.color: AppPalette.lineColor
                             Label {
                                 anchors.centerIn: parent
                                 text: taskPage.readyToStart ? "工作台已就绪" : "等待文件"
                                 color: taskPage.readyToStart ? AppPalette.successColor : AppPalette.mutedText
-                                font.pixelSize: 12
+                                font.pixelSize: AppStyle.fontSmall
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -582,7 +582,7 @@ Page {
             Layout.fillWidth: true
             text: "数据目录: " + (AppDir || "")
             color: AppPalette.mutedText
-            font.pixelSize: 11
+            font.pixelSize: AppStyle.fontCaption
             elide: Text.ElideMiddle
         }
 

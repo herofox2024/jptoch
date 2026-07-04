@@ -18,14 +18,14 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 8
+        anchors.margins: AppStyle.spacingLarge
+        spacing: AppStyle.spacingSmall
 
         Label {
             Layout.fillWidth: true
             text: root.title
             color: AppPalette.mutedText
-            font.pixelSize: 12
+            font.pixelSize: AppStyle.fontSmall
             font.weight: Font.DemiBold
         }
 
@@ -35,14 +35,14 @@ Rectangle {
             Layout.fillHeight: true
             readOnly: true
             placeholderText: root.placeholder
-            font.pixelSize: 13
+            font.pixelSize: AppStyle.fontBody
             wrapMode: Text.WordWrap
             color: root.textColor
-            padding: 10
-            leftPadding: 10
-            rightPadding: 10
-            topPadding: 8
-            bottomPadding: 8
+            padding: AppStyle.spacingMedium
+            leftPadding: AppStyle.spacingMedium
+            rightPadding: AppStyle.spacingMedium
+            topPadding: AppStyle.spacingSmall
+            bottomPadding: AppStyle.spacingSmall
             clip: true
             selectByMouse: true
             background: Rectangle {

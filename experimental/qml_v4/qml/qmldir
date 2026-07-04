@@ -1,2 +1,3 @@
-﻿singleton AppPalette 1.0 AppPalette.qml
+singleton AppPalette 1.0 AppPalette.qml
+singleton AppStyle 1.0 AppStyle.qml
 singleton FilePathUtils 1.0 FilePathUtils.qml

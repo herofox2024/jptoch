@@ -17,7 +17,7 @@ GroupBox {
 
     ColumnLayout {
         width: parent.width
-        spacing: 12
+        spacing: AppStyle.spacingLarge
 
         CheckBox {
             text: "在输出 EPUB 开头添加版权提示页"
@@ -44,7 +44,7 @@ GroupBox {
 
             ScrollView {
                 anchors.fill: parent
-                anchors.margins: 14
+                anchors.margins: AppStyle.panelPadding
                 clip: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
@@ -59,7 +59,7 @@ GroupBox {
                     color: enabled ? AppPalette.textColor : AppPalette.mutedText
                     selectedTextColor: AppPalette.surfaceRaised
                     selectionColor: AppPalette.accentColor
-                    font.pixelSize: 13
+                    font.pixelSize: AppStyle.fontBody
                     textFormat: TextEdit.PlainText
                     onTextChanged: {
                         if (root.cfg && root.cfg.noticePageText !== text) {
@@ -73,11 +73,11 @@ GroupBox {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                anchors.margins: 16
+                anchors.margins: AppStyle.spacingXXLarge
                 visible: !noticePageTextEdit.text && !noticePageTextEdit.activeFocus
                 text: root.defaultNoticeText
                 color: AppPalette.mutedText
-                font.pixelSize: 13
+                font.pixelSize: AppStyle.fontBody
                 wrapMode: Text.WordWrap
             }
         }
@@ -105,7 +105,7 @@ GroupBox {
             Layout.fillWidth: true
             text: "提示页会作为独立 XHTML 页面写入，不修改正文内容。批量处理会在原文件旁生成 _notice.epub 副本。"
             color: AppPalette.mutedText
-            font.pixelSize: 12
+            font.pixelSize: AppStyle.fontSmall
             wrapMode: Text.WordWrap
         }
     }

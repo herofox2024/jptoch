@@ -178,7 +178,7 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.leftMargin: 20
             anchors.rightMargin: 20
-            spacing: 12
+            spacing: AppStyle.spacingLarge
 
             Rectangle {
                 Layout.preferredWidth: 38
@@ -191,24 +191,24 @@ ApplicationWindow {
                     text: "译"
                     color: "white"
                     font.family: appWindow.titleFont
-                    font.pixelSize: 18
+                    font.pixelSize: AppStyle.fontSubHeader
                     font.weight: Font.DemiBold
                 }
             }
 
             ColumnLayout {
-                spacing: 0
+                spacing: AppStyle.spacingNone
                 Label {
                     text: "AI日译中（EPUB）V4.1"
                     color: AppPalette.textColor
                     font.family: appWindow.titleFont
-                    font.pixelSize: 19
+                    font.pixelSize: AppStyle.fontHeader
                     font.weight: Font.DemiBold
                 }
                 Label {
                     text: "日系小说翻译工作台 · PySide6/QML V4.1"
                     color: AppPalette.mutedText
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                 }
             }
 
@@ -225,7 +225,7 @@ ApplicationWindow {
                     anchors.centerIn: parent
                     text: appWindow.glassMode ? "V4.1 玻璃" : "V4.1"
                     color: AppPalette.accentColor
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
                 }
             }
@@ -234,7 +234,7 @@ ApplicationWindow {
 
     RowLayout {
         anchors.fill: parent
-        spacing: 0
+        spacing: AppStyle.spacingNone
 
         Rectangle {
             Layout.preferredWidth: 168
@@ -269,15 +269,15 @@ ApplicationWindow {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 14
-                spacing: 12
+                spacing: AppStyle.spacingLarge
 
                 ColumnLayout {
-                    spacing: 2
+                    spacing: AppStyle.spacingTight
                     Layout.fillWidth: true
                     Label {
                         text: "Workflow"
                         color: "#d9eee7"
-                        font.pixelSize: 12
+                        font.pixelSize: AppStyle.fontSmall
                         font.letterSpacing: 1.2
                         opacity: 0.82
                     }
@@ -285,7 +285,7 @@ ApplicationWindow {
                         text: "翻译流程"
                         color: "white"
                         font.family: appWindow.titleFont
-                        font.pixelSize: 18
+                        font.pixelSize: AppStyle.fontSubHeader
                         font.weight: Font.DemiBold
                     }
                 }
@@ -299,7 +299,7 @@ ApplicationWindow {
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: AppStyle.spacingSmall
                     NavButton { iconName: "task"; label: "任务"; desc: "导入书籍"; pageIndex: 0 }
                     NavButton { iconName: "status"; label: "状态"; desc: "实时进度"; pageIndex: 1 }
                     NavButton { iconName: "log"; label: "日志"; desc: "实时诊断"; pageIndex: 2 }
@@ -330,13 +330,13 @@ ApplicationWindow {
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 12
-                        spacing: 7
+                        spacing: AppStyle.spacingCompact
 
                         Label {
                             Layout.fillWidth: true
                             text: "\u9879\u76ee\u4e0e\u8054\u7cfb"
                             color: "#eefcf8"
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             font.weight: Font.DemiBold
                             opacity: 0.92
                         }
@@ -479,7 +479,7 @@ ApplicationWindow {
         readonly property bool active: pageStack.currentIndex === pageIndex
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 58
+        Layout.preferredHeight: AppStyle.navButtonHeight
         activeFocusOnTab: true
 
         function activate() {
@@ -525,11 +525,11 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.leftMargin: 14
             anchors.rightMargin: 12
-            spacing: 10
+            spacing: AppStyle.spacingMedium
 
             Item {
                 Layout.preferredWidth: 34
-                Layout.preferredHeight: 34
+                Layout.preferredHeight: AppStyle.buttonHeightSmall
                 Rectangle {
                     anchors.fill: parent
                     radius: 12
@@ -549,17 +549,17 @@ ApplicationWindow {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 0
+                spacing: AppStyle.spacingNone
                 Label {
                     text: navBtn.label
                     color: navBtn.active ? AppPalette.textColor : "white"
-                    font.pixelSize: 14
+                    font.pixelSize: AppStyle.fontBodyLarge
                     font.weight: Font.DemiBold
                 }
                 Label {
                     text: navBtn.desc
                     color: navBtn.active ? AppPalette.mutedText : "#c9e1d9"
-                    font.pixelSize: 10
+                    font.pixelSize: AppStyle.fontTiny
                 }
             }
         }
@@ -589,7 +589,7 @@ ApplicationWindow {
         property bool hovering: false
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 28
+        Layout.preferredHeight: AppStyle.buttonHeightCompact
         radius: 10
         color: contactLink.hovering || contactLink.activeFocus
                ? Qt.rgba(1, 1, 1, 0.16)
@@ -609,12 +609,12 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.leftMargin: 9
             anchors.rightMargin: 9
-            spacing: 6
+            spacing: AppStyle.spacingInline
 
             Label {
                 text: contactLink.label
                 color: AppPalette.amberColor
-                font.pixelSize: 10
+                font.pixelSize: AppStyle.fontTiny
                 font.weight: Font.DemiBold
                 Layout.preferredWidth: 42
                 elide: Text.ElideRight
@@ -624,7 +624,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 text: contactLink.value
                 color: "#d7eee8"
-                font.pixelSize: 10
+                font.pixelSize: AppStyle.fontTiny
                 elide: Text.ElideRight
             }
         }

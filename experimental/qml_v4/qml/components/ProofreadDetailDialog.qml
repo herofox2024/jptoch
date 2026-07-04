@@ -20,7 +20,7 @@ Dialog {
 
         ColumnLayout {
             width: root.availableWidth
-            spacing: 12
+            spacing: AppStyle.spacingLarge
 
             Rectangle {
                 Layout.fillWidth: true
@@ -32,21 +32,21 @@ Dialog {
                 ColumnLayout {
                     id: detailHeaderColumn
                     anchors.fill: parent
-                    anchors.margins: 14
-                    spacing: 8
+                    anchors.margins: AppStyle.panelPadding
+                    spacing: AppStyle.spacingSmall
 
                     Label {
                         Layout.fillWidth: true
                         text: (root.host ? root.host.detailTimeText : "") + "  \u00b7  " + (root.host ? root.host.detailReason : "")
                         color: AppPalette.textColor
                         wrapMode: Text.WordWrap
-                        font.pixelSize: 13
+                        font.pixelSize: AppStyle.fontBody
                         font.weight: Font.DemiBold
                     }
 
                     Flow {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: AppStyle.spacingSmall
                         IssueChip {
                             title: root.host ? root.host.detailChanged : ""
                             tone: root.host && root.host.detailChanged === "有变化" ? "amber" : "accent"
@@ -66,7 +66,7 @@ Dialog {
                         text: root.host ? root.host.detailChangedHint : ""
                         color: AppPalette.mutedText
                         wrapMode: Text.WordWrap
-                        font.pixelSize: 12
+                        font.pixelSize: AppStyle.fontSmall
                     }
                 }
             }

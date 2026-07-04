@@ -25,13 +25,13 @@ Rectangle {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
-        spacing: 2
+        spacing: AppStyle.spacingTight
 
         Label {
             Layout.fillWidth: true
             text: root.title
             color: AppPalette.mutedText
-            font.pixelSize: 11
+            font.pixelSize: AppStyle.fontCaption
             elide: Text.ElideRight
         }
 
@@ -39,7 +39,7 @@ Rectangle {
             Layout.fillWidth: true
             text: root.value
             color: root.toneColor
-            font.pixelSize: 17
+            font.pixelSize: AppStyle.fontSection
             font.weight: Font.DemiBold
             elide: Text.ElideRight
         }

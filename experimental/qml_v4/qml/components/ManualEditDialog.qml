@@ -47,20 +47,20 @@ Dialog {
 
     ColumnLayout {
         width: parent.width - 40
-        spacing: 14
+        spacing: AppStyle.spacingXLarge
 
         Label {
             Layout.fillWidth: true
             text: "输入日文原文查找已缓存译文，也可以直接填写中文译文。保存后写入人工译文缓存，恢复续译或下次翻译时优先使用，不会直接修改已经生成的 EPUB。"
             color: AppPalette.mutedText
             wrapMode: Text.WordWrap
-            font.pixelSize: 12
+            font.pixelSize: AppStyle.fontSmall
         }
 
         Label {
             text: "日文原文（必须与 EPUB 中的原文一致）:"
             color: AppPalette.textColor
-            font.pixelSize: 13
+            font.pixelSize: AppStyle.fontBody
             font.weight: Font.DemiBold
         }
 
@@ -85,7 +85,7 @@ Dialog {
         Label {
             text: "中文译文（可直接编辑）"
             color: AppPalette.textColor
-            font.pixelSize: 13
+            font.pixelSize: AppStyle.fontBody
             font.weight: Font.DemiBold
         }
 
@@ -103,7 +103,7 @@ Dialog {
             Layout.fillWidth: true
             text: ""
             color: AppPalette.mutedText
-            font.pixelSize: 12
+            font.pixelSize: AppStyle.fontSmall
             visible: text !== ""
         }
     }

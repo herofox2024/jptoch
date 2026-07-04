@@ -36,12 +36,12 @@ Item {
     // ====== 类型色值 ======
     readonly property color infoBg:     AppPalette.accentSoft
     readonly property color infoFg:     AppPalette.accentColor
-    readonly property color successBg:  Qt.rgba(0.18, 0.72, 0.44, 0.18)
-    readonly property color successFg:  "#1a6b3a"
-    readonly property color warningBg:  Qt.rgba(0.90, 0.62, 0.16, 0.18)
-    readonly property color warningFg:  "#8a5d0a"
-    readonly property color errorBg:    Qt.rgba(0.82, 0.28, 0.24, 0.18)
-    readonly property color errorFg:    "#b3302a"
+    readonly property color successBg:  AppStyle.statusSuccessBg
+    readonly property color successFg:  AppPalette.successColor
+    readonly property color warningBg:  AppStyle.statusWarningBg
+    readonly property color warningFg:  AppPalette.amberColor
+    readonly property color errorBg:    AppStyle.statusErrorBg
+    readonly property color errorFg:    AppPalette.errorColor
 
     // ====== 公开方法 ======
     function info(msg, duration)    { _enqueue(msg, "info",    duration || displayDuration) }
@@ -142,7 +142,7 @@ Item {
             anchors.centerIn: parent
             anchors.leftMargin: 20
             anchors.rightMargin: 20
-            spacing: 10
+            spacing: AppStyle.spacingMedium
 
             // 图标
             Rectangle {
@@ -156,7 +156,7 @@ Item {
                     anchors.centerIn: parent
                     text: popup.iconText
                     color: popup.fgColor
-                    font.pixelSize: 15
+                    font.pixelSize: AppStyle.fontBodyLarge + 1
                     font.weight: Font.Bold
                 }
             }
@@ -166,7 +166,7 @@ Item {
                 id: label
                 text: popup.msgText
                 color: popup.fgColor
-                font.pixelSize: 14
+                font.pixelSize: AppStyle.fontBodyLarge
                 font.weight: Font.Medium
                 wrapMode: Text.WordWrap
                 maximumLineCount: 3

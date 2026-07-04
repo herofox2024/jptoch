@@ -6,7 +6,7 @@ import ".."
 
 Page {
     id: page
-    padding: 24
+    padding: AppStyle.pagePadding
     background: Item {}
 
     property var cfg: null
@@ -39,22 +39,22 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 18
+        spacing: AppStyle.sectionGap
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: AppStyle.spacingTight
             Label {
                 text: "API 接口配置"
                 color: AppPalette.textColor
                 font.family: page.titleFont
-                font.pixelSize: 28
+                font.pixelSize: AppStyle.fontPageTitle
                 font.weight: Font.DemiBold
             }
             Label {
                 text: "选择翻译模型供应商，并测试当前 API 配置是否可用。"
                 color: AppPalette.mutedText
-                font.pixelSize: 13
+                font.pixelSize: AppStyle.fontBody
             }
         }
 
@@ -127,7 +127,7 @@ Page {
                 FieldLabel { text: "超时(秒)" }
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 12
+                    spacing: AppStyle.spacingLarge
                     SpinBox {
                         id: testTimeout
                         from: 1
@@ -160,14 +160,14 @@ Page {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
-                spacing: 8
+                spacing: AppStyle.spacingSmall
 
                 Label {
                     Layout.fillWidth: true
                     text: page.providerHints[page.currentProvider] || ""
                     color: AppPalette.mutedText
                     wrapMode: Text.WordWrap
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                 }
 
                 Label {
@@ -176,7 +176,7 @@ Page {
                     visible: page.connectionResult !== ""
                     color: page.connectionResult.includes("成功") ? AppPalette.successColor : AppPalette.errorColor
                     wrapMode: Text.WordWrap
-                    font.pixelSize: 13
+                    font.pixelSize: AppStyle.fontBody
                     font.weight: Font.DemiBold
                 }
             }
@@ -188,7 +188,7 @@ Page {
     component FieldLabel: Label {
         Layout.preferredWidth: 90
         color: AppPalette.textColor
-        font.pixelSize: 13
+        font.pixelSize: AppStyle.fontBody
         font.weight: Font.DemiBold
         verticalAlignment: Text.AlignVCenter
     }

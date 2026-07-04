@@ -20,15 +20,15 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 5
+        anchors.margins: AppStyle.spacingMedium
+        spacing: AppStyle.spacingXSmall
 
         Label {
             id: reportTitle
             Layout.fillWidth: true
             text: root.title
             color: root.tone === "accent" ? AppPalette.accentColor : AppPalette.mutedText
-            font.pixelSize: 11
+            font.pixelSize: AppStyle.fontCaption
             font.weight: Font.DemiBold
         }
 
@@ -40,7 +40,7 @@ Rectangle {
             wrapMode: Text.WordWrap
             maximumLineCount: root.maxLines > 0 ? root.maxLines : 1000000
             elide: root.maxLines > 0 ? Text.ElideRight : Text.ElideNone
-            font.pixelSize: 12
+            font.pixelSize: AppStyle.fontSmall
         }
     }
 }

@@ -263,6 +263,7 @@ V4.1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 │  ├─ qml/                     # QML 页面与主题
 │  │  ├─ main.qml              # 主窗口（导航栏、页面切换、主题绑定）
 │  │  ├─ AppPalette.qml        # 全局调色板（Light/Dark/Glass 三态响应式）
+│  │  ├─ AppStyle.qml          # 全局视觉 Token（字体、间距、按钮高度、状态背景）
 │  │  ├─ pages/                # 5 个功能页面
 │  │  │  ├─ TaskPage.qml       # 任务页（EPUB 拖入、开始/暂停/停止）
 │  │  │  ├─ MonitorPage.qml    # 状态页（进度、统计、校对详情）

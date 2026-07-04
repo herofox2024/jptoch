@@ -6,7 +6,7 @@ import ".."
 
 Page {
     id: page
-    padding: 24
+    padding: AppStyle.pagePadding
     background: Item {}
 
     property var logBridge: null
@@ -63,24 +63,24 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 14
+        spacing: AppStyle.spacingXLarge
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 3
+            spacing: AppStyle.spacingNarrow
 
             Label {
                 text: "日志"
                 color: AppPalette.textColor
                 font.family: page.titleFont
-                font.pixelSize: 28
+                font.pixelSize: AppStyle.fontPageTitle
                 font.weight: Font.DemiBold
             }
 
             Label {
                 text: "实时查看翻译过程、API 报错、限流、校对和保存诊断信息。"
                 color: AppPalette.mutedText
-                font.pixelSize: 13
+                font.pixelSize: AppStyle.fontBody
             }
         }
 
@@ -94,16 +94,16 @@ Page {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
-                spacing: 10
+                spacing: AppStyle.spacingMedium
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    spacing: AppStyle.spacingMedium
 
                     Label {
                         text: "当前日志"
                         color: AppPalette.textColor
-                        font.pixelSize: 13
+                        font.pixelSize: AppStyle.fontBody
                         font.weight: Font.DemiBold
                     }
 
@@ -114,7 +114,7 @@ Page {
                         text: page.logBridge ? page.logBridge.currentLogPath : ""
                         selectByMouse: true
                         color: AppPalette.textColor
-                        font.pixelSize: 12
+                        font.pixelSize: AppStyle.fontSmall
                         background: Rectangle {
                             radius: AppPalette.radiusMedium
                             color: AppPalette.fieldBg
@@ -125,7 +125,7 @@ Page {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    spacing: AppStyle.spacingMedium
 
                     Button {
                         text: "刷新"
@@ -189,7 +189,7 @@ Page {
                     selectedTextColor: "white"
                     selectionColor: AppPalette.accentColor
                     font.family: "Consolas"
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                     background: Rectangle {
                         color: AppPalette.fieldBg
                         radius: AppPalette.radiusMedium

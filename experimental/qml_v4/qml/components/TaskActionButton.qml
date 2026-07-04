@@ -14,11 +14,11 @@ Rectangle {
     signal clicked()
 
     implicitWidth: primary ? 320 : 132
-    implicitHeight: primary ? 64 : 40
+    implicitHeight: primary ? AppStyle.buttonHeightPrimary : AppStyle.buttonHeightNormal
     radius: primary ? 24 : 18
     color: !enabled
            ? AppPalette.cardAlt
-           : (primary ? AppPalette.accentColor : (danger ? Qt.rgba(0.80, 0.24, 0.20, AppPalette.glass ? 0.18 : 0.10) : AppPalette.cardBg))
+           : (primary ? AppPalette.accentColor : (danger ? AppStyle.dangerButtonBg : AppPalette.cardBg))
     border.color: !enabled
                   ? AppPalette.lineColor
                   : (primary ? AppPalette.accentColor : (danger ? AppPalette.errorColor : AppPalette.borderColor))
@@ -49,8 +49,8 @@ Rectangle {
             text: root.label
             color: !root.enabled
                    ? AppPalette.mutedText
-                   : (root.primary ? "#ffffff" : (root.danger ? AppPalette.errorColor : AppPalette.textColor))
-            font.pixelSize: root.primary ? 18 : 13
+                   : (root.primary ? AppStyle.primaryOnAccent : (root.danger ? AppPalette.errorColor : AppPalette.textColor))
+            font.pixelSize: root.primary ? AppStyle.fontHeader : AppStyle.fontBody
             font.weight: Font.DemiBold
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
@@ -61,8 +61,8 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             visible: root.hint !== ""
             text: root.hint
-            color: root.primary ? Qt.rgba(1, 1, 1, 0.82) : AppPalette.mutedText
-            font.pixelSize: root.primary ? 11 : 9
+            color: root.primary ? AppStyle.primaryOnAccentMuted : AppPalette.mutedText
+            font.pixelSize: root.primary ? AppStyle.fontCaption : AppStyle.fontTiny
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
             maximumLineCount: 1

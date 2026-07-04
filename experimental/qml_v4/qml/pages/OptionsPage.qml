@@ -187,13 +187,13 @@ Page {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 24
-        spacing: 14
+        spacing: AppStyle.spacingXLarge
 
         Label {
             text: "翻译设置"
             color: AppPalette.textColor
             font.family: page.titleFont
-            font.pixelSize: 28
+            font.pixelSize: AppStyle.fontPageTitle
             font.weight: Font.DemiBold
         }
 
@@ -394,12 +394,12 @@ Page {
 
                     ColumnLayout {
                         width: parent.width
-                        spacing: 8
+                        spacing: AppStyle.spacingSmall
 
                         Flow {
                             Layout.fillWidth: true
                             width: parent.width
-                            spacing: 8
+                            spacing: AppStyle.spacingSmall
 
                             Repeater {
                                 model: [
@@ -422,7 +422,7 @@ Page {
                         Label {
                             id: presetHint
                             text: "点击上方预设应用推荐参数"
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -463,7 +463,7 @@ Page {
 
                     ColumnLayout {
                         width: parent.width
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         CheckBox {
                             text: "启用译后校对"
@@ -512,7 +512,7 @@ Page {
                             Layout.fillWidth: true
                             text: "作品类型和叙事口吻会影响初译 Prompt；启用译后校对后，也会影响校对 Prompt。自动识别会在开始翻译后根据书名、目录和样本文本生成结果，识别不确定时回退到“通用小说 + 中性口吻”。"
                             color: AppPalette.mutedText
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             wrapMode: Text.WordWrap
                         }
 
@@ -530,7 +530,7 @@ Page {
                             Layout.fillWidth: true
                             text: "自定义补充要求"
                             color: AppPalette.textColor
-                            font.pixelSize: 13
+                            font.pixelSize: AppStyle.fontBody
                             font.weight: Font.DemiBold
                         }
 
@@ -550,7 +550,7 @@ Page {
                             color: AppPalette.textColor
                             selectedTextColor: AppPalette.surfaceRaised
                             selectionColor: AppPalette.accentColor
-                            font.pixelSize: 13
+                            font.pixelSize: AppStyle.fontBody
                             background: Rectangle {
                                 radius: AppPalette.radiusMedium
                                 color: AppPalette.cardAlt
@@ -566,7 +566,7 @@ Page {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 8
+                            spacing: AppStyle.spacingSmall
 
                             Button {
                                 text: "刷新 Prompt 预览"
@@ -588,14 +588,14 @@ Page {
                                 Layout.fillWidth: true
                                 text: "预览只在本地生成，不调用 API。"
                                 color: AppPalette.mutedText
-                                font.pixelSize: 12
+                                font.pixelSize: AppStyle.fontSmall
                                 elide: Text.ElideRight
                             }
                         }
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 280
+                            Layout.preferredHeight: AppStyle.buttonHeightCompact0
                             radius: AppPalette.radiusMedium
                             color: AppPalette.cardAlt
                             border.color: AppPalette.lineColor
@@ -615,7 +615,7 @@ Page {
                                     wrapMode: TextEdit.WordWrap
                                     selectByMouse: true
                                     color: AppPalette.textColor
-                                    font.pixelSize: 12
+                                    font.pixelSize: AppStyle.fontSmall
                                     background: Item {}
                                 }
                             }
@@ -629,13 +629,13 @@ Page {
 
                     ColumnLayout {
                         width: parent.width
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         Label {
                             text: "校对可使用独立供应商和模型；切换翻译模型后，恢复续译会优先复用已通过安全校验的旧译文缓存。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             Layout.fillWidth: true
                         }
 
@@ -714,24 +714,24 @@ Page {
 
                     ColumnLayout {
                         width: parent.width
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         Label {
                             Layout.fillWidth: true
                             text: "仅在确认片段确实需要保留日文时使用。这里添加的是“引号内片段白名单”，例如译文中的 “レディス” 会放行，但正文其他位置的日文仍会继续被拦截。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 8
+                            spacing: AppStyle.spacingSmall
 
                             Label {
                                 text: "文件"
                                 color: AppPalette.textColor
-                                font.pixelSize: 12
+                                font.pixelSize: AppStyle.fontSmall
                                 font.weight: Font.DemiBold
                             }
 
@@ -741,13 +741,13 @@ Page {
                                 readOnly: true
                                 selectByMouse: true
                                 color: AppPalette.textColor
-                                font.pixelSize: 11
+                                font.pixelSize: AppStyle.fontCaption
                             }
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 8
+                            spacing: AppStyle.spacingSmall
 
                             TextField {
                                 id: residueAllowInput
@@ -777,7 +777,7 @@ Page {
                                 anchors.fill: parent
                                 anchors.margins: 8
                                 model: residueAllowlistModel
-                                spacing: 6
+                                spacing: AppStyle.spacingInline
                                 clip: true
 
                                 delegate: Rectangle {
@@ -791,13 +791,13 @@ Page {
                                         anchors.fill: parent
                                         anchors.leftMargin: 10
                                         anchors.rightMargin: 6
-                                        spacing: 8
+                                        spacing: AppStyle.spacingSmall
 
                                         Label {
                                             Layout.fillWidth: true
                                             text: fragment
                                             color: AppPalette.textColor
-                                            font.pixelSize: 13
+                                            font.pixelSize: AppStyle.fontBody
                                             elide: Text.ElideRight
                                         }
 
@@ -815,7 +815,7 @@ Page {
                                 visible: residueAllowlistModel.count === 0
                                 text: "暂无白名单片段"
                                 color: AppPalette.mutedText
-                                font.pixelSize: 12
+                                font.pixelSize: AppStyle.fontSmall
                             }
                         }
 
@@ -826,7 +826,7 @@ Page {
                             color: page.residueAllowlistStatus.indexOf("失败") >= 0 || page.residueAllowlistStatus.indexOf("请输入") >= 0
                                    ? AppPalette.errorColor : AppPalette.successColor
                             wrapMode: Text.WordWrap
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                         }
                     }
                 }
@@ -839,14 +839,14 @@ Page {
 
                     ColumnLayout {
                         width: parent.width
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         Label {
                             Layout.fillWidth: true
                             text: "跨模型缓存用于切换大模型后继续续译：已通过安全校验的旧模型译文会直接复用。需要完全用新模型重译当前 EPUB 时，请到任务页使用“清理当前 EPUB 缓存”。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                         }
 
                         CheckBox {
@@ -869,7 +869,7 @@ Page {
 
                     Flow {
                         width: parent.width
-                        spacing: 16
+                        spacing: AppStyle.spacingXXLarge
 
                         Label { text: "主题:" }
                         ComboBox {
@@ -896,13 +896,13 @@ Page {
 
                     ColumnLayout {
                         width: parent.width
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         Label {
                             Layout.fillWidth: true
                             text: "当前版本：V" + (page.updater ? page.updater.currentVersion : "未知")
                             color: AppPalette.textColor
-                            font.pixelSize: 14
+                            font.pixelSize: AppStyle.fontBodyLarge
                             font.weight: Font.DemiBold
                         }
 
@@ -911,7 +911,7 @@ Page {
                             text: page.updateStatus
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                         }
 
                         ProgressBar {
@@ -924,7 +924,7 @@ Page {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 10
+                            spacing: AppStyle.spacingMedium
 
                             Button {
                                 text: page.updater && page.updater.checking ? "检查中..." : "检查更新"
@@ -958,7 +958,7 @@ Page {
                             text: "说明：检查更新不需要登录 GitHub；下载完成后会启动安装程序，并退出当前软件。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                         }
                     }
                 }
@@ -976,14 +976,14 @@ Page {
 
         contentItem: ColumnLayout {
             width: updateDialog.width - 48
-            spacing: 12
+            spacing: AppStyle.spacingLarge
 
             Label {
                 Layout.fillWidth: true
                 text: "当前版本 V" + (page.updateInfo.currentVersion || (page.updater ? page.updater.currentVersion : "未知"))
                       + "，最新版本 V" + (page.updateInfo.latestVersion || "未知")
                 color: AppPalette.textColor
-                font.pixelSize: 15
+                font.pixelSize: AppStyle.fontBodyXLarge
                 font.weight: Font.DemiBold
                 wrapMode: Text.WordWrap
             }
@@ -995,7 +995,7 @@ Page {
                       : "该 Release 没有找到 .exe 安装包，可打开发布页手动查看。"
                 color: AppPalette.mutedText
                 wrapMode: Text.WordWrap
-                font.pixelSize: 12
+                font.pixelSize: AppStyle.fontSmall
             }
 
             ScrollView {
@@ -1008,7 +1008,7 @@ Page {
                     text: page.updateInfo.releaseNotes || "没有发布说明。"
                     color: AppPalette.textColor
                     wrapMode: Text.WordWrap
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                 }
             }
 
@@ -1026,12 +1026,12 @@ Page {
                 text: page.updateStatus
                 color: AppPalette.mutedText
                 wrapMode: Text.WordWrap
-                font.pixelSize: 12
+                font.pixelSize: AppStyle.fontSmall
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 10
+                spacing: AppStyle.spacingMedium
 
                 Button {
                     text: "稍后"

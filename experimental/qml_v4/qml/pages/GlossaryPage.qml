@@ -7,7 +7,7 @@ import ".."
 
 Page {
     id: page
-    padding: 24
+    padding: AppStyle.pagePadding
     background: Item {}
 
     property var cfg: null
@@ -110,26 +110,26 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 16
+        spacing: AppStyle.spacingXXLarge
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 14
+            spacing: AppStyle.spacingXLarge
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: AppStyle.spacingTight
                 Label {
                     text: "术语表"
                     color: AppPalette.textColor
                     font.family: page.titleFont
-                    font.pixelSize: 28
+                    font.pixelSize: AppStyle.fontPageTitle
                     font.weight: Font.DemiBold
                 }
                 Label {
                     text: page.statusMessage
                     color: AppPalette.mutedText
-                    font.pixelSize: 13
+                    font.pixelSize: AppStyle.fontBody
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -137,15 +137,15 @@ Page {
 
             Rectangle {
                 Layout.preferredWidth: 120
-                Layout.preferredHeight: 34
+                Layout.preferredHeight: AppStyle.buttonHeightSmall
                 radius: 17
-                color: page.dirty ? (AppPalette.dark ? "#3b2d1c" : "#f2e4cf") : AppPalette.accentSoft
+                color: page.dirty ? AppStyle.statusWarningBg : AppStyle.statusAccentBg
                 border.color: page.dirty ? AppPalette.amberColor : AppPalette.borderColor
                 Label {
                     anchors.centerIn: parent
                     text: page.dirty ? "有未保存修改" : "已同步"
                     color: page.dirty ? AppPalette.amberColor : AppPalette.accentColor
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
                 }
             }
@@ -173,20 +173,20 @@ Page {
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 14
-                spacing: 12
+                spacing: AppStyle.spacingLarge
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: AppStyle.spacingInline
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 10
+                        spacing: AppStyle.spacingMedium
 
                         Rectangle {
                             id: searchField
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 50
+                            Layout.preferredHeight: AppStyle.fieldHeight
                             radius: 18
                             color: AppPalette.fieldBg
                             border.color: searchInput.activeFocus ? AppPalette.accentColor : AppPalette.lineColor
@@ -200,7 +200,7 @@ Page {
                                 visible: searchInput.text.length === 0 && !searchInput.activeFocus
                                 text: "搜索术语、译名、备注或来源..."
                                 color: AppPalette.mutedText
-                                font.pixelSize: 13
+                                font.pixelSize: AppStyle.fontBody
                                 elide: Text.ElideRight
                             }
 
@@ -213,7 +213,7 @@ Page {
                                 color: AppPalette.textColor
                                 selectedTextColor: "white"
                                 selectionColor: AppPalette.accentColor
-                                font.pixelSize: 14
+                                font.pixelSize: AppStyle.fontBodyLarge
                                 clip: true
                                 selectByMouse: true
                                 onTextChanged: page.scheduleSearch()
@@ -239,7 +239,7 @@ Page {
                         Layout.fillWidth: true
                         text: "当前显示 " + page.filteredCount + " / " + page.totalCount + " 条；选中 " + page.selectedRows.length + " 条。"
                         color: AppPalette.mutedText
-                        font.pixelSize: 11
+                        font.pixelSize: AppStyle.fontCaption
                     }
                 }
             }
@@ -256,16 +256,16 @@ Page {
                 id: toolbarContent
                 anchors.fill: parent
                 anchors.margins: 14
-                spacing: 8
+                spacing: AppStyle.spacingSmall
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: AppStyle.spacingInline
 
                     RowLayout {
                         id: primaryActions
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: AppStyle.spacingInline
                         readonly property real actionButtonWidth: Math.max(104, Math.floor((width - spacing * 6) / 7))
 
                         Button {
@@ -273,10 +273,10 @@ Page {
                             Layout.fillWidth: true
                             Layout.preferredWidth: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 76
-                            Layout.preferredHeight: 34
+                            Layout.preferredHeight: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             onClicked: { if (page.gbridge) page.gbridge.load() }
                         }
                         Button {
@@ -284,10 +284,10 @@ Page {
                             Layout.fillWidth: true
                             Layout.preferredWidth: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: 34
+                            Layout.preferredHeight: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             onClicked: {
                                 if (page.gbridge) {
                                     page.gbridge.addRow("Item")
@@ -301,10 +301,10 @@ Page {
                             Layout.fillWidth: true
                             Layout.preferredWidth: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: 34
+                            Layout.preferredHeight: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             enabled: page.selectedRows.length > 0
                             onClicked: {
                                 if (page.selectedRows.length > 0 && page.gbridge) {
@@ -320,10 +320,10 @@ Page {
                             Layout.fillWidth: true
                             Layout.preferredWidth: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: 34
+                            Layout.preferredHeight: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             highlighted: page.dirty
                             enabled: page.dirty
                             onClicked: { if (page.gbridge) page.gbridge.save() }
@@ -333,10 +333,10 @@ Page {
                             Layout.fillWidth: true
                             Layout.preferredWidth: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: 34
+                            Layout.preferredHeight: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             onClicked: importDialog.open()
                         }
                         Button {
@@ -344,10 +344,10 @@ Page {
                             Layout.fillWidth: true
                             Layout.preferredWidth: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 96
-                            Layout.preferredHeight: 34
+                            Layout.preferredHeight: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             onClicked: exportDialog.open()
                         }
                         Button {
@@ -355,10 +355,10 @@ Page {
                             Layout.fillWidth: true
                             Layout.preferredWidth: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: 34
+                            Layout.preferredHeight: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
-                            font.pixelSize: 12
+                            font.pixelSize: AppStyle.fontSmall
                             onClicked: restoreDialog.open()
                         }
                     }
@@ -366,7 +366,7 @@ Page {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: AppStyle.spacingSmall
 
                     CheckBox {
                         text: "启用术语表"
@@ -394,11 +394,11 @@ Page {
 
             ColumnLayout {
                 anchors.fill: parent
-                spacing: 0
+                spacing: AppStyle.spacingNone
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 0
+                    spacing: AppStyle.spacingNone
                     TableHeader { w: 56; text: "选择"; first: true }
                     TableHeader { w: 104; text: "分类" }
                     TableHeader { w: 240; text: "原文" }
@@ -412,7 +412,7 @@ Page {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: 2
+                    spacing: AppStyle.spacingTight
                     model: page.gbridge ? page.gbridge.model : null
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -422,14 +422,14 @@ Page {
                         height: 46
                         property bool isSelected: page.selectedRows.indexOf(index) >= 0
                         color: isSelected
-                               ? (AppPalette.dark ? "#31463f" : "#d7ece5")
+                               ? AppStyle.statusAccentBg
                                : (index % 2 === 0 ? AppPalette.surfaceRaised : AppPalette.cardBg)
                         border.color: isSelected ? AppPalette.amberColor : AppPalette.lineColor
                         border.width: isSelected ? 2 : 1
 
                         RowLayout {
                             anchors.fill: parent
-                            spacing: 0
+                            spacing: AppStyle.spacingNone
 
                             Rectangle {
                                 Layout.preferredWidth: 56
@@ -448,7 +448,7 @@ Page {
                                         text: "✓"
                                         visible: rowDelegate.isSelected
                                         color: "white"
-                                        font.pixelSize: 13
+                                        font.pixelSize: AppStyle.fontBody
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -505,13 +505,13 @@ Page {
                         ColumnLayout {
                             anchors.centerIn: parent
                             width: parent.width - 36
-                            spacing: 8
+                            spacing: AppStyle.spacingSmall
                             Label {
                                 Layout.fillWidth: true
                                 horizontalAlignment: Text.AlignHCenter
                                 text: page.totalCount > 0 ? "没有匹配的术语" : "术语表为空"
                                 color: AppPalette.textColor
-                                font.pixelSize: 17
+                                font.pixelSize: AppStyle.fontSection
                                 font.weight: Font.DemiBold
                             }
                             Label {
@@ -522,7 +522,7 @@ Page {
                                       ? "请调整搜索关键词、分类或来源筛选。"
                                       : "可以新增术语，或通过“增量导入 JSON”导入已有术语表。"
                                 color: AppPalette.mutedText
-                                font.pixelSize: 12
+                                font.pixelSize: AppStyle.fontSmall
                             }
                         }
                     }
@@ -607,18 +607,18 @@ Page {
             anchors.rightMargin: 14
             anchors.topMargin: 22
             anchors.bottomMargin: 10
-            spacing: 2
+            spacing: AppStyle.spacingTight
             Label {
                 Layout.fillWidth: true
                 text: title
                 color: AppPalette.mutedText
-                font.pixelSize: 11
+                font.pixelSize: AppStyle.fontCaption
             }
             Label {
                 Layout.fillWidth: true
                 text: value !== undefined ? value.toString() : "0"
                 color: parent.parent.toneColor
-                font.pixelSize: 20
+                font.pixelSize: AppStyle.fontMetric
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
@@ -639,7 +639,7 @@ Page {
             anchors.centerIn: parent
             text: parent.text
             color: "white"
-            font.pixelSize: 12
+            font.pixelSize: AppStyle.fontSmall
             font.weight: Font.DemiBold
         }
     }
@@ -664,7 +664,7 @@ Page {
             anchors.rightMargin: 10
             verticalAlignment: Text.AlignVCenter
             text: cell.value
-            font.pixelSize: 13
+            font.pixelSize: AppStyle.fontBody
             clip: true
             selectByMouse: true
             readOnly: !cell.editable
@@ -697,7 +697,7 @@ Page {
             enabled: policyCell.editable
             model: ["默认策略", "强制使用", "仅供参考", "上下文命中", "保留原文", "忽略校对"]
             currentIndex: Math.max(0, model.indexOf(policyCell.value))
-            font.pixelSize: 12
+            font.pixelSize: AppStyle.fontSmall
             onActivated: function(index) {
                 policyCell.commit(model[index])
             }

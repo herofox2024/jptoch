@@ -8,7 +8,7 @@ import "../components"
 
 Page {
     id: page
-    padding: 24
+    padding: AppStyle.pagePadding
     background: Item {}
 
     property var cfg: null
@@ -352,37 +352,37 @@ Page {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 16
+        spacing: AppStyle.spacingXXLarge
 
         RowLayout {
             Layout.fillWidth: true
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: AppStyle.spacingTight
                 Label {
                     text: "状态监控"
                     color: AppPalette.textColor
                     font.family: page.titleFont
-                    font.pixelSize: 28
+                    font.pixelSize: AppStyle.fontPageTitle
                     font.weight: Font.DemiBold
                 }
                 Label {
                     text: "集中查看进度、速度、实时译文、校对记录和错误诊断。"
                     color: AppPalette.mutedText
-                    font.pixelSize: 13
+                    font.pixelSize: AppStyle.fontBody
                 }
             }
             Rectangle {
                 Layout.preferredWidth: 112
-                Layout.preferredHeight: 34
+                Layout.preferredHeight: AppStyle.buttonHeightSmall
                 radius: 17
-                color: page.isBusy() ? AppPalette.accentSoft : AppPalette.cardAlt
+                color: page.isBusy() ? AppStyle.statusAccentBg : AppStyle.statusNeutralBg
                 border.color: AppPalette.borderColor
                 Label {
                     anchors.centerIn: parent
                     text: page.isBusy() ? "运行中" : "空闲"
                     color: page.isBusy() ? AppPalette.accentColor : AppPalette.mutedText
-                    font.pixelSize: 12
+                    font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
                 }
             }
@@ -398,30 +398,30 @@ Page {
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 20
-                spacing: 20
+                spacing: AppStyle.spacingTight0
 
                 ColumnLayout {
                     Layout.preferredWidth: 210
                     Layout.fillHeight: true
-                    spacing: 8
+                    spacing: AppStyle.spacingSmall
 
                     Label {
                         text: "翻译进度"
                         color: AppPalette.mutedText
-                        font.pixelSize: 12
+                        font.pixelSize: AppStyle.fontSmall
                         font.weight: Font.DemiBold
                     }
                     Label {
                         text: page.progressPercentText()
                         color: AppPalette.accentColor
-                        font.pixelSize: 46
+                        font.pixelSize: AppStyle.fontHero
                         font.weight: Font.DemiBold
                     }
                     Label {
                         Layout.fillWidth: true
                         text: page.isBusy() ? "正在处理文本块" : "等待任务或已结束"
                         color: AppPalette.mutedText
-                        font.pixelSize: 12
+                        font.pixelSize: AppStyle.fontSmall
                         elide: Text.ElideRight
                     }
                 }
@@ -435,7 +435,7 @@ Page {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    spacing: 10
+                    spacing: AppStyle.spacingMedium
 
                     GridLayout {
                         Layout.fillWidth: true
@@ -462,7 +462,7 @@ Page {
                         text: "状态: " + page.statStatus
                         color: AppPalette.mutedText
                         elide: Text.ElideRight
-                        font.pixelSize: 12
+                        font.pixelSize: AppStyle.fontSmall
                     }
 
                     Rectangle {
@@ -476,7 +476,7 @@ Page {
                         RowLayout {
                             anchors.fill: parent
                             anchors.margins: 12
-                            spacing: 12
+                            spacing: AppStyle.spacingLarge
 
                             Rectangle {
                                 Layout.preferredWidth: 4
@@ -488,22 +488,22 @@ Page {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                spacing: 3
+                                spacing: AppStyle.spacingNarrow
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 8
+                                    spacing: AppStyle.spacingSmall
                                     Label {
                                         text: "Prompt 风格识别结果"
                                         color: AppPalette.mutedText
-                                        font.pixelSize: 11
+                                        font.pixelSize: AppStyle.fontCaption
                                         font.weight: Font.DemiBold
                                     }
                                     Label {
                                         Layout.fillWidth: true
                                         text: page.promptStyleMetaText()
                                         color: AppPalette.amberColor
-                                        font.pixelSize: 11
+                                        font.pixelSize: AppStyle.fontCaption
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -512,7 +512,7 @@ Page {
                                     Layout.fillWidth: true
                                     text: page.proofreadStyleText
                                     color: AppPalette.textColor
-                                    font.pixelSize: 15
+                                    font.pixelSize: AppStyle.fontBodyXLarge
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
                                 }
@@ -521,7 +521,7 @@ Page {
                                     Layout.fillWidth: true
                                     text: page.promptStyleReasonText()
                                     color: AppPalette.mutedText
-                                    font.pixelSize: 11
+                                    font.pixelSize: AppStyle.fontCaption
                                     wrapMode: Text.WordWrap
                                     maximumLineCount: 2
                                     elide: Text.ElideRight
@@ -570,7 +570,7 @@ Page {
                     ColumnLayout {
                         id: overviewGrid
                         width: parent.availableWidth
-                        spacing: 8
+                        spacing: AppStyle.spacingSmall
                         readonly property real gap: 8
                         readonly property real itemWidth: Math.max(112, Math.floor((width - gap * 7) / 8))
 
@@ -620,21 +620,21 @@ Page {
 
                     ColumnLayout {
                         width: parent.availableWidth
-                        spacing: 12
+                        spacing: AppStyle.spacingLarge
 
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: Math.max(96, qualitySummaryColumn.implicitHeight + 28)
                             radius: AppPalette.radiusMedium
                             color: page.qualityReportAvailable
-                                   ? (page.qualityReportStatus === "通过" ? AppPalette.accentSoft : (AppPalette.dark ? "#3b2d1c" : "#f2e4cf"))
-                                   : AppPalette.cardAlt
+                                   ? (page.qualityReportStatus === "通过" ? AppStyle.statusAccentBg : AppStyle.statusWarningBg)
+                                   : AppStyle.statusNeutralBg
                             border.color: page.qualityReportStatus === "通过" ? AppPalette.accentColor : (page.qualityReportAvailable ? AppPalette.amberColor : AppPalette.lineColor)
 
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.margins: 14
-                                spacing: 12
+                                spacing: AppStyle.spacingLarge
 
                                 Rectangle {
                                     Layout.preferredWidth: 4
@@ -646,12 +646,12 @@ Page {
                                 ColumnLayout {
                                     id: qualitySummaryColumn
                                     Layout.fillWidth: true
-                                    spacing: 5
+                                    spacing: AppStyle.spacingChip
 
                                     Label {
                                         text: "本次质量自检"
                                         color: AppPalette.textColor
-                                        font.pixelSize: 17
+                                        font.pixelSize: AppStyle.fontSection
                                         font.weight: Font.DemiBold
                                     }
                                     Label {
@@ -659,13 +659,13 @@ Page {
                                         text: page.qualityReportSummary
                                         color: AppPalette.textColor
                                         wrapMode: Text.WordWrap
-                                        font.pixelSize: 13
+                                        font.pixelSize: AppStyle.fontBody
                                     }
                                     Label {
                                         Layout.fillWidth: true
                                         text: page.qualityReportGeneratedAt ? ("生成时间：" + page.qualityReportGeneratedAt) : "等待翻译完成后生成"
                                         color: AppPalette.mutedText
-                                        font.pixelSize: 11
+                                        font.pixelSize: AppStyle.fontCaption
                                     }
                                 }
 
@@ -703,7 +703,7 @@ Page {
                 RowLayout {
                     anchors.fill: parent
                     anchors.margins: 16
-                    spacing: 12
+                    spacing: AppStyle.spacingLarge
 
                     RealtimeTextPanel {
                         id: rtSrc
@@ -730,7 +730,7 @@ Page {
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 16
-                    spacing: 12
+                    spacing: AppStyle.spacingLarge
 
                     Rectangle {
                         Layout.fillWidth: true
@@ -743,16 +743,16 @@ Page {
                         RowLayout {
                             anchors.fill: parent
                             anchors.margins: 14
-                            spacing: 12
+                            spacing: AppStyle.spacingLarge
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 3
+                                spacing: AppStyle.spacingNarrow
                                 Label {
                                     id: proofreadHeaderTitle
                                     text: "质检报告时间线"
                                     color: AppPalette.textColor
-                                    font.pixelSize: 16
+                                    font.pixelSize: AppStyle.fontSubSection
                                     font.weight: Font.DemiBold
                                 }
                                 Label {
@@ -760,7 +760,7 @@ Page {
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
                                     color: AppPalette.mutedText
-                                    font.pixelSize: 12
+                                    font.pixelSize: AppStyle.fontSmall
                                     text: cfg && cfg.enableProofread
                                           ? (proofreadModel.count > 0
                                              ? "已记录 " + proofreadModel.count + " 条可疑译文。仅在检测到日文残留、术语不一致等问题时生成报告。"
@@ -771,7 +771,7 @@ Page {
 
                             Rectangle {
                                 Layout.preferredWidth: 92
-                                Layout.preferredHeight: 34
+                                Layout.preferredHeight: AppStyle.buttonHeightSmall
                                 Layout.alignment: Qt.AlignVCenter
                                 radius: 17
                                 color: AppPalette.accentSoft
@@ -780,7 +780,7 @@ Page {
                                     anchors.centerIn: parent
                                     text: proofreadModel.count + " 条"
                                     color: AppPalette.accentColor
-                                    font.pixelSize: 12
+                                    font.pixelSize: AppStyle.fontSmall
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -803,7 +803,7 @@ Page {
                             anchors.fill: parent
                             visible: proofreadModel.count > 0
                             clip: true
-                            spacing: 10
+                            spacing: AppStyle.spacingMedium
                             model: proofreadModel
                             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -861,27 +861,27 @@ Page {
                                         anchors.right: parent.right
                                         anchors.top: parent.top
                                         anchors.margins: 12
-                                        spacing: 10
+                                        spacing: AppStyle.spacingMedium
 
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            spacing: 10
+                                            spacing: AppStyle.spacingMedium
 
                                             ColumnLayout {
                                                 Layout.fillWidth: true
-                                                spacing: 2
+                                                spacing: AppStyle.spacingTight
                                                 Label {
                                                     Layout.fillWidth: true
                                                     text: indexText + "  译后质检"
                                                     color: AppPalette.textColor
-                                                    font.pixelSize: 14
+                                                    font.pixelSize: AppStyle.fontBodyLarge
                                                     font.weight: Font.DemiBold
                                                 }
                                                 Label {
                                                     Layout.fillWidth: true
                                                     text: timeText + "  ·  " + reason
                                                     color: AppPalette.mutedText
-                                                    font.pixelSize: 11
+                                                    font.pixelSize: AppStyle.fontCaption
                                                     elide: Text.ElideRight
                                                 }
                                             }
@@ -895,7 +895,7 @@ Page {
                                         Flow {
                                             Layout.fillWidth: true
                                             width: parent.width
-                                            spacing: 8
+                                            spacing: AppStyle.spacingSmall
                                             IssueChip { title: "日文残留: " + japaneseResidue; tone: japaneseResidue === "是" ? "error" : "neutral" }
                                             IssueChip { title: "术语不一致: " + glossaryMismatch; tone: glossaryMismatch === "是" ? "amber" : "neutral" }
                                         }
@@ -905,7 +905,7 @@ Page {
                                             text: changedHint
                                             wrapMode: Text.WordWrap
                                             color: changed === "有变化" ? AppPalette.amberColor : AppPalette.mutedText
-                                            font.pixelSize: 12
+                                            font.pixelSize: AppStyle.fontSmall
                                         }
 
                                         ReportField {
@@ -929,7 +929,7 @@ Page {
 
                                         RowLayout {
                                             Layout.alignment: Qt.AlignRight
-                                            spacing: 8
+                                            spacing: AppStyle.spacingSmall
                                             Button {
                                                 text: "\u67e5\u770b\u5b8c\u6574\u8be6\u60c5"
                                                 onClicked: page.openProofreadDetail(indexText, timeText, reason, japaneseResidue, glossaryMismatch, changed, changedHint, original, draft, revised)
@@ -963,14 +963,14 @@ Page {
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 16
-                    spacing: 10
+                    spacing: AppStyle.spacingMedium
                     TextArea {
                         id: diagText
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         readOnly: true
                         placeholderText: "暂无错误"
-                        font.pixelSize: 12
+                        font.pixelSize: AppStyle.fontSmall
                         color: AppPalette.textColor
                         background: Rectangle {
                             radius: AppPalette.radiusMedium

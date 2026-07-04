@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".."
 
 ScrollView {
     id: root
@@ -14,6 +15,6 @@ ScrollView {
     ColumnLayout {
         id: paneColumn
         width: Math.max(0, root.availableWidth)
-        spacing: 14
+        spacing: AppStyle.spacingXLarge
     }
 }
