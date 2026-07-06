@@ -681,3 +681,12 @@ dist/EPUBTranslatorQt.exe
 5. 状态监控：实时原文/译文、错误详情、清空统计按钮可用。  
 6. 术语功能：导入 JSON 增量合并成功，冲突与备份提示正确。  
 7. 诊断包：导出 ZIP，包含脱敏配置、日志文件、glossary（若存在）。
+## Star History
+
+<a href="https://www.star-history.com/?repos=herofox2024%2Fjptoch&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=herofox2024/jptoch&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=herofox2024/jptoch&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=herofox2024/jptoch&type=date&legend=bottom-right" />
+ </picture>
+</a>
