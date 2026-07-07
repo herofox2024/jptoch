@@ -362,220 +362,31 @@ Page {
             }
         }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: taskPage.width > 900 ? 298 : 372
-            radius: AppPalette.radiusLarge
-            color: AppPalette.glass ? Qt.rgba(1, 1, 1, 0.48) : AppPalette.surfaceRaised
-            border.color: AppPalette.borderColor
-            clip: true
+        TaskControlPanel {
+            readyToStart: taskPage.readyToStart
+            busy: taskPage.busy
+            viewportWidth: taskPage.width
+            modelSummary: taskPage.modelSummary()
+            maxWorkers: cfg ? cfg.maxWorkers : 0
+            batchSize: cfg ? cfg.batchSize : 0
+            maxTextSizeForBatch: cfg ? cfg.maxTextSizeForBatch : 0
 
-            Rectangle {
-                width: 260
-                height: 260
-                radius: 130
-                anchors.right: parent.right
-                anchors.rightMargin: -96
-                anchors.top: parent.top
-                anchors.topMargin: -112
-                color: AppPalette.accentSoft
-                opacity: 0.45
-            }
-
-            Rectangle {
-                width: 170
-                height: 170
-                radius: 85
-                anchors.left: parent.left
-                anchors.leftMargin: -70
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: -88
-                color: AppPalette.glass ? AppPalette.glassGlowAmber : AppPalette.backgroundAlt
-                opacity: 0.36
-            }
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 18
-                spacing: AppStyle.spacingMedium
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingMedium
-                    Label {
-                        Layout.fillWidth: true
-                        text: "准备翻译"
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontSubHeader
-                        font.weight: Font.DemiBold
-                    }
-                    Rectangle {
-                        Layout.preferredWidth: 86
-                        Layout.preferredHeight: 24
-                        radius: 12
-                        color: taskPage.readyToStart ? AppPalette.cardBg : AppStyle.statusNeutralBg
-                        border.color: AppPalette.lineColor
-                        Label {
-                            anchors.centerIn: parent
-                            text: taskPage.readyToStart ? "可开始" : "待选择"
-                            color: taskPage.readyToStart ? AppPalette.successColor : AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontCaption
-                            font.weight: Font.DemiBold
-                        }
-                    }
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: taskPage.width > 900 ? 150 : 224
-                    spacing: AppStyle.spacingSmall
-
-                    TaskActionButton {
-                        id: startBtn
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: AppStyle.buttonHeightPrimary
-                        primary: true
-                        label: taskPage.busy ? "翻译中..." : "开始翻译"
-                        hint: taskPage.readyToStart ? "使用当前模型与参数启动任务" : "请先选择源文件和输出文件"
-                        enabled: taskPage.readyToStart && !taskPage.busy
-                        onClicked: {
-                            if (taskPage.tbridge) {
-                                taskPage.tbridge.startTranslation(cfg)
-                                taskPage.navigateToStatus()
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: AppStyle.spacingLarge
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: taskPage.width > 900 ? 5 : (taskPage.width > 600 ? 3 : 2)
-                            columnSpacing: 10
-                            rowSpacing: 10
-
-                            TaskActionButton {
-                                id: pauseBtn
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: AppStyle.buttonHeightNormal
-                                label: "暂停"
-                                hint: "保留已写入缓存"
-                                enabled: taskPage.busy
-                                onClicked: { if (taskPage.tbridge) taskPage.tbridge.pauseTranslation() }
-                            }
-
-                            TaskActionButton {
-                                id: resumeBtn
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: AppStyle.buttonHeightNormal
-                                label: "恢复"
-                                hint: "继续断点任务"
-                                enabled: taskPage.readyToStart && !taskPage.busy
-                                onClicked: {
-                                    if (taskPage.tbridge) {
-                                        taskPage.tbridge.resumeTranslation(cfg)
-                                        taskPage.navigateToStatus()
-                                    }
-                                }
-                            }
-
-                            TaskActionButton {
-                                id: stopBtn
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: AppStyle.buttonHeightNormal
-                                label: "停止"
-                                hint: "取消并清空本次缓存"
-                                danger: true
-                                enabled: taskPage.busy
-                                onClicked: {
-                                    if (taskPage.tbridge) {
-                                        taskPage.tbridge.stopTranslation()
-                                    }
-                                }
-                            }
-
-                            TaskActionButton {
-                                id: clearCacheBtn
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: AppStyle.buttonHeightNormal
-                                label: "清缓存"
-                                hint: "重新翻译当前书"
-                                enabled: taskPage.readyToStart && !taskPage.busy
-                                onClicked: clearCacheDialog.open()
-                            }
-
-                            TaskActionButton {
-                                id: manualEditBtn
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: AppStyle.buttonHeightNormal
-                                label: "人工修改"
-                                hint: "编辑单条译文"
-                                enabled: !taskPage.busy
-                                onClicked: manualEditDialog.open()
-                            }
-                        }
-                    }
-
-                    Flow {
-                        Layout.fillWidth: true
-                        spacing: AppStyle.spacingCompact
-                        SummaryChip { title: "模型"; value: taskPage.modelSummary() }
-                        SummaryChip { title: "并发"; value: taskPage.valueOrDash(cfg ? cfg.maxWorkers : "") }
-                        SummaryChip { title: "批量"; value: taskPage.valueOrDash(cfg ? cfg.batchSize : "") }
-                        SummaryChip { title: "单条上限"; value: taskPage.valueOrDash(cfg ? cfg.maxTextSizeForBatch : "") }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: AppStyle.infoBarHeight
-                    Layout.bottomMargin: 2
-                    radius: 22
-                    color: AppPalette.fieldBg
-                    border.color: AppPalette.lineColor
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 10
-                        anchors.topMargin: 6
-                        anchors.bottomMargin: 6
-                        spacing: AppStyle.spacingMedium
-                        Rectangle {
-                            Layout.preferredWidth: 8
-                            Layout.preferredHeight: 8
-                            radius: 4
-                            color: taskPage.readyToStart ? AppPalette.successColor : AppPalette.amberColor
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: "暂停会保留已写入缓存的内容，切换模型后点“恢复”可续译；停止会取消任务并清空本次已翻译缓存。"
-                            color: AppPalette.mutedText
-                            wrapMode: Text.NoWrap
-                            font.pixelSize: AppStyle.fontSmall
-                            maximumLineCount: 1
-                            elide: Text.ElideRight
-                        }
-                        Rectangle {
-                            visible: taskPage.width > 880
-                            Layout.preferredWidth: 104
-                            Layout.preferredHeight: AppStyle.buttonHeightCompact
-                            radius: 14
-                            color: taskPage.readyToStart ? AppPalette.accentSoft : AppStyle.statusNeutralBg
-                            border.color: AppPalette.lineColor
-                            Label {
-                                anchors.centerIn: parent
-                                text: taskPage.readyToStart ? "工作台已就绪" : "等待文件"
-                                color: taskPage.readyToStart ? AppPalette.successColor : AppPalette.mutedText
-                                font.pixelSize: AppStyle.fontSmall
-                                font.weight: Font.DemiBold
-                            }
-                        }
-                    }
+            onStartRequested: {
+                if (taskPage.tbridge) {
+                    taskPage.tbridge.startTranslation(cfg)
+                    taskPage.navigateToStatus()
                 }
             }
+            onPauseRequested: { if (taskPage.tbridge) taskPage.tbridge.pauseTranslation() }
+            onResumeRequested: {
+                if (taskPage.tbridge) {
+                    taskPage.tbridge.resumeTranslation(cfg)
+                    taskPage.navigateToStatus()
+                }
+            }
+            onStopRequested: { if (taskPage.tbridge) taskPage.tbridge.stopTranslation() }
+            onClearCacheRequested: clearCacheDialog.open()
+            onManualEditRequested: manualEditDialog.open()
         }
 
         Label {
@@ -692,11 +503,6 @@ Page {
     function compactEstimateText(text) {
         if (!text || text === "预估字符: -") return "预估: -"
         return text.replace("预估字符:", "预估:")
-    }
-
-    function valueOrDash(value) {
-        if (value === undefined || value === null || value === "") return "-"
-        return value.toString()
     }
 
     function modelSummary() {

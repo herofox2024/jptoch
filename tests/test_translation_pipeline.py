@@ -9,12 +9,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
+import requests
+import translation_quality as tq
 from bs4 import BeautifulSoup
 from ebooklib import ITEM_DOCUMENT, epub
 
 from epub_io import (
     _fix_toc_uids,
     add_translation_notice_page,
+    apply_toc_translations,
     extract_toc_titles,
     extract_visible_text,
     iter_text_nodes,
@@ -26,13 +29,22 @@ from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError
 from glossary_store import rebuild_glossary_index
 from provider_registry import normalize_api_url, provider_default_model, provider_default_url
+from provider_client import apply_payload_options, is_content_moderation_http_error
 from quality_rules import is_suspicious_translation_pair
+from translation_cache import atomic_write_json, load_json_file
 from experimental.qml_v4.backend.diagnostics import build_redacted_config_snapshot
 from experimental.qml_v4.backend.book_translation_service import (
     apply_translations_to_book,
     build_book_text_plan,
+    build_toc_translation_map,
     scan_japanese_residue_in_docs,
 )
+from experimental.qml_v4.backend.pipeline import (
+    PipelineContext,
+    StyleDetectStage,
+    TranslationPipeline,
+)
+from style_detector import StyleDetectionResult
 
 
 @contextmanager
@@ -124,6 +136,119 @@ class DummyTranslator(JaZhTranslator):
 
     def _save_cache(self, force: bool = False):
         return
+
+
+class ExtractedModuleTests(unittest.TestCase):
+    def test_translation_quality_module_matches_translator_entrypoints(self):
+        text = "\u9003\u3052\u308b"
+        self.assertEqual(tq.has_blocking_japanese_residue(text), JaZhTranslator.has_blocking_japanese_residue(text))
+        self.assertEqual(tq.is_incomplete_translation(text, text), JaZhTranslator._is_incomplete_translation(text, text))
+        self.assertEqual(tq.extract_japanese_residue_fragments(text), JaZhTranslator.japanese_residue_fragments(text))
+
+    def test_provider_client_detects_moderation_and_applies_payload_options(self):
+        payload = {}
+        apply_payload_options(payload, "longcat", enable_thinking=False)
+        self.assertEqual(payload.get("thinking"), {"type": "disabled"})
+
+        response = requests.Response()
+        response.status_code = 400
+        response._content = b'{"error":{"code":"security_audit_fail"}}'
+        error = requests.exceptions.HTTPError(response=response)
+        self.assertTrue(is_content_moderation_http_error(error))
+
+    def test_translation_cache_json_helpers_roundtrip(self):
+        with temp_test_dir() as tmp:
+            path = Path(tmp) / "cache.json"
+            atomic_write_json(path, {"hello": "world"})
+            self.assertEqual(load_json_file(path, {}), {"hello": "world"})
+            self.assertEqual(load_json_file(Path(tmp) / "missing.json", {"fallback": True}), {"fallback": True})
+
+
+class RealEpubFixtureTests(unittest.TestCase):
+    FIXTURE = Path(__file__).resolve().parent / "fixtures" / "real_japanese_fixture.epub"
+
+    def test_real_epub_fixture_translates_saves_and_reloads(self):
+        book = load_book(str(self.FIXTURE), try_repair=False)
+        docs = list(iter_text_nodes(book))
+        toc_titles = extract_toc_titles(book)
+        plan = build_book_text_plan(docs, toc_titles)
+
+        self.assertIn("\u543e\u8f29\u306f\u732b\u3067\u3042\u308b\u3002", plan.all_texts)
+        self.assertIn("\u540d\u524d\u306f\u307e\u3060\u7121\u3044\u3002", plan.all_texts)
+        self.assertIn("\u7b2c\u4e00\u7ae0 \u732b\u306e\u63a8\u7406", plan.all_texts)
+
+        translations = {
+            "\u5b9f\u4f8bEPUB\u30c6\u30b9\u30c8": "\u5b9e\u4f8b EPUB \u6d4b\u8bd5",
+            "\u7b2c\u4e00\u7ae0 \u732b\u306e\u63a8\u7406": "\u7b2c\u4e00\u7ae0 \u732b\u7684\u63a8\u7406",
+            "\u543e\u8f29\u306f\u732b\u3067\u3042\u308b\u3002": "\u6211\u662f\u4e00\u53ea\u732b\u3002",
+            "\u540d\u524d\u306f\u307e\u3060\u7121\u3044\u3002": "\u8fd8\u6ca1\u6709\u540d\u5b57\u3002",
+        }
+        ordered_results = [translations.get(text) for text in plan.all_texts]
+
+        apply_translations_to_book(
+            plan,
+            translations,
+            ordered_results,
+            lambda value: value,
+            lambda _value: False,
+        )
+        for item, soup, _ in docs:
+            item.set_content(str(soup).encode("utf-8"))
+
+        toc_translations = build_toc_translation_map(
+            plan,
+            translations,
+            ordered_results,
+            lambda value: value,
+            lambda _value: False,
+        )
+        apply_toc_translations(book, toc_translations)
+        book.set_title(translations["\u5b9f\u4f8bEPUB\u30c6\u30b9\u30c8"])
+        add_translation_notice_page(book, "\u672c\u4e66\u7531 AI \u65e5\u8bd1\u4e2d\u6d4b\u8bd5\u6d41\u7a0b\u751f\u6210\u3002")
+
+        with temp_test_dir() as tmp:
+            out_path = Path(tmp) / "translated-fixture.epub"
+            save_book(str(out_path), book, chinese_mode=True)
+            self.assertGreater(out_path.stat().st_size, 0)
+            reloaded = load_book(str(out_path), try_repair=False)
+
+        reloaded_docs = list(iter_text_nodes(reloaded))
+        visible_text = "\n".join(
+            extract_visible_text(tag)
+            for _, _, tags in reloaded_docs
+            for tag in tags
+        )
+        self.assertIn("\u6211\u662f\u4e00\u53ea\u732b\u3002", visible_text)
+        self.assertIn("\u8fd8\u6ca1\u6709\u540d\u5b57\u3002", visible_text)
+        self.assertIn("\u672c\u4e66\u7531 AI \u65e5\u8bd1\u4e2d\u6d4b\u8bd5\u6d41\u7a0b\u751f\u6210\u3002", visible_text)
+        self.assertIn("\u7b2c\u4e00\u7ae0 \u732b\u7684\u63a8\u7406", extract_toc_titles(reloaded))
+        self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(visible_text))
+
+
+class PipelineTests(unittest.TestCase):
+    def test_style_detect_stage_uses_extra_title_and_resolves_manual_style(self):
+        detected = StyleDetectionResult(genre="general", tone="neutral", confidence=42, reason="fixture")
+        ctx = PipelineContext(
+            config={"proofread_genre": "mystery", "proofread_tone": "light"},
+            texts=["sample"],
+            extra={"title": "fixture-title.epub", "toc_titles": ["Chapter 1"]},
+        )
+
+        with mock.patch("style_detector.detect_novel_style", return_value=detected) as detect_mock:
+            out = TranslationPipeline().add_stage(StyleDetectStage()).run(ctx)
+
+        detect_mock.assert_called_once()
+        self.assertEqual(detect_mock.call_args.kwargs["title"], "fixture-title.epub")
+        self.assertEqual(out.detected_style, detected)
+        self.assertEqual(out.proofread_style.genre, "mystery")
+        self.assertEqual(out.proofread_style.tone, "light")
+        self.assertEqual(out.proofread_style.confidence, 100)
+
+    def test_pipeline_skips_disabled_stages(self):
+        ctx = PipelineContext(config={}, texts=["sample"], extra={"title": "unused"})
+        out = TranslationPipeline().add_stage(StyleDetectStage(enabled=False)).run(ctx)
+        self.assertIs(out, ctx)
+        self.assertIsNone(out.proofread_style)
 
 
 class TranslatorTests(unittest.TestCase):

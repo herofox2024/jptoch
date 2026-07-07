@@ -262,18 +262,17 @@ Page {
                     Layout.fillWidth: true
                     spacing: AppStyle.spacingInline
 
-                    RowLayout {
+                    Flow {
                         id: primaryActions
                         Layout.fillWidth: true
-                        spacing: AppStyle.spacingInline
-                        readonly property real actionButtonWidth: Math.max(104, Math.floor((width - spacing * 6) / 7))
+                        spacing: AppStyle.spacingSmall
+                        readonly property real actionButtonWidth: Math.max(112, Math.min(150, Math.floor((width - spacing * 3) / 4)))
 
                         Button {
                             text: "刷新"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 76
-                            Layout.preferredHeight: AppStyle.buttonHeightSmall
+                            height: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall
@@ -281,10 +280,9 @@ Page {
                         }
                         Button {
                             text: "新增术语"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: AppStyle.buttonHeightSmall
+                            height: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall
@@ -298,10 +296,9 @@ Page {
                         }
                         Button {
                             text: "删除选中"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: AppStyle.buttonHeightSmall
+                            height: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall
@@ -317,10 +314,9 @@ Page {
                         }
                         Button {
                             text: "保存修改"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: AppStyle.buttonHeightSmall
+                            height: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall
@@ -330,10 +326,9 @@ Page {
                         }
                         Button {
                             text: "增量导入"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: AppStyle.buttonHeightSmall
+                            height: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall
@@ -341,10 +336,9 @@ Page {
                         }
                         Button {
                             text: "导出/备份"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 96
-                            Layout.preferredHeight: AppStyle.buttonHeightSmall
+                            height: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall
@@ -352,10 +346,9 @@ Page {
                         }
                         Button {
                             text: "恢复备份"
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: primaryActions.actionButtonWidth
+                            width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
-                            Layout.preferredHeight: AppStyle.buttonHeightSmall
+                            height: AppStyle.buttonHeightSmall
                             leftPadding: 6
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall

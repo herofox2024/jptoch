@@ -537,7 +537,7 @@ Page {
                         TextArea {
                             id: promptExtraArea
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 112
+                            Layout.preferredHeight: 96
                             text: cfg ? cfg.promptExtraInstruction : ""
                             placeholderText: "例如：历史捕物小说请保留时代称谓，不要改成现代网络口吻。"
                             wrapMode: TextEdit.WordWrap
@@ -595,7 +595,7 @@ Page {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: AppStyle.buttonHeightCompact0
+                            Layout.preferredHeight: 220
                             radius: AppPalette.radiusMedium
                             color: AppPalette.cardAlt
                             border.color: AppPalette.lineColor

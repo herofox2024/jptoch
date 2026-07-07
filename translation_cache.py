@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Cache key helpers for model-scoped and cross-model translation caches."""
+"""Cache helpers for model-scoped and cross-model translation caches."""
 
 import hashlib
+import json
+import os
 import re
-from typing import Optional, Tuple
+import uuid
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Union
 
 SHA256_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -55,3 +59,32 @@ def parse_model_cache_key(key: str) -> Tuple[str, Optional[str], Optional[str]]:
         if SHA256_DIGEST_RE.fullmatch(text_digest):
             return "text", text_digest, None
     return "", None, None
+
+
+def load_json_file(path: Union[str, Path], default: Any) -> Any:
+    """Load a JSON file, returning *default* when it is missing or invalid."""
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return default
+
+
+def atomic_write_json(path: Union[str, Path], payload: Dict[str, Any]) -> None:
+    """Atomically write JSON so interrupted saves do not corrupt cache files."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_name = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(tmp_name, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_name, str(target))
+    except Exception:
+        try:
+            if os.path.exists(tmp_name):
+                os.remove(tmp_name)
+        except OSError:
+            pass
+        raise

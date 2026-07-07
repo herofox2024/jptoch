@@ -12,10 +12,12 @@ Rectangle {
     property real cardWidth: 112
     property real viewportWidth: 800
 
+    width: cardWidth
+    height: viewportWidth > 760 ? 76 : 70
     Layout.fillWidth: true
     Layout.preferredWidth: cardWidth
     Layout.minimumWidth: 96
-    Layout.preferredHeight: viewportWidth > 760 ? 76 : 70
+    Layout.preferredHeight: height
     radius: AppPalette.radiusMedium
     color: AppPalette.surfaceRaised
     border.color: AppPalette.lineColor

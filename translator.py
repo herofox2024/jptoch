@@ -7,7 +7,6 @@ import hashlib
 import sys
 import threading
 import time
-import uuid
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
+import translation_quality as tq
 from glossary_store import normalize_glossary_payload as gs_normalize_glossary_payload
 from glossary_store import merge_glossaries as gs_merge_glossaries
 from glossary_store import clean_new_terms as gs_clean_new_terms
@@ -32,11 +32,21 @@ from provider_registry import (
     provider_default_url,
     provider_env_api_key,
 )
+from provider_client import (
+    CONTENT_MODERATION_SNIPPETS,
+    apply_payload_options,
+    create_session,
+    is_auth_http_error,
+    is_content_moderation_http_error,
+    response_snippet,
+)
 from quality_rules import is_suspicious_translation_pair
 from style_detector import GENRE_LABELS, TONE_LABELS
 from translation_cache import (
+    atomic_write_json as tc_atomic_write_json,
     cache_digest as tc_cache_digest,
     context_cache_key as tc_context_cache_key,
+    load_json_file as tc_load_json_file,
     model_cache_key as tc_model_cache_key,
     parse_model_cache_key as tc_parse_model_cache_key,
     text_cache_key as tc_text_cache_key,
@@ -250,6 +260,9 @@ def get_data_dir() -> Path:
     return data_dir
 
 
+tq.configure_data_dir(get_data_dir)
+
+
 # 内置提示词模板（打包 exe 时项目 dict/ 不可用，自动释放到用户目录）
 _BUILTIN_TEMPLATES = {
     "glossary_extraction_prompt.yaml": """\
@@ -453,42 +466,26 @@ class JaZhTranslator:
     API_TIMEOUT = 120  # API 请求超时时间（秒）
     MAX_RETRIES = 3  # API 请求最大重试次数
     MAX_CONTINUATIONS = 2  # finish_reason=length 时最大续取次数
-    JAPANESE_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
-    JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
-    JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]]")
-    JAPANESE_SHORT_QUOTED_TEXT_RE = re.compile(r"^[「『“\"'（(【\[]\s*([^\r\n]{1,6}?)\s*[」』”\"'）)】\]]$")
-    JAPANESE_SINGLE_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\uff66-\uff9f]$")
+    JAPANESE_KANA_RE = tq.JAPANESE_KANA_RE
+    JAPANESE_KANA_FRAGMENT_RE = tq.JAPANESE_KANA_FRAGMENT_RE
+    JAPANESE_QUOTED_TEXT_RE = tq.JAPANESE_QUOTED_TEXT_RE
+    JAPANESE_SHORT_QUOTED_TEXT_RE = tq.JAPANESE_SHORT_QUOTED_TEXT_RE
+    JAPANESE_SINGLE_KATAKANA_RE = tq.JAPANESE_SINGLE_KATAKANA_RE
     SHA256_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
-    JAPANESE_O_NAME_PREFIX_RE = re.compile(r"お[\u3400-\u9fff々]{1,3}(?![\u3400-\u9fff々])")
-    JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
-        "茶", "金", "酒", "湯", "水", "米", "菓子", "店", "客", "宅", "礼",
-        "話", "願", "詫", "前", "母", "父", "兄", "姉", "祖母", "祖父",
-        "嬢", "姫", "寺", "盆", "祭", "守", "札", "膳", "椀", "箸",
-        "上", "役", "家", "国", "城", "蔵", "手", "腹", "目", "顔", "心",
-        "足", "口", "腰", "命",
-    }
-    JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
+    JAPANESE_O_NAME_PREFIX_RE = tq.JAPANESE_O_NAME_PREFIX_RE
+    JAPANESE_O_PREFIX_NON_PERSON_STEMS = tq.JAPANESE_O_PREFIX_NON_PERSON_STEMS
+    JAPANESE_RESIDUE_ALLOWLIST_FILE = tq.JAPANESE_RESIDUE_ALLOWLIST_FILE
     _japanese_residue_allowlist_cache: Optional[Dict[str, Any]] = None
     _japanese_residue_allowlist_mtime: Optional[float] = None
     _japanese_residue_allowlist_checked_at = 0.0
     _japanese_residue_allowlist_check_interval = 5.0
     # 允许中文译文中的字形描述，例如“コ”字形、コ字型、ロの字形。
     # 这些是形状标记，不是未翻译日文残留；更长的假名片段仍会被检测。
-    ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
-        r"[「『“\"'（(【\[]?\s*[\u30a0-\u30ff\uff66-\uff9f]\s*[」』”\"'）)】\]]?\s*(?:の\s*)?(?:字形|字型|字状|形|型|状|字)"
-    )
-    ALLOWED_LATIN_MIDDLE_DOT_RE = re.compile(r"(?<=[A-Za-z0-9])・(?=[A-Za-z0-9])")
-    JAPANESE_EXPLANATORY_QUOTE_CUE_RE = re.compile(
-        r"(?:说法|所谓|写作|写成|写出来|读作|读成|发音|原文|日文|词语|词|意思|叫做|称作|表示)"
-    )
-    JAPANESE_READING_PUZZLE_RUN_RE = re.compile(
-        r"(?<![A-Za-z0-9])[\u30a0-\u30ff\uff66-\uff9f](?:[、,，・･\s]*[\u30a0-\u30ff\uff66-\uff9f]){2,}(?![A-Za-z0-9])"
-    )
-    JAPANESE_READING_PUZZLE_CONTEXT_RE = re.compile(
-        r"(?:首音|读|讀|发音|發音|音读|音讀|读音|讀音|拼读|拼讀|"
-        r"左往右|右往左|从左|從左|从右|從右|横排|橫排|竖排|豎排|"
-        r"连起来|連起來|串字符|字符|字串|片假名|假名|暗号|谜题|謎題|谜面|謎面|藏头|藏尾)"
-    )
+    ALLOWED_JAPANESE_SHAPE_NOTATION_RE = tq.ALLOWED_JAPANESE_SHAPE_NOTATION_RE
+    ALLOWED_LATIN_MIDDLE_DOT_RE = tq.ALLOWED_LATIN_MIDDLE_DOT_RE
+    JAPANESE_EXPLANATORY_QUOTE_CUE_RE = tq.JAPANESE_EXPLANATORY_QUOTE_CUE_RE
+    JAPANESE_READING_PUZZLE_RUN_RE = tq.JAPANESE_READING_PUZZLE_RUN_RE
+    JAPANESE_READING_PUZZLE_CONTEXT_RE = tq.JAPANESE_READING_PUZZLE_CONTEXT_RE
 
     # ---- Phase 1-③: 本地预翻译规则表（高频短句直接替换，跳过 API）----
     PRE_TRANSLATE_RULES: Dict[str, str] = {
@@ -842,11 +839,8 @@ class JaZhTranslator:
         self._dynamic_success_count = 0
         self._proofread_auth_failed = False
         self.cancel_event = cancel_event or threading.Event()
-        self.session = requests.Session()
         # 连接池大小与并发数匹配，避免 "Connection pool is full" 警告
-        adapter = requests.adapters.HTTPAdapter(pool_connections=self.max_workers, pool_maxsize=self.max_workers)
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
+        self.session = create_session(self.max_workers)
         self.extract_glossary = bool(extract_glossary)
         self.enable_thinking = bool(enable_thinking)
         self.enable_proofread = bool(enable_proofread)
@@ -907,10 +901,7 @@ class JaZhTranslator:
 
     def _apply_provider_payload_options(self, payload: Dict[str, Any], provider: Optional[str] = None) -> None:
         """为特定提供方追加请求参数。"""
-        active_provider = (provider or self.provider or "").lower()
-        if (not self.enable_thinking) and active_provider in {"deepseek", "doubao", "glm", "longcat", "custom"}:
-            # 用户要求关闭深度思考。
-            payload["thinking"] = {"type": "disabled"}
+        apply_payload_options(payload, provider or self.provider, self.enable_thinking)
 
     @classmethod
     def _wait_global_rate_limit(cls, cancel_event: threading.Event) -> None:
@@ -1060,48 +1051,21 @@ class JaZhTranslator:
     @staticmethod
     def _response_snippet(raw: str, limit: int = 240) -> str:
         """Compact API response content for local diagnostics."""
-        text = re.sub(r"\s+", " ", (raw or "").strip())
-        if len(text) > limit:
-            return text[:limit] + "..."
-        return text
+        return response_snippet(raw, limit)
 
     # LongCat / LongCat-like providers return a 400 with a JSON body whose
     # ``error.code`` is ``security_audit_fail`` when their content moderation
     # filter blocks a request. Detect it here so callers can split the batch and
     # retry items one-by-one instead of losing the whole batch.
-    _CONTENT_MODERATION_SNIPPETS = (
-        "security_audit_fail",
-        "security_error",
-        "内容审核拦截",
-        "内容审核未通过",
-        "违规信息",
-        "contentfilter",
-        "content filter",
-        "code\":\"1301",
-        "不安全或敏感内容",
-        "敏感内容",
-        "content_moderation",
-        "content moderation",
-    )
+    _CONTENT_MODERATION_SNIPPETS = CONTENT_MODERATION_SNIPPETS
 
     @classmethod
     def _is_content_moderation_http_error(cls, error: requests.exceptions.HTTPError) -> bool:
-        resp = getattr(error, "response", None)
-        if resp is None or resp.status_code != 400:
-            return False
-        body = ""
-        try:
-            body = (resp.text or "").lower()
-        except Exception:
-            return False
-        if not body:
-            return False
-        return any(snippet in body for snippet in cls._CONTENT_MODERATION_SNIPPETS)
+        return is_content_moderation_http_error(error)
 
     @staticmethod
     def _is_auth_http_error(error: requests.exceptions.HTTPError) -> bool:
-        resp = getattr(error, "response", None)
-        return bool(resp is not None and resp.status_code in (401, 403))
+        return is_auth_http_error(error)
 
     def _mark_proofread_auth_failed(self) -> None:
         if not getattr(self, "_proofread_auth_failed", False):
@@ -1304,236 +1268,72 @@ class JaZhTranslator:
     @staticmethod
     def _has_japanese_residue(text: str) -> bool:
         """Detect kana residue in Chinese drafts. Han characters alone are not reliable."""
-        stripped = JaZhTranslator._strip_allowed_japanese_notation(text or "")
-        return bool(JaZhTranslator.JAPANESE_KANA_RE.search(stripped))
+        return tq.has_japanese_residue(text)
 
     @staticmethod
     def _extract_japanese_residue_fragments(text: str) -> List[str]:
         """Extract repeated kana fragments so proofread can avoid fixing the same residue repeatedly."""
-        if not text:
-            return []
-        stripped = JaZhTranslator._strip_allowed_japanese_notation(text)
-        fragments = JaZhTranslator.JAPANESE_O_NAME_PREFIX_RE.findall(stripped)
-        fragments.extend(JaZhTranslator.JAPANESE_KANA_FRAGMENT_RE.findall(stripped))
-        return [frag for frag in dict.fromkeys(fragments) if frag.strip()]
+        return tq.extract_japanese_residue_fragments(text)
 
     @classmethod
     def _has_likely_o_name_prefix_residue(cls, text: str) -> bool:
         """Detect お + CJK name prefixes even when followed by Chinese text, e.g. お仲写."""
-        stripped = cls._strip_allowed_japanese_notation(text or "")
-        for match in re.finditer(r"お([\u3400-\u9fff々])", stripped):
-            stem = match.group(1)
-            if stem not in cls.JAPANESE_O_PREFIX_NON_PERSON_STEMS:
-                return True
-        return False
+        return tq.has_likely_o_name_prefix_residue(text)
 
     @classmethod
     def _has_weak_japanese_residue(cls, text: str) -> bool:
         """Return True for low-risk single-kana leftovers, e.g. historical terms like 藪入り."""
-        stripped = cls._strip_allowed_japanese_notation(text or "")
-        if not cls.JAPANESE_KANA_RE.search(stripped):
-            return False
-        if cls.JAPANESE_O_NAME_PREFIX_RE.search(stripped) or cls._has_likely_o_name_prefix_residue(stripped):
-            return False
-        fragments = [frag for frag in cls.JAPANESE_KANA_FRAGMENT_RE.findall(stripped) if frag.strip()]
-        if not fragments:
-            return False
-        if any(len(fragment) > 1 for fragment in fragments):
-            return False
-        return len(fragments) <= 3 and len(set(fragments)) <= 3
+        return tq.has_weak_japanese_residue(text)
 
     @classmethod
     def _has_blocking_japanese_residue(cls, text: str) -> bool:
         """Return True only for residue that should block cache/save completion."""
-        raw = text or ""
-        if cls._is_short_quoted_japanese_literal(raw):
-            return False
-        stripped = cls._strip_allowed_japanese_notation(raw)
-        if not cls.JAPANESE_KANA_RE.search(stripped):
-            return False
-        return not cls._has_weak_japanese_residue(stripped)
+        return tq.has_blocking_japanese_residue(text)
 
     @classmethod
     def _is_short_quoted_japanese_literal(cls, text: str) -> bool:
         """Short quoted literals can be dialogue particles, clues, or terms."""
-        match = cls.JAPANESE_SHORT_QUOTED_TEXT_RE.fullmatch((text or "").strip())
-        if not match:
-            return False
-        literal = (match.group(1) or "").strip()
-        return bool(literal and cls.JAPANESE_KANA_RE.search(literal))
+        return tq.is_short_quoted_japanese_literal(text)
 
     @classmethod
     def _postprocess_translation(cls, src: str, dst: Optional[str]) -> str:
         """Apply conservative local cleanups before residue checks and cache writes."""
-        translated = str(dst or "").strip()
-        if not translated:
-            return ""
-        return cls._repair_japanese_o_name_prefix_residue(src, translated)
+        return tq.postprocess_translation(src, dst)
 
     @classmethod
     def _repair_japanese_o_name_prefix_residue(cls, src: str, dst: str) -> str:
         """Convert likely Japanese female-name prefixes left by the model, e.g. お仲 -> 阿仲."""
-        source = str(src or "")
-        translated = str(dst or "")
-        if "お" not in source or "お" not in translated:
-            return translated
-
-        def source_has_name_context(literal: str) -> bool:
-            escaped = re.escape(literal)
-            if re.search(rf"{escaped}という(?:女|男|娘|人|者)?", source):
-                return True
-            if re.search(rf"{escaped}(?:は|が|を|に|へ|と|の|、|。|」|』|$)", source):
-                return True
-            return False
-
-        for match in cls.JAPANESE_O_NAME_PREFIX_RE.finditer(source):
-            literal = match.group(0)
-            stem = literal[1:]
-            if stem in cls.JAPANESE_O_PREFIX_NON_PERSON_STEMS:
-                continue
-            if literal not in translated:
-                continue
-            if not source_has_name_context(literal):
-                continue
-            translated = translated.replace(literal, "阿" + stem)
-        return translated
+        return tq.repair_japanese_o_name_prefix_residue(src, dst)
 
     @staticmethod
     def _strip_allowed_japanese_notation(text: str) -> str:
         """Ignore approved literal Japanese snippets that are not untranslated residue."""
-        if not text:
-            return ""
-        stripped = JaZhTranslator.ALLOWED_LATIN_MIDDLE_DOT_RE.sub("", text)
-        stripped = JaZhTranslator.ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", stripped)
-        stripped = JaZhTranslator._strip_builtin_allowed_quoted_literals(stripped)
-        stripped = JaZhTranslator._strip_builtin_allowed_reading_puzzle_runs(stripped)
-        return JaZhTranslator._strip_user_allowed_japanese_literals(stripped)
+        return tq.strip_allowed_japanese_notation(text)
 
     @classmethod
     def _strip_builtin_allowed_quoted_literals(cls, text: str) -> str:
         """Allow very short quoted katakana markers, e.g. “コ”, without allowing real Japanese phrases."""
-        if not text:
-            return ""
-
-        def replace(match: re.Match) -> str:
-            literal = (match.group(1) or "").strip()
-            if cls.JAPANESE_SINGLE_KATAKANA_RE.fullmatch(literal):
-                return ""
-            if cls.JAPANESE_KANA_RE.search(literal):
-                context_start = max(0, match.start() - 30)
-                context_end = min(len(text), match.end() + 30)
-                context = text[context_start:context_end]
-                if cls.JAPANESE_EXPLANATORY_QUOTE_CUE_RE.search(context):
-                    return ""
-            return match.group(0)
-
-        return cls.JAPANESE_QUOTED_TEXT_RE.sub(replace, text)
+        return tq.strip_builtin_allowed_quoted_literals(text)
 
     @classmethod
     def _strip_builtin_allowed_reading_puzzle_runs(cls, text: str) -> str:
         """Allow kana spelling runs when Chinese context explains a reading puzzle."""
-        if not text:
-            return ""
-
-        def replace(match: re.Match) -> str:
-            context_start = max(0, match.start() - 60)
-            context_end = min(len(text), match.end() + 60)
-            context = text[context_start:context_end]
-            if cls.JAPANESE_READING_PUZZLE_CONTEXT_RE.search(context):
-                return ""
-            return match.group(0)
-
-        return cls.JAPANESE_READING_PUZZLE_RUN_RE.sub(replace, text)
+        return tq.strip_builtin_allowed_reading_puzzle_runs(text)
 
     @classmethod
     def japanese_residue_allowlist_path(cls) -> str:
         """Return the user-editable allowlist path for literal Japanese snippets."""
-        return str(get_data_dir() / cls.JAPANESE_RESIDUE_ALLOWLIST_FILE)
+        return tq.japanese_residue_allowlist_path()
 
     @classmethod
     def _load_japanese_residue_allowlist(cls) -> Dict[str, Any]:
         """Load user-configurable residue allowlist with lightweight mtime caching."""
-        now = time.time()
-        if (
-            cls._japanese_residue_allowlist_cache is not None
-            and now - cls._japanese_residue_allowlist_checked_at < cls._japanese_residue_allowlist_check_interval
-        ):
-            return cls._japanese_residue_allowlist_cache
-
-        cls._japanese_residue_allowlist_checked_at = now
-        path = Path(cls.japanese_residue_allowlist_path())
-        try:
-            mtime = path.stat().st_mtime
-        except FileNotFoundError:
-            cls._japanese_residue_allowlist_mtime = None
-            cls._japanese_residue_allowlist_cache = {"quoted": set(), "exact": [], "quoted_regex": [], "regex": []}
-            return cls._japanese_residue_allowlist_cache
-
-        if cls._japanese_residue_allowlist_cache is not None and cls._japanese_residue_allowlist_mtime == mtime:
-            return cls._japanese_residue_allowlist_cache
-
-        def as_str_list(value: Any) -> List[str]:
-            if not isinstance(value, list):
-                return []
-            result = []
-            for item in value:
-                text_item = str(item or "").strip()
-                if text_item:
-                    result.append(text_item)
-            return list(dict.fromkeys(result))
-
-        cache = {"quoted": set(), "exact": [], "quoted_regex": [], "regex": []}
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8-sig"))
-            if not isinstance(payload, dict):
-                raise ValueError("allowlist root must be a JSON object")
-
-            cache["quoted"] = set(as_str_list(payload.get("quoted")))
-            cache["exact"] = as_str_list(payload.get("exact"))
-            for pattern in as_str_list(payload.get("quoted_regex")):
-                try:
-                    cache["quoted_regex"].append(re.compile(pattern))
-                except re.error as exc:
-                    logger.warning("日文残留允许列表 quoted_regex 无效: %s (%s)", pattern, exc)
-            for pattern in as_str_list(payload.get("regex")):
-                try:
-                    cache["regex"].append(re.compile(pattern))
-                except re.error as exc:
-                    logger.warning("日文残留允许列表 regex 无效: %s (%s)", pattern, exc)
-        except Exception as exc:
-            logger.warning("加载日文残留允许列表失败: %s (%s)", path, exc)
-
-        cls._japanese_residue_allowlist_mtime = mtime
-        cls._japanese_residue_allowlist_cache = cache
-        return cache
+        return tq.load_japanese_residue_allowlist()
 
     @classmethod
     def _strip_user_allowed_japanese_literals(cls, text: str) -> str:
         """Strip user-approved literals from residue detection only; translation text is unchanged."""
-        if not text:
-            return ""
-        allowlist = cls._load_japanese_residue_allowlist()
-        stripped = text
-
-        quoted_literals = allowlist.get("quoted") or set()
-        quoted_regexes = allowlist.get("quoted_regex") or []
-        if quoted_literals or quoted_regexes:
-            def replace_quoted(match: re.Match) -> str:
-                literal = (match.group(1) or "").strip()
-                if literal in quoted_literals:
-                    return ""
-                for pattern in quoted_regexes:
-                    if pattern.fullmatch(literal):
-                        return ""
-                return match.group(0)
-
-            stripped = cls.JAPANESE_QUOTED_TEXT_RE.sub(replace_quoted, stripped)
-
-        for literal in allowlist.get("exact") or []:
-            stripped = stripped.replace(literal, "")
-        for pattern in allowlist.get("regex") or []:
-            stripped = pattern.sub("", stripped)
-        return stripped
+        return tq.strip_user_allowed_japanese_literals(text)
 
     @staticmethod
     def _build_residue_repair_guidance(examples: List[Dict[str, str]]) -> str:
@@ -1575,50 +1375,16 @@ class JaZhTranslator:
         real defect, but not severe enough to discard the whole translation.
         Treat those as 'trivial noise' so callers can decide locally how to
         count them."""
-        if not text:
-            return False
-        stripped = cls._strip_allowed_japanese_notation(text)
-        if not cls.JAPANESE_KANA_RE.search(stripped):
-            return False
-        # Count Chinese characters (CJK Unified Ideographs). If the piece is
-        # mostly Chinese and only a few kana fragments remain, it is "trivial".
-        han_count = len(re.findall(r"[一-鿿]", stripped))
-        kana_fragments = [f for f in cls.JAPANESE_KANA_FRAGMENT_RE.findall(stripped) if f.strip()]
-        total_kana = sum(len(f) for f in kana_fragments)
-        if han_count < 8:
-            return False
-        if len(kana_fragments) > 3 or total_kana > max(3, han_count * 0.05):
-            return False
-        return True
+        return tq.has_only_trivial_japanese_noise(text)
 
     @staticmethod
     def japanese_residue_fragments(text: str) -> List[str]:
         """Public helper for diagnostics and UI messages."""
-        return JaZhTranslator._extract_japanese_residue_fragments(text)
+        return tq.extract_japanese_residue_fragments(text)
 
     @classmethod
     def _is_incomplete_translation(cls, src: str, dst: Optional[str]) -> bool:
-        source = (src or "").strip()
-        translated = cls._postprocess_translation(source, dst)
-        if not translated:
-            return True
-        if source and translated == source:
-            if cls._has_blocking_japanese_residue(source):
-                if cls._has_only_trivial_japanese_noise(source):
-                    return False
-                return True
-            bare = source.strip('「」『』').strip()
-            if len(bare) <= 6:
-                return False
-        if cls._has_blocking_japanese_residue(translated):
-            if cls._has_only_trivial_japanese_noise(translated):
-                return False
-            return True
-        if source and translated == source and cls._has_blocking_japanese_residue(source):
-            if cls._has_only_trivial_japanese_noise(source):
-                return False
-            return True
-        return False
+        return tq.is_incomplete_translation(src, dst)
 
     @staticmethod
     def _is_meaningful_glossary_term(original: str, translation: str) -> bool:
@@ -2341,32 +2107,15 @@ class JaZhTranslator:
     @staticmethod
     def _load_json(path: str, default) -> dict:
         """加载 JSON 文件，不存在则返回默认值"""
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except json.JSONDecodeError as e:
-                logging.warning(f"JSON 文件解析失败 {path}: {e}")
-                return default
-        return default
+        loaded = tc_load_json_file(path, default)
+        if loaded is default and os.path.exists(path):
+            logging.warning("JSON 文件解析失败 %s", path)
+        return loaded
 
     @staticmethod
     def _atomic_write_json(path: Union[str, Path], payload: Dict[str, Any]) -> None:
         """原子写入 JSON，避免异常中断导致文件损坏。"""
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp_name = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            with open(tmp_name, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_name, str(target))
-        except Exception:
-            try:
-                if os.path.exists(tmp_name):
-                    os.remove(tmp_name)
-            except OSError:
-                pass
-            raise
+        tc_atomic_write_json(path, payload)
 
     @classmethod
     def normalize_glossary_payload(cls, payload: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
