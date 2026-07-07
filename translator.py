@@ -2377,6 +2377,21 @@ class JaZhTranslator:
         """Backward-compatible alias for older bridge/test code."""
         self.disable_cache_writes()
 
+    def request_cancel(self, close_session: bool = True) -> None:
+        """Request cooperative cancellation and close HTTP connections best-effort.
+
+        ``requests`` calls cannot be interrupted by ``threading.Event`` while a
+        socket read is in progress. Closing the session gives in-flight provider
+        calls a chance to fail fast during app shutdown instead of keeping
+        ThreadPoolExecutor workers alive until the read timeout expires.
+        """
+        self.cancel_event.set()
+        if close_session:
+            try:
+                self.session.close()
+            except Exception:
+                pass
+
     def _should_write_cache(self) -> bool:
         flag = getattr(self, "_discard_cache_writes", None)
         return not (flag is not None and flag.is_set())
@@ -4587,7 +4602,7 @@ JSON 顶层字段：
     def __del__(self):
         """析构时保存缓存"""
         try:
+            self.request_cancel(close_session=True)
             self.flush_cache()
-            self.session.close()
         except Exception:
             pass

@@ -45,11 +45,6 @@ Rectangle {
             bottomPadding: AppStyle.spacingSmall
             clip: true
             selectByMouse: true
-            background: Rectangle {
-                radius: AppPalette.radiusSmall
-                color: AppPalette.cardBg
-                border.color: AppPalette.lineColor
-            }
         }
     }
 }

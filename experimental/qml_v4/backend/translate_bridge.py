@@ -889,6 +889,27 @@ class TranslateBridge(QObject):
             self.errorDetail.emit(f"停止清理缓存失败: {e}")
             return 0
 
+    def _request_active_cancel(self, close_session: bool = True):
+        self._cancel_event.set()
+        translator = self._active_translator
+        if translator and hasattr(translator, "request_cancel"):
+            try:
+                translator.request_cancel(close_session=close_session)
+            except Exception:
+                pass
+
+    @Slot()
+    def shutdown(self):
+        """Best-effort cancellation for application shutdown."""
+        self._request_active_cancel(close_session=True)
+        for _, thread in list(self._pending_workers):
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(1500)
+            except Exception:
+                pass
+
     @Property(float, notify=_progressValueChanged)
     def progressValue(self) -> float:
         return self._progress_value
@@ -1032,7 +1053,7 @@ class TranslateBridge(QObject):
 
     @Slot()
     def cancelTranslation(self):
-        self._cancel_event.set()
+        self._request_active_cancel(close_session=True)
         self.statusChanged.emit("正在取消...")
         ToastBridge.info("正在取消翻译...")
 
@@ -1040,7 +1061,7 @@ class TranslateBridge(QObject):
     def stopTranslation(self):
         self._is_paused = False
         self._stop_requested = True
-        self._cancel_event.set()
+        self._request_active_cancel(close_session=True)
         removed = self._discard_and_clear_active_cache()
         self.progressValue = 0.0
         self.runtimeCleared.emit()
@@ -1053,7 +1074,7 @@ class TranslateBridge(QObject):
     def pauseTranslation(self):
         self._is_paused = True
         self._stop_requested = False
-        self._cancel_event.set()
+        self._request_active_cancel(close_session=True)
         self.statusChanged.emit("暂停中 — 等待当前请求完成...")
         ToastBridge.info("翻译已暂停，可切换模型后继续")
 

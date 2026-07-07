@@ -161,12 +161,14 @@ def main():
 
     from PySide6.QtCore import QUrl
     from PySide6.QtGui import QFont, QIcon
+    from PySide6.QtQuickControls2 import QQuickStyle
     from PySide6.QtWidgets import QApplication
     from PySide6.QtQml import QQmlApplicationEngine
     from backend.app_info import APP_DISPLAY_NAME, APP_NAME
 
     icon_path = _find_app_icon_path()
 
+    QQuickStyle.setStyle("Material")
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_DISPLAY_NAME)
@@ -223,6 +225,7 @@ def main():
 
     config_bridge = ConfigBridge()
     translate_bridge = TranslateBridge()
+    app.aboutToQuit.connect(translate_bridge.shutdown)
     glossary_bridge = GlossaryBridge()
     toast_bridge = ToastBridge()
     update_bridge = UpdateBridge()
