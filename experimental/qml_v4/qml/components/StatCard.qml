@@ -14,10 +14,12 @@ Rectangle {
 
     width: cardWidth
     height: viewportWidth > 760 ? 76 : 70
+    implicitWidth: width
+    implicitHeight: height
     Layout.fillWidth: true
     Layout.preferredWidth: cardWidth
     Layout.minimumWidth: 96
-    Layout.preferredHeight: height
+    Layout.preferredHeight: implicitHeight
     radius: AppPalette.radiusMedium
     color: AppPalette.surfaceRaised
     border.color: AppPalette.lineColor
