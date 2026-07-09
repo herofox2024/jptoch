@@ -22,7 +22,7 @@ Rectangle {
     signal manualEditRequested()
 
     Layout.fillWidth: true
-    Layout.preferredHeight: viewportWidth > 900 ? 326 : 418
+    Layout.preferredHeight: viewportWidth > 900 ? 336 : 418
     radius: AppPalette.radiusLarge
     color: AppPalette.glass ? Qt.rgba(1, 1, 1, 0.48) : AppPalette.surfaceRaised
     border.color: AppPalette.borderColor
@@ -58,8 +58,8 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 18
-        spacing: AppStyle.spacingMedium
+        anchors.margins: 16
+        spacing: AppStyle.spacingSmall
 
         RowLayout {
             Layout.fillWidth: true
@@ -92,8 +92,8 @@ Rectangle {
 
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: root.viewportWidth > 900 ? 178 : 268
-            spacing: AppStyle.spacingLarge
+            Layout.preferredHeight: root.viewportWidth > 900 ? 168 : 256
+            spacing: AppStyle.spacingMedium
 
             TaskActionButton {
                 Layout.fillWidth: true
@@ -107,13 +107,13 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: AppStyle.spacingLarge
+                spacing: AppStyle.spacingMedium
 
                 GridLayout {
                     Layout.fillWidth: true
                     columns: root.viewportWidth > 980 ? 5 : (root.viewportWidth > 680 ? 3 : 2)
-                    columnSpacing: AppStyle.spacingLarge
-                    rowSpacing: AppStyle.spacingLarge
+                    columnSpacing: AppStyle.spacingMedium
+                    rowSpacing: AppStyle.spacingMedium
 
                     TaskActionButton {
                         Layout.fillWidth: true
@@ -165,7 +165,7 @@ Rectangle {
 
             Flow {
                 Layout.fillWidth: true
-                spacing: AppStyle.spacingCompact
+                spacing: AppStyle.spacingInline
 
                 SummaryChip { title: "模型"; value: root.modelSummary }
                 SummaryChip { title: "并发"; value: root.valueOrDash(root.maxWorkers) }
@@ -203,7 +203,7 @@ Rectangle {
                     text: "暂停会保留已写入缓存的内容，切换模型后点“恢复”可续译；停止会取消任务并清空本次已翻译缓存。"
                     color: AppPalette.mutedText
                     wrapMode: Text.WordWrap
-                    font.pixelSize: AppStyle.fontSmall
+                    font.pixelSize: AppStyle.fontCaption
                     maximumLineCount: 2
                     elide: Text.ElideRight
                 }

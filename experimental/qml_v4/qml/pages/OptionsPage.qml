@@ -206,7 +206,9 @@ Page {
                 border.color: AppPalette.lineColor
             }
             TabButton { text: "性能" }
-            TabButton { text: "风格与校对" }
+            TabButton { text: "输出" }
+            TabButton { text: "风格" }
+            TabButton { text: "校对" }
             TabButton { text: "缓存" }
             TabButton { text: "界面" }
             TabButton { text: "更新" }
@@ -457,6 +459,9 @@ Page {
                         page.batchAddNoticePages(files, noticeText)
                     }
                 }
+            }
+
+            SettingsPane {
                 GroupBox {
                     title: "翻译与校对 Prompt 风格"
                     Layout.fillWidth: true
@@ -622,7 +627,9 @@ Page {
                         }
                     }
                 }
+            }
 
+            SettingsPane {
                 GroupBox {
                     title: "校对模型"
                     Layout.fillWidth: true

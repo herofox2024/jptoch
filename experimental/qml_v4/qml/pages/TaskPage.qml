@@ -93,12 +93,12 @@ Page {
             Layout.fillWidth: true
             columns: taskPage.width > 980 ? 2 : 1
             columnSpacing: 18
-            rowSpacing: 18
+            rowSpacing: AppStyle.spacingXLarge
 
             Rectangle {
                 id: dropCard
                 Layout.fillWidth: true
-                Layout.preferredHeight: 320
+                Layout.preferredHeight: taskPage.width > 980 ? 280 : 300
                 radius: AppPalette.radiusLarge
                 color: AppPalette.cardBg
                 border.color: dropCard.hovering ? AppPalette.amberColor : AppPalette.borderColor
@@ -121,17 +121,17 @@ Page {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 22
-                    spacing: AppStyle.spacingXXLarge
+                    anchors.margins: 18
+                    spacing: AppStyle.spacingLarge
 
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: AppStyle.spacingLarge
 
                         Rectangle {
-                            Layout.preferredWidth: 48
-                            Layout.preferredHeight: 48
-                            radius: 16
+                            Layout.preferredWidth: 42
+                            Layout.preferredHeight: 42
+                            radius: 14
                             color: AppPalette.accentSoft
                             border.color: AppPalette.lineColor
                             Label {
@@ -224,8 +224,8 @@ Page {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 320
-                spacing: AppStyle.spacingXLarge
+                Layout.preferredHeight: taskPage.width > 980 ? 280 : 300
+                spacing: AppStyle.spacingLarge
 
                 Rectangle {
                     Layout.fillWidth: true
