@@ -145,6 +145,23 @@ class ExtractedModuleTests(unittest.TestCase):
         self.assertEqual(tq.is_incomplete_translation(text, text), JaZhTranslator._is_incomplete_translation(text, text))
         self.assertEqual(tq.extract_japanese_residue_fragments(text), JaZhTranslator.japanese_residue_fragments(text))
 
+    def test_postprocess_repairs_known_katakana_item_name(self):
+        samples = [
+            (
+                "回来的妻子，手里拿着一个叫作\"チロリ\"的烫酒壶。",
+                "回来的妻子，手里拿着一个烫酒壶。",
+            ),
+            (
+                "チロリ的酒也喝光了。",
+                "烫酒壶里的酒也喝光了。",
+            ),
+        ]
+        for raw, expected in samples:
+            with self.subTest(raw=raw):
+                repaired = tq.postprocess_translation("source", raw)
+                self.assertEqual(repaired, expected)
+                self.assertFalse(tq.has_blocking_japanese_residue(repaired))
+
     def test_provider_client_detects_moderation_and_applies_payload_options(self):
         payload = {}
         apply_payload_options(payload, "longcat", enable_thinking=False)
@@ -917,6 +934,12 @@ class TranslatorTests(unittest.TestCase):
         t = DummyTranslator()
         result = t._pre_translate("「はい」")
         self.assertEqual(result, "是的")
+
+    def test_pre_translate_short_poetic_title(self):
+        t = DummyTranslator()
+        result = t._pre_translate("旅ゆけば")
+        self.assertEqual(result, "旅行之中")
+        self.assertFalse(JaZhTranslator._is_incomplete_translation("旅ゆけば", result))
 
     def test_short_quoted_text_same_as_source_is_not_incomplete(self):
         self.assertFalse(JaZhTranslator._is_incomplete_translation("「猿とな」", "「猿とな」"))

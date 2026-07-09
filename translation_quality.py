@@ -273,11 +273,27 @@ def repair_japanese_o_name_prefix_residue(src: str, dst: str) -> str:
     return translated
 
 
+def repair_known_katakana_terms(src: str, dst: str) -> str:
+    """Translate known katakana item names that models sometimes preserve."""
+    translated = str(dst or "")
+    if not translated:
+        return ""
+
+    # チロリ is a sake-warming vessel. Keeping it as katakana blocks final save,
+    # while "烫酒壶" is the intended Chinese rendering in this context.
+    translated = re.sub(r'叫作["“「]?チロリ["”」]?的烫酒壶', "烫酒壶", translated)
+    translated = re.sub(r'["“「]チロリ["”」]', "烫酒壶", translated)
+    translated = translated.replace("チロリ的", "烫酒壶里的")
+    translated = translated.replace("チロリ", "烫酒壶")
+    return translated
+
+
 def postprocess_translation(src: str, dst: Optional[str]) -> str:
     translated = str(dst or "").strip()
     if not translated:
         return ""
-    return repair_japanese_o_name_prefix_residue(src, translated)
+    translated = repair_japanese_o_name_prefix_residue(src, translated)
+    return repair_known_katakana_terms(src, translated)
 
 
 def has_only_trivial_japanese_noise(text: str) -> bool:
