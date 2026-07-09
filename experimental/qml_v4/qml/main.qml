@@ -469,6 +469,17 @@ ApplicationWindow {
         }
     }
 
+    UiMetricsOverlay {
+        visible: typeof UiMetricsDebug !== "undefined" && UiMetricsDebug
+        z: 1000
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 18
+        targetWindow: appWindow
+        targetContent: pageStack
+        fontFamily: appWindow.uiFont
+    }
+
     component NavButton: Item {
         id: navBtn
         property string iconName: ""

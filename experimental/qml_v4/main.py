@@ -2,6 +2,7 @@
 EPUB 日译中工具 — PySide6 + QML 主入口
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -250,6 +251,13 @@ def main():
     # Keep the old QML property name for compatibility; this is now a stable title font.
     ctx.setContextProperty("AppFontSerif", title_font)
     ctx.setContextProperty("ToastBridge", toast_bridge)
+    ui_metrics_debug = os.environ.get("QML_UI_DEBUG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    ctx.setContextProperty("UiMetricsDebug", ui_metrics_debug)
 
     qml_dir = EXPERIMENT_DIR / "qml"
     qml_file = qml_dir / "main.qml"
