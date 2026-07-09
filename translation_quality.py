@@ -25,6 +25,10 @@ JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
     "足", "口", "腰", "命",
 }
 JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
+KNOWN_KATAKANA_TERMS_FILE = "known_katakana_terms.json"
+DEFAULT_KNOWN_KATAKANA_TERMS: Dict[str, str] = {
+    "チロリ": "烫酒壶",
+}
 ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
     r"[「『“\"'（(【\[]?\s*[\u30a0-\u30ff\uff66-\uff9f]\s*[」』”\"'）)】\]]?\s*(?:の\s*)?(?:字形|字型|字状|形|型|状|字)"
 )
@@ -45,19 +49,110 @@ _allowlist_cache: Optional[Dict[str, Any]] = None
 _allowlist_mtime: Optional[float] = None
 _allowlist_checked_at = 0.0
 _allowlist_check_interval = 5.0
+_known_terms_cache: Optional[Dict[str, str]] = None
+_known_terms_mtime: Optional[float] = None
+_known_terms_checked_at = 0.0
+_known_terms_check_interval = 5.0
 _data_dir_provider: Optional[Callable[[], Path]] = None
 
 
 def configure_data_dir(provider: Callable[[], Path]) -> None:
     """Set the app data-dir provider used by the user-editable allowlist."""
     global _data_dir_provider
+    global _allowlist_cache, _allowlist_mtime, _allowlist_checked_at
+    global _known_terms_cache, _known_terms_mtime, _known_terms_checked_at
     _data_dir_provider = provider
+    _allowlist_cache = None
+    _allowlist_mtime = None
+    _allowlist_checked_at = 0.0
+    _known_terms_cache = None
+    _known_terms_mtime = None
+    _known_terms_checked_at = 0.0
 
 
 def japanese_residue_allowlist_path() -> str:
     if _data_dir_provider is None:
         return str(Path.home() / ".epub_translator" / JAPANESE_RESIDUE_ALLOWLIST_FILE)
     return str(_data_dir_provider() / JAPANESE_RESIDUE_ALLOWLIST_FILE)
+
+
+def known_katakana_terms_path() -> str:
+    if _data_dir_provider is None:
+        return str(Path.home() / ".epub_translator" / KNOWN_KATAKANA_TERMS_FILE)
+    return str(_data_dir_provider() / KNOWN_KATAKANA_TERMS_FILE)
+
+
+def _clean_known_katakana_terms(payload: Any) -> Dict[str, str]:
+    if not isinstance(payload, dict):
+        return {}
+    result: Dict[str, str] = {}
+    for key, value in payload.items():
+        source = str(key or "").strip()
+        target = str(value or "").strip()
+        if source and target and JAPANESE_KANA_RE.search(source):
+            result[source] = target
+    return result
+
+
+def load_known_katakana_terms() -> Dict[str, str]:
+    """Load user-editable katakana term repairs, merged over safe defaults."""
+    global _known_terms_cache, _known_terms_mtime, _known_terms_checked_at
+
+    now = time.time()
+    if _known_terms_cache is not None and now - _known_terms_checked_at < _known_terms_check_interval:
+        return dict(_known_terms_cache)
+
+    _known_terms_checked_at = now
+    path = Path(known_katakana_terms_path())
+    terms = dict(DEFAULT_KNOWN_KATAKANA_TERMS)
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        _known_terms_mtime = None
+        _known_terms_cache = terms
+        return dict(terms)
+
+    if _known_terms_cache is not None and _known_terms_mtime == mtime:
+        return dict(_known_terms_cache)
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        terms.update(_clean_known_katakana_terms(payload))
+        _known_terms_mtime = mtime
+    except Exception as exc:
+        logger.warning("加载片假名术语修复词表失败: %s (%s)", path, exc)
+
+    _known_terms_cache = terms
+    return dict(terms)
+
+
+def load_user_known_katakana_terms() -> Dict[str, str]:
+    """Load only the user-editable katakana term repairs from disk."""
+    path = Path(known_katakana_terms_path())
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        return _clean_known_katakana_terms(payload)
+    except Exception as exc:
+        logger.warning("加载用户片假名术语修复词表失败: %s (%s)", path, exc)
+        return {}
+
+
+def save_known_katakana_terms(terms: Dict[str, str]) -> None:
+    """Persist user-editable katakana term repairs."""
+    global _known_terms_cache, _known_terms_mtime, _known_terms_checked_at
+
+    cleaned = _clean_known_katakana_terms(terms)
+    path = Path(known_katakana_terms_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    _known_terms_cache = dict(DEFAULT_KNOWN_KATAKANA_TERMS)
+    _known_terms_cache.update(cleaned)
+    _known_terms_mtime = path.stat().st_mtime
+    _known_terms_checked_at = time.time()
 
 
 def _as_str_list(value: Any) -> List[str]:
@@ -279,12 +374,18 @@ def repair_known_katakana_terms(src: str, dst: str) -> str:
     if not translated:
         return ""
 
-    # チロリ is a sake-warming vessel. Keeping it as katakana blocks final save,
-    # while "烫酒壶" is the intended Chinese rendering in this context.
-    translated = re.sub(r'叫作["“「]?チロリ["”」]?的烫酒壶', "烫酒壶", translated)
-    translated = re.sub(r'["“「]チロリ["”」]', "烫酒壶", translated)
-    translated = translated.replace("チロリ的", "烫酒壶里的")
-    translated = translated.replace("チロリ", "烫酒壶")
+    for source, target in load_known_katakana_terms().items():
+        escaped_source = re.escape(source)
+        escaped_target = re.escape(target)
+        translated = re.sub(
+            rf'叫作["“「]?{escaped_source}["”」]?的{escaped_target}',
+            target,
+            translated,
+        )
+        translated = re.sub(rf'["“「]{escaped_source}["”」]', target, translated)
+        if source == "チロリ":
+            translated = translated.replace(f"{source}的", f"{target}里的")
+        translated = translated.replace(source, target)
     return translated
 
 

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+import translation_quality as tq
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
 logger = logging.getLogger(__name__)
@@ -207,6 +208,7 @@ class ConfigBridge(QObject):
     _noticePageTextChanged = Signal()
     _themeChanged = Signal()
     japaneseResidueAllowlistChanged = Signal()
+    knownKatakanaTermsChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -352,6 +354,10 @@ class ConfigBridge(QObject):
     def japaneseResidueAllowlistPath(self) -> str:
         return str(_japanese_residue_allowlist_path())
 
+    @Property(str, constant=True)
+    def knownKatakanaTermsPath(self) -> str:
+        return tq.known_katakana_terms_path()
+
     @Slot(result="QVariantMap")
     def getJapaneseResidueAllowlist(self):
         payload = _load_residue_allowlist()
@@ -394,6 +400,55 @@ class ConfigBridge(QObject):
             logger.info("已移除日文残留允许列表: %s", value)
             return {"ok": True, "message": f"已删除: {value}"}
         return {"ok": False, "message": f"白名单不存在: {value}"}
+
+    @Slot(result="QVariantMap")
+    def getKnownKatakanaTerms(self):
+        user_terms = tq.load_user_known_katakana_terms()
+        merged = tq.load_known_katakana_terms()
+        items = []
+        for source in sorted(merged):
+            items.append({
+                "source": source,
+                "target": merged[source],
+                "builtin": source in tq.DEFAULT_KNOWN_KATAKANA_TERMS and source not in user_terms,
+            })
+        return {
+            "path": tq.known_katakana_terms_path(),
+            "items": items,
+        }
+
+    @Slot(str, str, result="QVariantMap")
+    def addKnownKatakanaTerm(self, source: str, target: str):
+        source_text = str(source or "").strip()
+        target_text = str(target or "").strip()
+        if not source_text:
+            return {"ok": False, "message": "请输入需要修复的片假名原词"}
+        if not target_text:
+            return {"ok": False, "message": "请输入对应中文译名"}
+        if not tq.JAPANESE_KANA_RE.search(source_text):
+            return {"ok": False, "message": "原词需要包含日文假名"}
+        user_terms = tq.load_user_known_katakana_terms()
+        user_terms[source_text] = target_text
+        tq.save_known_katakana_terms(user_terms)
+        self.knownKatakanaTermsChanged.emit()
+        logger.info("已保存片假名术语修复词: %s -> %s", source_text, target_text)
+        return {"ok": True, "message": f"已保存修复词: {source_text} -> {target_text}"}
+
+    @Slot(str, result="QVariantMap")
+    def removeKnownKatakanaTerm(self, source: str):
+        source_text = str(source or "").strip()
+        if not source_text:
+            return {"ok": False, "message": "请选择要删除的修复词"}
+        user_terms = tq.load_user_known_katakana_terms()
+        if source_text not in user_terms:
+            if source_text in tq.DEFAULT_KNOWN_KATAKANA_TERMS:
+                return {"ok": False, "message": "内置修复词不能删除，只能添加同名词条覆盖"}
+            return {"ok": False, "message": f"修复词不存在: {source_text}"}
+        user_terms.pop(source_text, None)
+        tq.save_known_katakana_terms(user_terms)
+        self.knownKatakanaTermsChanged.emit()
+        logger.info("已删除片假名术语修复词: %s", source_text)
+        return {"ok": True, "message": f"已删除修复词: {source_text}"}
 
     @Slot(str)
     def setProvider(self, provider: str):

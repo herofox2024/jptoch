@@ -27,11 +27,14 @@ Page {
     property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Gemini", "智谱 GLM", "文心一言", "LongCat 2.0", "自定义"]
     property string residueAllowlistPath: cfg ? cfg.japaneseResidueAllowlistPath : ""
     property string residueAllowlistStatus: ""
+    property string knownKatakanaTermsPath: cfg ? cfg.knownKatakanaTermsPath : ""
+    property string knownKatakanaTermsStatus: ""
     property string promptPreviewText: "点击“刷新 Prompt 预览”查看当前初译和校对提示词片段。"
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
     readonly property bool updaterBusy: updater ? (updater.checking || updater.downloading) : false
 
     ListModel { id: residueAllowlistModel }
+    ListModel { id: knownKatakanaTermsModel }
 
     function refreshJapaneseResidueAllowlist() {
         if (!cfg || !cfg.getJapaneseResidueAllowlist) return
@@ -70,6 +73,47 @@ Page {
         }
     }
 
+    function refreshKnownKatakanaTerms() {
+        if (!cfg || !cfg.getKnownKatakanaTerms) return
+        var info = cfg.getKnownKatakanaTerms()
+        page.knownKatakanaTermsPath = info.path || ""
+        knownKatakanaTermsModel.clear()
+        var items = info.items || []
+        for (var i = 0; i < items.length; i++) {
+            knownKatakanaTermsModel.append({
+                "source": items[i].source || "",
+                "target": items[i].target || "",
+                "builtin": !!items[i].builtin
+            })
+        }
+    }
+
+    function addKnownKatakanaTermItem() {
+        if (!cfg) return
+        var source = katakanaSourceInput.text.trim()
+        var target = katakanaTargetInput.text.trim()
+        var result = cfg.addKnownKatakanaTerm(source, target)
+        page.knownKatakanaTermsStatus = result.message || ""
+        if (result.ok) {
+            katakanaSourceInput.text = ""
+            katakanaTargetInput.text = ""
+        }
+        page.refreshKnownKatakanaTerms()
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result.ok ? ToastBridge.showSuccess(page.knownKatakanaTermsStatus) : ToastBridge.showError(page.knownKatakanaTermsStatus)
+        }
+    }
+
+    function removeKnownKatakanaTermItem(source) {
+        if (!cfg || !source) return
+        var result = cfg.removeKnownKatakanaTerm(source)
+        page.knownKatakanaTermsStatus = result.message || ""
+        page.refreshKnownKatakanaTerms()
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result.ok ? ToastBridge.showSuccess(page.knownKatakanaTermsStatus) : ToastBridge.showError(page.knownKatakanaTermsStatus)
+        }
+    }
+
     function refreshPromptPreview() {
         if (!cfg || !cfg.buildPromptPreview) return
         page.promptPreviewText = cfg.buildPromptPreview()
@@ -88,7 +132,10 @@ Page {
         }
     }
 
-    Component.onCompleted: page.refreshJapaneseResidueAllowlist()
+    Component.onCompleted: {
+        page.refreshJapaneseResidueAllowlist()
+        page.refreshKnownKatakanaTerms()
+    }
 
     Connections {
         target: page.cfg
@@ -96,6 +143,10 @@ Page {
 
         function onJapaneseResidueAllowlistChanged() {
             page.refreshJapaneseResidueAllowlist()
+        }
+
+        function onKnownKatakanaTermsChanged() {
+            page.refreshKnownKatakanaTerms()
         }
     }
 
@@ -711,6 +762,160 @@ Page {
                                 selectByMouse: true
                                 onTextChanged: { if (cfg) cfg.proofreadModel = text }
                             }
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: "片假名术语修复词表"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: AppStyle.spacingMedium
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "用于处理模型已经翻译出中文解释、但仍残留片假名原词的情况。例如“チロリ的酒”会在保存前自动修复为“烫酒壶里的酒”。这类词应加入修复词表，不要加入日文残留白名单。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: AppStyle.fontSmall
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingSmall
+
+                            Label {
+                                text: "文件"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSmall
+                                font.weight: Font.DemiBold
+                            }
+
+                            TextField {
+                                Layout.fillWidth: true
+                                text: page.knownKatakanaTermsPath
+                                readOnly: true
+                                selectByMouse: true
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontCaption
+                            }
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: page.width > 820 ? 5 : 2
+                            rowSpacing: 8
+                            columnSpacing: 12
+
+                            Label { text: "片假名原词" }
+                            TextField {
+                                id: katakanaSourceInput
+                                Layout.fillWidth: true
+                                placeholderText: "例如 チロリ"
+                                selectByMouse: true
+                                onAccepted: page.addKnownKatakanaTermItem()
+                            }
+
+                            Label { text: "中文译名" }
+                            TextField {
+                                id: katakanaTargetInput
+                                Layout.fillWidth: true
+                                placeholderText: "例如 烫酒壶"
+                                selectByMouse: true
+                                onAccepted: page.addKnownKatakanaTermItem()
+                            }
+
+                            Button {
+                                text: "保存修复词"
+                                highlighted: true
+                                Layout.fillWidth: page.width <= 820
+                                onClicked: page.addKnownKatakanaTermItem()
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.max(96, Math.min(220, knownKatakanaTermsModel.count * 40 + 18))
+                            radius: AppPalette.radiusMedium
+                            color: AppPalette.cardAlt
+                            border.color: AppPalette.lineColor
+                            clip: true
+
+                            ListView {
+                                id: knownKatakanaTermsList
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                model: knownKatakanaTermsModel
+                                spacing: AppStyle.spacingInline
+                                clip: true
+
+                                delegate: Rectangle {
+                                    width: knownKatakanaTermsList.width
+                                    height: 34
+                                    radius: 10
+                                    color: AppPalette.surfaceRaised
+                                    border.color: AppPalette.lineColor
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 10
+                                        anchors.rightMargin: 6
+                                        spacing: AppStyle.spacingSmall
+
+                                        Label {
+                                            Layout.preferredWidth: 140
+                                            text: source
+                                            color: AppPalette.textColor
+                                            font.pixelSize: AppStyle.fontBody
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Label {
+                                            text: "→"
+                                            color: AppPalette.mutedText
+                                            font.pixelSize: AppStyle.fontSmall
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: target + (builtin ? "（内置）" : "")
+                                            color: AppPalette.textColor
+                                            font.pixelSize: AppStyle.fontBody
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Button {
+                                            text: builtin ? "内置" : "删除"
+                                            flat: true
+                                            enabled: !builtin
+                                            onClicked: page.removeKnownKatakanaTermItem(source)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                anchors.centerIn: parent
+                                visible: knownKatakanaTermsModel.count === 0
+                                text: "暂无修复词"
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontSmall
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.knownKatakanaTermsStatus
+                            visible: page.knownKatakanaTermsStatus !== ""
+                            color: page.knownKatakanaTermsStatus.indexOf("失败") >= 0
+                                   || page.knownKatakanaTermsStatus.indexOf("请输入") >= 0
+                                   || page.knownKatakanaTermsStatus.indexOf("需要") >= 0
+                                   || page.knownKatakanaTermsStatus.indexOf("不能") >= 0
+                                   ? AppPalette.errorColor : AppPalette.successColor
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: AppStyle.fontSmall
                         }
                     }
                 }

@@ -26,7 +26,7 @@ from epub_io import (
 )
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
-from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError
+from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError, get_data_dir
 from glossary_store import rebuild_glossary_index
 from provider_registry import normalize_api_url, provider_default_model, provider_default_url
 from provider_client import apply_payload_options, is_content_moderation_http_error
@@ -37,6 +37,7 @@ from experimental.qml_v4.backend.book_translation_service import (
     apply_translations_to_book,
     build_book_text_plan,
     build_toc_translation_map,
+    repair_known_katakana_terms_in_docs,
     scan_japanese_residue_in_docs,
 )
 from experimental.qml_v4.backend.pipeline import (
@@ -161,6 +162,35 @@ class ExtractedModuleTests(unittest.TestCase):
                 repaired = tq.postprocess_translation("source", raw)
                 self.assertEqual(repaired, expected)
                 self.assertFalse(tq.has_blocking_japanese_residue(repaired))
+
+    def test_known_katakana_terms_json_roundtrip(self):
+        with temp_test_dir() as d:
+            tq.configure_data_dir(lambda: Path(d))
+            tq.save_known_katakana_terms({"テスト": "测试", "plain": "忽略"})
+            terms = tq.load_known_katakana_terms()
+            user_terms = tq.load_user_known_katakana_terms()
+            self.assertEqual(terms["チロリ"], "烫酒壶")
+            self.assertEqual(terms["テスト"], "测试")
+            self.assertEqual(user_terms, {"テスト": "测试"})
+            self.assertNotIn("plain", terms)
+            self.assertEqual(tq.postprocess_translation("source", "テスト"), "测试")
+        tq.configure_data_dir(get_data_dir)
+
+    def test_repair_known_katakana_terms_in_docs_before_residue_scan(self):
+        with temp_test_dir() as d:
+            tq.configure_data_dir(lambda: Path(d))
+            tq.save_known_katakana_terms({"ガス燈": "煤气灯"})
+            soup = BeautifulSoup(
+                "<html><body><p>チロリ的酒也喝光了。</p><p>ガス燈也亮着。</p></body></html>",
+                "html.parser",
+            )
+            report = repair_known_katakana_terms_in_docs([(None, soup, [])])
+            self.assertEqual(report.repaired_total, 2)
+            self.assertIn("烫酒壶里的酒也喝光了。", soup.get_text())
+            self.assertIn("煤气灯也亮着。", soup.get_text())
+            scan = scan_japanese_residue_in_docs([(None, soup, [])])
+            self.assertEqual(scan.blocking_total, 0)
+        tq.configure_data_dir(get_data_dir)
 
     def test_provider_client_detects_moderation_and_applies_payload_options(self):
         payload = {}

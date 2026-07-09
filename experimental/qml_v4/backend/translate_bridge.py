@@ -14,6 +14,7 @@ from typing import Optional, Any
 
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
+import translation_quality as tq
 from backend.toast_bridge import ToastBridge
 
 CANCELLED_RESULT = "__CANCELLED__"
@@ -539,12 +540,16 @@ class _TranslateWorker(QObject):
                         allowlist_path = JaZhTranslator.japanese_residue_allowlist_path()
                     except Exception:
                         allowlist_path = ""
+                    known_terms_path = tq.known_katakana_terms_path()
                     detail += (
                         "\n\n处理建议：如果残留片段是真正未翻译的日文，请不要加入白名单，"
                         "建议降低批量/并发或切换模型后恢复续译。"
+                        "\n如果残留片段是器物名、外来语或专有名词，且应该固定译成中文，"
+                        "请在 设置 -> 风格与校对 -> 片假名术语修复词表 添加。"
                         "\n如果残留片段是必须保留的字形、符号或原文标记，"
                         "可在 设置 -> 风格与校对 -> 日文残留白名单 添加。"
                     )
+                    detail += f"\n片假名修复词表: {known_terms_path}"
                     if allowlist_path:
                         detail += f"\n白名单文件: {allowlist_path}"
                 self.statusChanged.emit(message)
@@ -567,6 +572,14 @@ class _TranslateWorker(QObject):
                 _looks_like_model_refusal,
             )
 
+            repair_report = book_service.repair_known_katakana_terms(docs)
+            if repair_report.repaired_total:
+                logger.info(
+                    "保存前自动修复片假名术语残留 %s 处。样例: %s",
+                    repair_report.repaired_total,
+                    " | ".join(repair_report.samples),
+                )
+
             residue_scan = book_service.scan_japanese_residue(docs)
             residue_total = residue_scan.blocking_total
             residue_samples = residue_scan.blocking_samples
@@ -587,9 +600,13 @@ class _TranslateWorker(QObject):
                 )
                 self.statusChanged.emit(message)
                 allowlist_path = JaZhTranslator.japanese_residue_allowlist_path()
+                known_terms_path = tq.known_katakana_terms_path()
                 hint = (
+                    "\n处理建议：如果片段应该译成中文，例如器物名、外来语或专有名词，"
+                    "请加入 设置 -> 风格与校对 -> 片假名术语修复词表。"
+                    f"\n片假名修复词表: {known_terms_path}"
                     "\n如果确认某个片段是必须保留的字形、符号或原文标记，"
-                    f"可加入允许列表: {allowlist_path}"
+                    f"才加入日文残留白名单: {allowlist_path}"
                 )
                 self.errorDetail.emit(message + hint + (f"\n样例:\n{samples}" if samples else ""))
                 self.failed.emit(message)

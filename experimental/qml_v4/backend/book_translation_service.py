@@ -9,6 +9,7 @@ from bs4 import NavigableString
 from epub_io import extract_visible_text
 from text_utils import is_translatable
 from translator import JaZhTranslator
+import translation_quality as tq
 
 
 CleanTitle = Callable[[str], str]
@@ -41,6 +42,12 @@ class JapaneseResidueScan:
     weak_samples: List[str]
 
 
+@dataclass
+class JapaneseResidueRepairReport:
+    repaired_total: int
+    samples: List[str]
+
+
 class BookTranslationService:
     """Pure EPUB text-plan service used by UI workers."""
 
@@ -69,6 +76,9 @@ class BookTranslationService:
 
     def scan_japanese_residue(self, docs: List[Any]) -> JapaneseResidueScan:
         return scan_japanese_residue_in_docs(docs)
+
+    def repair_known_katakana_terms(self, docs: List[Any]) -> JapaneseResidueRepairReport:
+        return repair_known_katakana_terms_in_docs(docs)
 
 
 def build_book_text_plan(docs: List[Any], toc_titles: List[str]) -> BookTextPlan:
@@ -257,3 +267,28 @@ def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
         weak_total=weak_total,
         weak_samples=weak_samples,
     )
+
+
+def repair_known_katakana_terms_in_docs(docs: List[Any]) -> JapaneseResidueRepairReport:
+    hidden_tags = {"rt", "rp", "script", "style", "noscript"}
+    repaired_total = 0
+    samples: List[str] = []
+
+    for _, soup, _ in docs:
+        root = soup.find("body") or soup
+        for node in root.find_all(string=True):
+            parent_name = getattr(getattr(node, "parent", None), "name", "")
+            if parent_name in hidden_tags:
+                continue
+            raw = str(node)
+            if not raw.strip():
+                continue
+            repaired = tq.repair_known_katakana_terms("", raw)
+            if repaired == raw:
+                continue
+            node.replace_with(NavigableString(repaired))
+            repaired_total += 1
+            if len(samples) < 8:
+                samples.append(f"{raw[:80]} -> {repaired[:80]}")
+
+    return JapaneseResidueRepairReport(repaired_total=repaired_total, samples=samples)
