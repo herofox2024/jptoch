@@ -283,7 +283,7 @@ def repair_known_katakana_terms_in_docs(docs: List[Any]) -> JapaneseResidueRepai
             raw = str(node)
             if not raw.strip():
                 continue
-            repaired = tq.repair_known_katakana_terms("", raw)
+            repaired = tq.repair_save_time_japanese_residue("", raw)
             if repaired == raw:
                 continue
             node.replace_with(NavigableString(repaired))

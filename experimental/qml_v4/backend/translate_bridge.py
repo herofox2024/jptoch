@@ -576,7 +576,7 @@ class _TranslateWorker(QObject):
             repair_report = book_service.repair_known_katakana_terms(docs)
             if repair_report.repaired_total:
                 logger.info(
-                    "保存前自动修复片假名术语残留 %s 处。样例: %s",
+                    "保存前自动修复日文残留 %s 处。样例: %s",
                     repair_report.repaired_total,
                     " | ".join(repair_report.samples),
                 )

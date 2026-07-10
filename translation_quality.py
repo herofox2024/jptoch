@@ -24,6 +24,16 @@ JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
     "上", "役", "家", "国", "城", "蔵", "手", "腹", "目", "顔", "心",
     "足", "口", "腰", "命",
 }
+JAPANESE_NAME_KANJI_NORMALIZATION = {
+    "銀": "银",
+    "時": "时",
+}
+COMMON_JAPANESE_RESIDUE_REPAIRS = {
+    "这些すべて": "这一切",
+    "這些すべて": "这一切",
+    "这一切すべて": "这一切",
+    "すべて": "全部",
+}
 JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
 KNOWN_KATAKANA_TERMS_FILE = "known_katakana_terms.json"
 DEFAULT_KNOWN_KATAKANA_TERMS: Dict[str, str] = {
@@ -368,6 +378,31 @@ def repair_japanese_o_name_prefix_residue(src: str, dst: str) -> str:
     return translated
 
 
+def repair_orphan_japanese_o_name_prefix_residue(dst: str) -> str:
+    """Repair cached translations where only the translated text is available."""
+    translated = str(dst or "")
+    if "お" not in translated:
+        return translated
+
+    def repl(match: re.Match[str]) -> str:
+        stem = match.group(1)
+        if stem in JAPANESE_O_PREFIX_NON_PERSON_STEMS:
+            return match.group(0)
+        stem = JAPANESE_NAME_KANJI_NORMALIZATION.get(stem, stem)
+        return "阿" + stem
+
+    return re.sub(r"お([\u3400-\u9fff々])", repl, translated)
+
+
+def repair_common_japanese_residue_terms(dst: str) -> str:
+    translated = str(dst or "")
+    if not translated:
+        return ""
+    for source, target in COMMON_JAPANESE_RESIDUE_REPAIRS.items():
+        translated = translated.replace(source, target)
+    return translated
+
+
 def repair_known_katakana_terms(src: str, dst: str) -> str:
     """Translate known katakana item names that models sometimes preserve."""
     translated = str(dst or "")
@@ -394,7 +429,14 @@ def postprocess_translation(src: str, dst: Optional[str]) -> str:
     if not translated:
         return ""
     translated = repair_japanese_o_name_prefix_residue(src, translated)
+    translated = repair_orphan_japanese_o_name_prefix_residue(translated)
+    translated = repair_common_japanese_residue_terms(translated)
     return repair_known_katakana_terms(src, translated)
+
+
+def repair_save_time_japanese_residue(src: str, dst: str) -> str:
+    """Best-effort deterministic repairs before final Japanese residue scan."""
+    return postprocess_translation(src, dst)
 
 
 def has_only_trivial_japanese_noise(text: str) -> bool:

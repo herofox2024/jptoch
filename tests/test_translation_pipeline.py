@@ -181,13 +181,22 @@ class ExtractedModuleTests(unittest.TestCase):
             tq.configure_data_dir(lambda: Path(d))
             tq.save_known_katakana_terms({"ガス燈": "煤气灯"})
             soup = BeautifulSoup(
-                "<html><body><p>チロリ的酒也喝光了。</p><p>ガス燈也亮着。</p></body></html>",
+                "<html><body>"
+                "<p>チロリ的酒也喝光了。</p>"
+                "<p>ガス燈也亮着。</p>"
+                "<p>至于お仲，她把目光落在手上的钱包上。</p>"
+                "<p>找到お銀之后，就直接把她拉进杉林里。</p>"
+                "<p>这些すべて，或许都是为了此生的离别吧。</p>"
+                "</body></html>",
                 "html.parser",
             )
             report = repair_known_katakana_terms_in_docs([(None, soup, [])])
-            self.assertEqual(report.repaired_total, 2)
+            self.assertEqual(report.repaired_total, 5)
             self.assertIn("烫酒壶里的酒也喝光了。", soup.get_text())
             self.assertIn("煤气灯也亮着。", soup.get_text())
+            self.assertIn("至于阿仲，她把目光落在手上的钱包上。", soup.get_text())
+            self.assertIn("找到阿银之后，就直接把她拉进杉林里。", soup.get_text())
+            self.assertIn("这一切，或许都是为了此生的离别吧。", soup.get_text())
             scan = scan_japanese_residue_in_docs([(None, soup, [])])
             self.assertEqual(scan.blocking_total, 0)
         tq.configure_data_dir(get_data_dir)
