@@ -196,6 +196,9 @@ class ExtractedModuleTests(unittest.TestCase):
         payload = {}
         apply_payload_options(payload, "longcat", enable_thinking=False)
         self.assertEqual(payload.get("thinking"), {"type": "disabled"})
+        hymt_payload = {}
+        apply_payload_options(hymt_payload, "hymt2", enable_thinking=False)
+        self.assertNotIn("thinking", hymt_payload)
 
         response = requests.Response()
         response.status_code = 400
@@ -898,6 +901,26 @@ class TranslatorTests(unittest.TestCase):
             self.assertEqual(t.api_url, "https://qianfan.baidubce.com/v2/chat/completions")
             self.assertEqual(t.model, "ernie-4.5-turbo-128k")
 
+    def test_hymt2_provider_is_local_and_conservative(self):
+        with temp_test_dir() as d:
+            t = JaZhTranslator(
+                api_key="",
+                provider="hymt2",
+                max_workers=8,
+                batch_size=6,
+                glossary_path=os.path.join(d, "glossary.json"),
+                cache_path=os.path.join(d, "cache.json"),
+            )
+
+            self.assertEqual(t.provider, "hymt2")
+            self.assertEqual(t.api_key, "sk-local")
+            self.assertEqual(t.api_url, "http://127.0.0.1:8080/v1/chat/completions")
+            self.assertEqual(t.model, "Hy-MT2-1.8B-1.25bit-GGUF")
+            self.assertEqual(t.temperature, 0.7)
+            self.assertEqual(t.top_p, 0.6)
+            self.assertEqual(t.max_workers, 1)
+            self.assertEqual(t.batch_size, 1)
+
     def test_provider_registry_drives_translator_defaults(self):
         self.assertEqual(provider_default_url("longcat"), "https://api.longcat.chat/openai/v1/chat/completions")
         self.assertEqual(provider_default_model("longcat"), "LongCat-2.0")
@@ -909,6 +932,8 @@ class TranslatorTests(unittest.TestCase):
             JaZhTranslator._get_provider_default_url("longcat"),
             provider_default_url("longcat"),
         )
+        self.assertEqual(provider_default_url("hymt2"), "http://127.0.0.1:8080/v1/chat/completions")
+        self.assertEqual(provider_default_model("hymt2"), "Hy-MT2-1.8B-1.25bit-GGUF")
 
     def test_quality_rule_detects_suspicious_translation_pairs(self):
         self.assertTrue(is_suspicious_translation_pair("長い原文です。" * 3, "x"))

@@ -223,6 +223,7 @@ def main():
     from backend.toast_bridge import ToastBridge
     from backend.update_bridge import UpdateBridge
     from backend.log_bridge import LogBridge
+    from backend.local_model_bridge import LocalModelBridge
 
     config_bridge = ConfigBridge()
     translate_bridge = TranslateBridge()
@@ -231,6 +232,8 @@ def main():
     toast_bridge = ToastBridge()
     update_bridge = UpdateBridge()
     log_bridge = LogBridge()
+    local_model_bridge = LocalModelBridge()
+    app.aboutToQuit.connect(local_model_bridge.stopServer)
 
     _set_startup_status(app, splash, "正在加载主界面")
 
@@ -245,6 +248,7 @@ def main():
     ctx.setContextProperty("GlossaryBridge", glossary_bridge)
     ctx.setContextProperty("UpdateBridge", update_bridge)
     ctx.setContextProperty("LogBridge", log_bridge)
+    ctx.setContextProperty("LocalModelBridge", local_model_bridge)
     ctx.setContextProperty("AppDir", str(EXPERIMENT_DIR))
     ctx.setContextProperty("AppFontSans", sans_font)
     ctx.setContextProperty("AppFontTitle", title_font)

@@ -23,8 +23,8 @@ Page {
     property var proofreadGenreLabels: ["自动识别（推荐）", "通用小说", "推理小说", "历史推理", "科幻小说", "奇幻小说"]
     property var proofreadToneValues: ["auto", "neutral", "light", "literary"]
     property var proofreadToneLabels: ["自动识别（推荐）", "中性口吻", "轻小说口吻", "文学化口吻"]
-    property var proofreadProviderValues: ["", "deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "longcat", "custom"]
-    property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Gemini", "智谱 GLM", "文心一言", "LongCat 2.0", "自定义"]
+    property var proofreadProviderValues: ["", "deepseek", "doubao", "sakura", "hymt2", "gemini", "glm", "wenxin", "longcat", "custom"]
+    property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Hy-MT2 本地", "Gemini", "智谱 GLM", "文心一言", "LongCat 2.0", "自定义"]
     property string residueAllowlistPath: cfg ? cfg.japaneseResidueAllowlistPath : ""
     property string residueAllowlistStatus: ""
     property string knownKatakanaTermsPath: cfg ? cfg.knownKatakanaTermsPath : ""

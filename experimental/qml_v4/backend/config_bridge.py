@@ -28,6 +28,8 @@ WENXIN_API_URL = "https://qianfan.baidubce.com/v2/chat/completions"
 WENXIN_MODEL = "ernie-4.5-turbo-128k"
 LONGCAT_API_URL = "https://api.longcat.chat/openai/v1/chat/completions"
 LONGCAT_MODEL = "LongCat-2.0"
+HYMT2_API_URL = "http://127.0.0.1:8080/v1/chat/completions"
+HYMT2_MODEL = "Hy-MT2-1.8B-1.25bit-GGUF"
 
 PROVIDER_DEFAULTS = {
     "deepseek": {"url": DEEPSEEK_API_URL, "model": DEEPSEEK_MODEL},
@@ -37,6 +39,7 @@ PROVIDER_DEFAULTS = {
     "glm":      {"url": GLM_API_URL,      "model": GLM_MODEL},
     "wenxin":   {"url": WENXIN_API_URL,   "model": WENXIN_MODEL},
     "longcat":  {"url": LONGCAT_API_URL,  "model": LONGCAT_MODEL},
+    "hymt2":    {"url": HYMT2_API_URL,    "model": HYMT2_MODEL},
     "custom":   {"url": "", "model": ""},
 }
 
@@ -48,6 +51,7 @@ PROVIDER_HINTS = {
     "glm":      "智谱开放平台，免费版限制并发",
     "wenxin":   "百度千帆/文心一言 OpenAI 兼容接口，需使用千帆 API Key",
     "longcat":  "美团 LongCat OpenAI 兼容接口，默认模型 LongCat-2.0",
+    "hymt2":    "腾讯 Hy-MT2 本地翻译模型，需先启动 llama-server，无需 API Key",
     "custom":   "任意 OpenAI 兼容端点，请手动填写 URL 和模型名",
 }
 
@@ -56,6 +60,7 @@ PROVIDER_CAPABILITY = {
     "gemini": "Gemini 免费版有限流",
     "wenxin": "文心一言/千帆：建议先低并发低批量测试，旧版 access_token RPC 接口不兼容",
     "longcat": "LongCat：已自动限制并发≤8、batch≤9；遇到内容审核会拆分/降级处理",
+    "hymt2": "Hy-MT2 本地：自动限制并发=1、batch=1；适合离线初译或审核备用，不建议默认承担最终校对",
 }
 
 PERF_UI_PRESETS = {

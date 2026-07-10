@@ -262,6 +262,7 @@ def _estimate_translation_duration(total_chars, total_texts, cfg):
         "gemini": {"batch_seconds": 6.0, "chars_per_second": 30.0},
         "wenxin": {"batch_seconds": 4.0, "chars_per_second": 45.0},
         "sakura": {"batch_seconds": 1.5, "chars_per_second": 80.0},
+        "hymt2": {"batch_seconds": 4.0, "chars_per_second": 35.0},
         "custom": {"batch_seconds": 3.0, "chars_per_second": 60.0},
     }
     profile = provider_profile.get(provider, provider_profile["custom"])
@@ -820,6 +821,16 @@ class _TestWorker(QObject):
                 self.result.emit(f"失败: HTTP {resp.status_code} — {body}")
         except requests.exceptions.Timeout:
             self.result.emit(f"失败: 连接超时 ({self._timeout}秒)")
+        except requests.exceptions.ConnectionError as e:
+            message = str(e)
+            if "10061" in message or "Connection refused" in message or "actively refused" in message:
+                self.result.emit(
+                    "失败: 本地服务未启动或端口未监听。"
+                    "请在下方 Hy-MT2 本地模型区域选择 llama-server 后点击“启动本地服务”，"
+                    "或确认外部 llama-server 正在监听当前 API URL。"
+                )
+            else:
+                self.result.emit(f"失败: 网络连接失败 — {message[:240]}")
         except Exception as e:
             self.result.emit(f"失败: {e}")
 

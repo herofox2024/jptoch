@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -68,7 +68,7 @@
 
 - **EPUB 日译中**：翻译正文、标题、列表、引用等常见 HTML 内容，尽量保留原书结构。
 - **目录与链接处理**：支持 NCX/nav 目录翻译、短文本书内目录链接翻译，并保留 `href` 跳转关系。
-- **多大模型供应商**：支持 DeepSeek、豆包、Sakura、Gemini、智谱 GLM、文心一言、LongCat 2.0 和自定义 OpenAI 兼容接口。
+- **多大模型供应商**：支持 DeepSeek、豆包、Sakura、Hy-MT2 本地、Gemini、智谱 GLM、文心一言、LongCat 2.0 和自定义 OpenAI 兼容接口。
 - **内容审核备用模型**：主模型遇到 `security_audit_fail` / `contentFilter` 等内容审核拦截时，可自动使用校对模型配置作为备用 provider 翻译该段。
 - **缓存续译**：相同文本命中缓存后不重复请求 API，支持暂停后恢复翻译。
 - **模型隔离缓存**：切换大模型后可避免直接复用旧模型译文，便于重新翻译。
@@ -182,6 +182,20 @@ V4.1 支持 Slider + SpinBox 精确调节，并提供模型参数预设。
 | 单条字符上限 | 单个文本块过长时的切分阈值 | 长句多的小说可适当提高 |
 | 批量总字符 | 单次批量请求最大字符数 | 免费模型保守，付费模型按稳定性调整 |
 | API 超时 | 单次请求等待时间 | 网络慢或免费模型建议 `300` 秒 |
+
+### Hy-MT2 本地模型
+
+QML/V4 支持将腾讯 Hy-MT2-1.8B GGUF 作为本地 OpenAI 兼容 provider 使用。入口在「API」页：
+
+- 可以直接填写 `hymt2` provider，也可以在「Hy-MT2 本地模型」区域下载 GGUF 模型。
+- 默认下载目录：`~/.epub_translator/models/hymt2/`。
+- 下载使用 `.part` 临时文件，取消后可再次点击继续断点下载。
+- 如果 HuggingFace 因代理或网络超时失败，可点击「使用镜像」切换到 `hf-mirror.com`；也可以手动下载 GGUF 后在页面选择本地文件。
+- 需要本机存在 `llama-server`；可以从 `PATH` 自动查找，也可以手动选择 `llama-server.exe`。
+- 点击「启动本地服务」后，软件会调用本地 `llama-server` 并暴露 `http://127.0.0.1:8080/v1/chat/completions`。
+- 点击「应用到 Hy-MT2 配置」会自动切换 provider、URL 和模型名。
+
+Hy-MT2 会自动使用保守参数：并发 `1`、批量 `1`。它适合离线初译、隐私场景或内容审核备用，不建议默认替代云模型承担最终校对。
 
 ### 小说风格 Prompt
 
@@ -592,6 +606,7 @@ python -m pytest -q
 - 增加停止按钮、暂停恢复续译、状态页预计翻译时长/预计剩余时间。
 - 增加文心一言供应商。
 - 增加 LongCat 2.0 供应商，内置官方 OpenAI 兼容接口、默认模型和 `LONGCAT_API_KEY` 环境变量读取。
+- 增加 Hy-MT2 本地 provider，支持在 API 页下载 GGUF 模型、选择 `llama-server`、启动本地 OpenAI 兼容服务并一键应用配置。
 - 增加内容审核备用模型机制，主模型遇到 `security_audit_fail` / `contentFilter` 等审核拦截时，可使用校对模型配置重译单段。
 - 增加小说风格设置和本地风格识别，风格可影响初译和译后校对 Prompt。
 - 修复当前书清理缓存不完整的问题，覆盖旧版明文 key、哈希 key 和跨模型同源文本缓存。

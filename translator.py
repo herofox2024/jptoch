@@ -758,8 +758,8 @@ class JaZhTranslator:
             raise ValueError(f"不支持的提供方: {provider}")
 
         self.api_key = api_key or provider_env_api_key(self.provider)
-        if self.provider == "sakura" and not self.api_key:
-            # Sakura 本地服务通常可无鉴权，默认给一个占位 key，兼容部分网关。
+        if self.provider in {"sakura", "hymt2"} and not self.api_key:
+            # 本地 OpenAI 兼容服务通常可无鉴权，默认给一个占位 key，兼容部分网关。
             self.api_key = "sk-local"
         if not self.api_key:
             if self.provider in API_KEY_REQUIRED_PROVIDERS:
@@ -771,8 +771,10 @@ class JaZhTranslator:
         raw_api_url = (api_url or default_url).strip()
         self.api_url = self._normalize_api_url(raw_api_url)
         self.model = (model or default_model).strip()
-        self.temperature = temperature if temperature is not None else (0.1 if self.provider == "sakura" else 0.3)
-        self.top_p = top_p if top_p is not None else (0.3 if self.provider == "sakura" else None)
+        default_temperature = 0.1 if self.provider == "sakura" else (0.7 if self.provider == "hymt2" else 0.3)
+        default_top_p = 0.3 if self.provider == "sakura" else (0.6 if self.provider == "hymt2" else None)
+        self.temperature = temperature if temperature is not None else default_temperature
+        self.top_p = top_p if top_p is not None else default_top_p
         self.frequency_penalty = (
             frequency_penalty if frequency_penalty is not None else (0.1 if self.provider == "sakura" else None)
         )
@@ -783,6 +785,20 @@ class JaZhTranslator:
             batch_size = min(batch_size, 2)
             max_batch_length = min(max_batch_length, 500)
             max_text_size_for_batch = min(max_text_size_for_batch, 150)
+        if self.provider == "hymt2":
+            old_workers, old_batch = max_workers, batch_size
+            max_workers = min(max_workers, 1)
+            batch_size = min(batch_size, 1)
+            max_batch_length = min(max_batch_length, 800)
+            max_text_size_for_batch = min(max_text_size_for_batch, 200)
+            if (old_workers, old_batch) != (max_workers, batch_size):
+                logger.info(
+                    "Hy-MT2 本地模型保护: 并发 %s→%s，批量 %s→%s",
+                    old_workers,
+                    max_workers,
+                    old_batch,
+                    batch_size,
+                )
         endpoint_hint = f"{self.api_url} {self.model}".lower()
         if "longcat" in endpoint_hint:
             old_workers, old_batch = max_workers, batch_size
@@ -2813,10 +2829,11 @@ JSON 顶层字段：
         api_url = self._get_proofread_url() if (self.proofread_provider or self._proofread_api_url) else self.api_url
         model = self.proofread_model or self._get_provider_default_model(provider) or self.model
         api_key = self.proofread_api_key or (self.api_key if provider == self.provider else "")
-        if provider != self.provider and not self.proofread_api_key and provider != "sakura":
+        local_no_key_providers = {"sakura", "hymt2"}
+        if provider != self.provider and not self.proofread_api_key and provider not in local_no_key_providers:
             logger.warning("内容审核备用模型未配置校对 API Key，跳过备用翻译: provider=%s", provider)
             return None
-        if not api_url or not model or (not api_key and provider != "sakura"):
+        if not api_url or not model or (not api_key and provider not in local_no_key_providers):
             return None
         if (
             provider == self.provider
@@ -3989,6 +4006,9 @@ JSON 顶层字段：
             logger.info(
                 "历史推理少量剩余文本启用保守重试: batch_size=1，不走批量 JSON，禁用自由润色"
             )
+        if self.provider == "hymt2" and effective_batch_size > 1:
+            effective_batch_size = 1
+            logger.info("Hy-MT2 本地模型启用保守翻译: batch_size=1")
 
         if progress_callback:
             progress_callback(completed, total)

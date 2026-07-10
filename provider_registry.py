@@ -49,6 +49,11 @@ PROVIDER_DEFAULTS: Dict[str, ProviderDefaults] = {
         model="LongCat-2.0",
         env_keys=("LONGCAT_API_KEY",),
     ),
+    "hymt2": ProviderDefaults(
+        api_url="http://127.0.0.1:8080/v1/chat/completions",
+        model="Hy-MT2-1.8B-1.25bit-GGUF",
+        requires_api_key=False,
+    ),
     "custom": ProviderDefaults(api_url="", model=""),
 }
 
