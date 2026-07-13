@@ -102,7 +102,7 @@ _CONFIG_KEYS = [
     "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
     "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
-    "enable_notice_page", "notice_page_text",
+    "enable_notice_page", "notice_page_text", "hymt2_generation_mode",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -215,6 +215,7 @@ class ConfigBridge(QObject):
     _enablePromptExamplesChanged = Signal()
     _enableNoticePageChanged = Signal()
     _noticePageTextChanged = Signal()
+    _hymt2GenerationModeChanged = Signal()
     _themeChanged = Signal()
     japaneseResidueAllowlistChanged = Signal()
     knownKatakanaTermsChanged = Signal()
@@ -248,6 +249,7 @@ class ConfigBridge(QObject):
         self._enable_prompt_examples = True
         self._enable_notice_page = False
         self._notice_page_text = DEFAULT_NOTICE_PAGE_TEXT
+        self._hymt2_generation_mode = "stable"
         self._theme = "light"
         self._autosave_enabled = False
         self._load_from_disk()
@@ -286,6 +288,8 @@ class ConfigBridge(QObject):
                 self._enable_notice_page = False
             if not str(getattr(self, "_notice_page_text", "") or "").strip():
                 self._notice_page_text = DEFAULT_NOTICE_PAGE_TEXT
+            if getattr(self, "_hymt2_generation_mode", "") not in {"stable", "official"}:
+                self._hymt2_generation_mode = "stable"
             logger.info(f"配置已加载: {path}")
         except Exception as e:
             logger.warning(f"加载配置失败: {e}")
@@ -663,6 +667,16 @@ class ConfigBridge(QObject):
         val = str(val or "")
         if val != self._notice_page_text:
             self._notice_page_text = val; self._emit_changed(self._noticePageTextChanged)
+
+    @Property(str, notify=_hymt2GenerationModeChanged)
+    def hymt2GenerationMode(self) -> str: return self._hymt2_generation_mode
+    @hymt2GenerationMode.setter
+    def hymt2GenerationMode(self, val: str):
+        val = str(val or "stable").strip().lower()
+        if val not in {"stable", "official"}:
+            val = "stable"
+        if val != self._hymt2_generation_mode:
+            self._hymt2_generation_mode = val; self._emit_changed(self._hymt2GenerationModeChanged)
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

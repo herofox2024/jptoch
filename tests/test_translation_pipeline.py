@@ -130,6 +130,10 @@ class DummyTranslator(JaZhTranslator):
         self.max_text_size_for_batch = 200
         self.chunk_size = 1200
         self.top_p = None
+        self.top_k = None
+        self.repetition_penalty = None
+        self.max_tokens = None
+        self.hymt2_generation_mode = "stable"
         self.frequency_penalty = None
         self.temperature = 0.3
         self.api_url = "http://example.com/v1/chat/completions"
@@ -930,6 +934,28 @@ class TranslatorTests(unittest.TestCase):
             self.assertEqual(t.max_workers, 1)
             self.assertEqual(t.batch_size, 1)
             self.assertGreaterEqual(t.API_TIMEOUT, 300)
+
+    def test_hymt2_official_generation_mode_applies_sampling_params(self):
+        with temp_test_dir() as d:
+            t = JaZhTranslator(
+                api_key="",
+                provider="hymt2",
+                hymt2_generation_mode="official",
+                glossary_path=os.path.join(d, "glossary.json"),
+                cache_path=os.path.join(d, "cache.json"),
+            )
+
+            self.assertEqual(t.temperature, 0.7)
+            self.assertEqual(t.top_p, 0.6)
+            self.assertEqual(t.top_k, 20)
+            self.assertEqual(t.repetition_penalty, 1.05)
+            self.assertEqual(t.max_tokens, 4096)
+            payload = {}
+            t._apply_provider_payload_options(payload)
+            self.assertEqual(payload.get("top_k"), 20)
+            self.assertEqual(payload.get("repetition_penalty"), 1.05)
+            self.assertEqual(payload.get("repeat_penalty"), 1.05)
+            self.assertEqual(payload.get("max_tokens"), 4096)
 
     def test_prompt_preview_requires_simplified_chinese(self):
         t = DummyTranslator()

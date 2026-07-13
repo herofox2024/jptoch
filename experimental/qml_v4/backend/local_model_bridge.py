@@ -17,10 +17,10 @@ from backend.python_llama_service import PythonLlamaService
 
 logger = logging.getLogger(__name__)
 DEFAULT_HYMT2_MODEL_URL = (
-    "https://huggingface.co/tencent/Hy-MT2-1.8B-Q4_K_M-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"
+    "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"
 )
 MIRROR_HYMT2_MODEL_URL = (
-    "https://hf-mirror.com/tencent/Hy-MT2-1.8B-Q4_K_M-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"
+    "https://hf-mirror.com/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"
 )
 DEFAULT_HYMT2_MODEL_NAME = "Hy-MT2-1.8B-Q4_K_M"
 

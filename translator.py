@@ -731,6 +731,9 @@ class JaZhTranslator:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
+        max_tokens: Optional[int] = None,
         frequency_penalty: Optional[float] = None,
         glossary_path: Optional[str] = None,
         cache_path: Optional[str] = None,
@@ -755,6 +758,7 @@ class JaZhTranslator:
         allow_text_cache_reuse: bool = False,
         prompt_extra_instruction: str = "",
         enable_prompt_examples: bool = True,
+        hymt2_generation_mode: str = "stable",
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -775,10 +779,21 @@ class JaZhTranslator:
         raw_api_url = (api_url or default_url).strip()
         self.api_url = self._normalize_api_url(raw_api_url)
         self.model = (model or default_model).strip()
-        default_temperature = 0.1 if self.provider in {"sakura", "hymt2"} else 0.3
-        default_top_p = 0.3 if self.provider in {"sakura", "hymt2"} else None
+        self.hymt2_generation_mode = str(hymt2_generation_mode or "stable").strip().lower()
+        if self.hymt2_generation_mode not in {"stable", "official"}:
+            self.hymt2_generation_mode = "stable"
+        hymt2_official_mode = self.provider == "hymt2" and self.hymt2_generation_mode == "official"
+        default_temperature = 0.7 if hymt2_official_mode else (0.1 if self.provider in {"sakura", "hymt2"} else 0.3)
+        default_top_p = 0.6 if hymt2_official_mode else (0.3 if self.provider in {"sakura", "hymt2"} else None)
         self.temperature = temperature if temperature is not None else default_temperature
         self.top_p = top_p if top_p is not None else default_top_p
+        self.top_k = int(top_k) if top_k is not None else (20 if hymt2_official_mode else None)
+        self.repetition_penalty = (
+            float(repetition_penalty)
+            if repetition_penalty is not None
+            else (1.05 if hymt2_official_mode else None)
+        )
+        self.max_tokens = int(max_tokens) if max_tokens is not None else (4096 if hymt2_official_mode else None)
         self.frequency_penalty = (
             frequency_penalty if frequency_penalty is not None else (0.1 if self.provider == "sakura" else None)
         )
@@ -921,10 +936,29 @@ class JaZhTranslator:
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
             f"并发数={self.max_workers}, 批量大小={self.batch_size}"
         )
+        if self.provider == "hymt2":
+            logger.info(
+                "Hy-MT2 生成模式: %s, temperature=%s, top_p=%s, top_k=%s, repetition_penalty=%s, max_tokens=%s",
+                self.hymt2_generation_mode,
+                self.temperature,
+                self.top_p,
+                self.top_k,
+                self.repetition_penalty,
+                self.max_tokens,
+            )
 
     def _apply_provider_payload_options(self, payload: Dict[str, Any], provider: Optional[str] = None) -> None:
         """为特定提供方追加请求参数。"""
-        apply_payload_options(payload, provider or self.provider, self.enable_thinking)
+        active_provider = (provider or self.provider or "").strip().lower()
+        apply_payload_options(payload, active_provider, self.enable_thinking)
+        if active_provider == "hymt2":
+            if self.top_k is not None:
+                payload["top_k"] = self.top_k
+            if self.repetition_penalty is not None:
+                payload["repetition_penalty"] = self.repetition_penalty
+                payload["repeat_penalty"] = self.repetition_penalty
+            if self.max_tokens is not None:
+                payload["max_tokens"] = self.max_tokens
 
     @classmethod
     def _wait_global_rate_limit(cls, cancel_event: threading.Event) -> None:

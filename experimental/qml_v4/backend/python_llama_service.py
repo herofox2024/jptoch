@@ -176,6 +176,8 @@ class PythonLlamaService:
         messages = payload.get("messages") or []
         temperature = float(payload.get("temperature", 0.7))
         top_p = float(payload.get("top_p", 0.6))
+        top_k = int(payload.get("top_k") or 40)
+        repeat_penalty = float(payload.get("repeat_penalty") or payload.get("repetition_penalty") or 1.0)
         max_tokens = int(payload.get("max_tokens") or payload.get("max_completion_tokens") or 1024)
 
         with self._inference_lock:
@@ -184,6 +186,8 @@ class PythonLlamaService:
                     messages=messages,
                     temperature=temperature,
                     top_p=top_p,
+                    top_k=top_k,
+                    repeat_penalty=repeat_penalty,
                     max_tokens=max_tokens,
                 )
                 if isinstance(result, dict) and result.get("choices"):
@@ -196,6 +200,8 @@ class PythonLlamaService:
                 prompt,
                 temperature=temperature,
                 top_p=top_p,
+                top_k=top_k,
+                repeat_penalty=repeat_penalty,
                 max_tokens=max_tokens,
                 stop=["</s>", "<|endoftext|>"],
             )

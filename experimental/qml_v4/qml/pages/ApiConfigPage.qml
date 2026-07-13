@@ -261,7 +261,7 @@ Page {
 
                 Label {
                     Layout.fillWidth: true
-                    text: "可以由本软件下载 Hy-MT2 Q4_K_M GGUF 模型，也可以手动选择已下载的模型文件。1.25bit/2bit GGUF 当前 llama 不支持，默认不再推荐下载；请优先使用 Q4_K_M。"
+                    text: "可以由本软件下载官方 Hy-MT2-1.8B-GGUF 仓库中的 Q4_K_M 模型，也可以手动选择已下载的模型文件。1.25bit/2bit GGUF 当前 llama 不支持，默认不再推荐下载；7B 模型仅建议在高配置电脑上手动选择。"
                     color: AppPalette.mutedText
                     wrapMode: Text.WordWrap
                     font.pixelSize: AppStyle.fontSmall
@@ -378,6 +378,27 @@ Page {
                     Label {
                         Layout.fillWidth: true
                         text: page.localModel ? page.localModel.gpuStatus : ""
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: AppStyle.fontSmall
+                    }
+
+                    FieldLabel { text: "生成模式" }
+                    ComboBox {
+                        id: hymt2GenerationModeCombo
+                        Layout.fillWidth: true
+                        model: ["稳定模式", "官方推荐模式"]
+                        currentIndex: cfg && cfg.hymt2GenerationMode === "official" ? 1 : 0
+                        onActivated: {
+                            if (!cfg) return
+                            cfg.hymt2GenerationMode = currentIndex === 1 ? "official" : "stable"
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: cfg && cfg.hymt2GenerationMode === "official"
+                              ? "temperature=0.7, top_p=0.6, top_k=20, repetition_penalty=1.05, max_tokens=4096；可能更贴近官方示例，但稳定性需自行测试。"
+                              : "temperature=0.1, top_p=0.3；不传 top_k/repetition_penalty/max_tokens；默认推荐，优先减少超时、残留和格式失控。"
                         color: AppPalette.mutedText
                         wrapMode: Text.WordWrap
                         font.pixelSize: AppStyle.fontSmall

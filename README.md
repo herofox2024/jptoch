@@ -191,8 +191,9 @@ QML/V4 支持将腾讯 Hy-MT2-1.8B GGUF 作为本地 OpenAI 兼容 provider 使�
 - 默认下载目录：`~/.epub_translator/models/hymt2/`。
 - 下载使用 `.part` 临时文件，取消后可再次点击继续断点下载。
 - 如果 HuggingFace 因代理或网络超时失败，可点击「使用镜像」切换到 `hf-mirror.com`；也可以手动下载 GGUF 后在页面选择本地文件。
-- 现在默认下载 `Hy-MT2-1.8B-Q4_K_M.gguf`，这是当前已验证能被 llama 加载的版本。
+- 现在默认从官方 `tencent/Hy-MT2-1.8B-GGUF` 仓库下载 `Hy-MT2-1.8B-Q4_K_M.gguf`，这是当前已验证能被 llama 加载的版本。
 - `1.25bit/2bit` GGUF 当前 llama 不支持，默认不再推荐下载；如果手动选择这类文件，可能出现 `gguf_init_from_reader ... offset ... expected` 并导致服务退出。
+- `Hy-MT2-7B-GGUF` 可以手动选择作为高级本地模型，但不建议默认下载；CPU 运行会很慢，建议至少有可用 NVIDIA 显卡和足够内存后再测试。
 - 现在支持两种本地运行方式：
   - **Python 本地模式**：由软件直接通过 `llama-cpp-python` 加载 GGUF，不需要 `llama-server.exe`。
   - **llama-server.exe 模式**：继续兼容外部 `llama-server` 启动方式。
@@ -206,6 +207,11 @@ QML/V4 支持将腾讯 Hy-MT2-1.8B GGUF 作为本地 OpenAI 兼容 provider 使�
 Hy-MT2 默认使用本地稳定模式：并发 `1`、批量 `1`、API 超时至少 `300` 秒，并禁用批量 JSON。它适合离线初译、隐私场景或内容审核备用，不建议默认替代云模型承担最终校对。
 
 如果使用 CPU 运行 Python 本地模式，不建议手动提高并发或批量；本地服务内部会串行推理，较高并发只会增加超时和断连概率。如果使用 CUDA 或外部 `llama-server.exe`，可以小幅提高并发测试，但仍建议保持 `batch_size=1`。
+
+Hy-MT2 本地模型页提供「生成模式」：
+
+- **稳定模式（默认）**：`temperature=0.1`、`top_p=0.3`，不额外传 `top_k`、`repetition_penalty`、`max_tokens`，优先保证稳定保存。
+- **官方推荐模式**：`temperature=0.7`、`top_p=0.6`、`top_k=20`、`repetition_penalty=1.05`、`max_tokens=4096`，更贴近官方示例，但可能增加超时、残留或格式失控，需要按机器性能实测。
 
 注意：Python 本地模式依赖 `llama-cpp-python`。如果你当前环境只有 Python 3.13，而对应 CUDA/CPU wheel 不可用，建议继续使用 `llama-server.exe` 模式，或者换到有可用 wheel 的 Python 版本再启用 Python 本地模式。
 
