@@ -261,7 +261,7 @@ Page {
 
                 Label {
                     Layout.fillWidth: true
-                    text: "可以由本软件下载 Hy-MT2 GGUF 模型，也可以手动选择已下载的模型文件。Python 本地模式会直接在本软件内加载 GGUF；llama-server.exe 模式则使用外部服务。"
+                    text: "可以由本软件下载 Hy-MT2 GGUF 模型，也可以手动选择已下载的模型文件。Hy-MT2 的 1.25bit/2bit GGUF 依赖 STQ kernel，普通 llama-cpp-python wheel 可能无法加载；若 Python 本地模式失败，请优先使用支持 STQ 的 llama-server.exe 模式。"
                     color: AppPalette.mutedText
                     wrapMode: Text.WordWrap
                     font.pixelSize: AppStyle.fontSmall

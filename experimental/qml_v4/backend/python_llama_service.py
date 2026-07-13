@@ -74,7 +74,20 @@ class PythonLlamaService:
             self.n_gpu_layers,
             self.ctx_size,
         )
-        self._llm = Llama(**kwargs)
+        try:
+            self._llm = Llama(**kwargs)
+        except ValueError as exc:
+            message = str(exc)
+            lower_path = self.model_path.lower()
+            if "failed to load model" in message.lower() and "hy-mt2" in lower_path:
+                raise RuntimeError(
+                    "当前 llama-cpp-python 不能加载这个 Hy-MT2 GGUF。"
+                    "Hy-MT2 的 1.25bit/2bit GGUF 依赖 llama.cpp 的 STQ kernel，"
+                    "普通 llama-cpp-python 预编译 wheel 通常不包含该内核。"
+                    "请改用支持 STQ 的 llama.cpp/llama-server.exe 模式，"
+                    "或安装/编译包含 STQ kernel 的 llama-cpp-python。"
+                ) from exc
+            raise
 
         handler = self._make_handler()
         self._server = ThreadingHTTPServer((self.host, self.port), handler)

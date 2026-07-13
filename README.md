@@ -195,6 +195,7 @@ QML/V4 支持将腾讯 Hy-MT2-1.8B GGUF 作为本地 OpenAI 兼容 provider 使�
   - **Python 本地模式**：由软件直接通过 `llama-cpp-python` 加载 GGUF，不需要 `llama-server.exe`。
   - **llama-server.exe 模式**：继续兼容外部 `llama-server` 启动方式。
 - Python 本地模式会启动内置 OpenAI 兼容服务，默认监听 `http://127.0.0.1:8080/v1/chat/completions`。
+- Hy-MT2 的 `1.25bit/2bit` GGUF 依赖 llama.cpp 的 STQ kernel。普通 `llama-cpp-python` 预编译 wheel 可能只能安装成功但无法加载该 GGUF；遇到 `Failed to load model` 时，优先改用支持 STQ 的 `llama-server.exe` 模式。
 - GPU 模式支持「自动 / CUDA / CPU」：
   - 自动模式会先检测 `nvidia-smi`，有 NVIDIA 显卡则尝试 CUDA。
   - 如果 CUDA 加载失败，会自动回退到 CPU。
