@@ -191,18 +191,19 @@ QML/V4 支持将腾讯 Hy-MT2-1.8B GGUF 作为本地 OpenAI 兼容 provider 使�
 - 默认下载目录：`~/.epub_translator/models/hymt2/`。
 - 下载使用 `.part` 临时文件，取消后可再次点击继续断点下载。
 - 如果 HuggingFace 因代理或网络超时失败，可点击「使用镜像」切换到 `hf-mirror.com`；也可以手动下载 GGUF 后在页面选择本地文件。
+- 现在默认下载 `Hy-MT2-1.8B-Q4_K_M.gguf`，这是当前已验证能被 llama 加载的版本。
+- `1.25bit/2bit` GGUF 当前 llama 不支持，默认不再推荐下载；如果手动选择这类文件，可能出现 `gguf_init_from_reader ... offset ... expected` 并导致服务退出。
 - 现在支持两种本地运行方式：
   - **Python 本地模式**：由软件直接通过 `llama-cpp-python` 加载 GGUF，不需要 `llama-server.exe`。
   - **llama-server.exe 模式**：继续兼容外部 `llama-server` 启动方式。
 - Python 本地模式会启动内置 OpenAI 兼容服务，默认监听 `http://127.0.0.1:8080/v1/chat/completions`。
-- Hy-MT2 的 `1.25bit/2bit` GGUF 依赖 llama.cpp 的 STQ kernel。普通 `llama-cpp-python` 预编译 wheel 可能只能安装成功但无法加载该 GGUF；遇到 `Failed to load model` 时，优先改用支持 STQ 的 `llama-server.exe` 模式。
 - GPU 模式支持「自动 / CUDA / CPU」：
   - 自动模式会先检测 `nvidia-smi`，有 NVIDIA 显卡则尝试 CUDA。
   - 如果 CUDA 加载失败，会自动回退到 CPU。
   - 集成显卡或未安装 CUDA 版 `llama-cpp-python` 时，会按 CPU 启动。
 - 点击「应用到 Hy-MT2 配置」会自动切换 provider、URL 和模型名。
 
-Hy-MT2 会自动使用保守参数：并发 `1`、批量 `1`。它适合离线初译、隐私场景或内容审核备用，不建议默认替代云模型承担最终校对。
+Hy-MT2 会自动使用本地模型保护参数：并发最高 `5`、批量最高 `5`。它适合离线初译、隐私场景或内容审核备用，不建议默认替代云模型承担最终校对。
 
 注意：Python 本地模式依赖 `llama-cpp-python`。如果你当前环境只有 Python 3.13，而对应 CUDA/CPU wheel 不可用，建议继续使用 `llama-server.exe` 模式，或者换到有可用 wheel 的 Python 版本再启用 Python 本地模式。
 

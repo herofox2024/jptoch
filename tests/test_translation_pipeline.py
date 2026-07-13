@@ -924,11 +924,17 @@ class TranslatorTests(unittest.TestCase):
             self.assertEqual(t.provider, "hymt2")
             self.assertEqual(t.api_key, "sk-local")
             self.assertEqual(t.api_url, "http://127.0.0.1:8080/v1/chat/completions")
-            self.assertEqual(t.model, "Hy-MT2-1.8B-1.25bit-GGUF")
+            self.assertEqual(t.model, "Hy-MT2-1.8B-Q4_K_M")
             self.assertEqual(t.temperature, 0.7)
             self.assertEqual(t.top_p, 0.6)
-            self.assertEqual(t.max_workers, 1)
-            self.assertEqual(t.batch_size, 1)
+            self.assertEqual(t.max_workers, 5)
+            self.assertEqual(t.batch_size, 5)
+
+    def test_prompt_preview_requires_simplified_chinese(self):
+        t = DummyTranslator()
+        preview = t.build_prompt_preview()
+        self.assertIn("必须输出简体中文", preview)
+        self.assertIn("不要输出繁体字", preview)
 
     def test_provider_registry_drives_translator_defaults(self):
         self.assertEqual(provider_default_url("longcat"), "https://api.longcat.chat/openai/v1/chat/completions")
@@ -942,7 +948,7 @@ class TranslatorTests(unittest.TestCase):
             provider_default_url("longcat"),
         )
         self.assertEqual(provider_default_url("hymt2"), "http://127.0.0.1:8080/v1/chat/completions")
-        self.assertEqual(provider_default_model("hymt2"), "Hy-MT2-1.8B-1.25bit-GGUF")
+        self.assertEqual(provider_default_model("hymt2"), "Hy-MT2-1.8B-Q4_K_M")
 
     def test_quality_rule_detects_suspicious_translation_pairs(self):
         self.assertTrue(is_suspicious_translation_pair("長い原文です。" * 3, "x"))

@@ -17,11 +17,12 @@ from backend.python_llama_service import PythonLlamaService
 
 logger = logging.getLogger(__name__)
 DEFAULT_HYMT2_MODEL_URL = (
-    "https://huggingface.co/tencent/Hy-MT2-1.8B-1.25bit-GGUF/resolve/main/model.gguf"
+    "https://huggingface.co/tencent/Hy-MT2-1.8B-Q4_K_M-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"
 )
 MIRROR_HYMT2_MODEL_URL = (
-    "https://hf-mirror.com/tencent/Hy-MT2-1.8B-1.25bit-GGUF/resolve/main/model.gguf"
+    "https://hf-mirror.com/tencent/Hy-MT2-1.8B-Q4_K_M-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"
 )
+DEFAULT_HYMT2_MODEL_NAME = "Hy-MT2-1.8B-Q4_K_M"
 
 
 def _data_dir() -> Path:
@@ -162,8 +163,8 @@ class LocalModelBridge(QObject):
     @Property(str, notify=modelPathChanged)
     def modelName(self) -> str:
         if not self._model_path:
-            return "Hy-MT2-1.8B-1.25bit-GGUF"
-        return Path(self._model_path).stem or "Hy-MT2-1.8B-1.25bit-GGUF"
+            return DEFAULT_HYMT2_MODEL_NAME
+        return Path(self._model_path).stem or DEFAULT_HYMT2_MODEL_NAME
 
     def _is_port_available(self) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -208,7 +209,7 @@ class LocalModelBridge(QObject):
     def _download_target_for_url(self, url: str) -> Path:
         file_name = (url or "").rstrip("/").split("/")[-1].split("?")[0] or "model.gguf"
         if not file_name.lower().endswith(".gguf"):
-            file_name = "model.gguf"
+            file_name = DEFAULT_HYMT2_MODEL_NAME + ".gguf"
         target_dir = Path(self.defaultModelDir)
         target_dir.mkdir(parents=True, exist_ok=True)
         return target_dir / file_name
@@ -414,6 +415,12 @@ class LocalModelBridge(QObject):
         if not download_url.startswith(("http://", "https://")):
             return {"ok": False, "message": "请输入有效的模型下载 URL"}
         target = self._download_target_for_url(download_url)
+        preferred = Path(self.defaultModelDir) / f"{DEFAULT_HYMT2_MODEL_NAME}.gguf"
+        if preferred.exists() and preferred.stat().st_size > 0:
+            self._model_path = str(preferred)
+            self.modelPathChanged.emit()
+            self._set_status(f"Q4_K_M 模型文件已存在并已选中: {preferred}")
+            return {"ok": True, "message": "Q4_K_M 模型文件已存在，已直接选中"}
         if target.exists() and target.stat().st_size > 0:
             self._model_path = str(target)
             self.modelPathChanged.emit()

@@ -787,8 +787,8 @@ class JaZhTranslator:
             max_text_size_for_batch = min(max_text_size_for_batch, 150)
         if self.provider == "hymt2":
             old_workers, old_batch = max_workers, batch_size
-            max_workers = min(max_workers, 1)
-            batch_size = min(batch_size, 1)
+            max_workers = min(max_workers, 5)
+            batch_size = min(batch_size, 5)
             max_batch_length = min(max_batch_length, 800)
             max_text_size_for_batch = min(max_text_size_for_batch, 200)
             if (old_workers, old_batch) != (max_workers, batch_size):
@@ -1728,7 +1728,7 @@ class JaZhTranslator:
             + "\n【术语规则】\n术语只在日文原文中独立命中且符合上下文时才修正；"
             + "短片假名普通物品、仅供参考术语和上下文命中术语不得强行替换；"
             + "标注保留原文的术语必须保留源词；如果术语译法会破坏语义，保留初译。\n"
-            + "\n【输出格式】\n只输出修正后的中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
+            + "\n【输出格式】\n只输出修正后的简体中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
         )
         proofread_api_key = self.proofread_api_key or self.api_key
         headers = {
@@ -1882,7 +1882,7 @@ class JaZhTranslator:
             "prev/next 只是上下文参考，不要翻译 prev/next。\n"
             "术语只在日文原文中独立命中且符合上下文时才修正；仅供参考/上下文命中术语不得机械强改；保留原文术语必须保留源词；如果术语译法会破坏语义，保留初译。\n"
             "禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
-            "必须只返回 JSON 对象，格式为：{\"items\":[{\"idx\":0,\"revised\":\"修正后的中文译文\"}]}。\n\n"
+            "必须只返回 JSON 对象，格式为：{\"items\":[{\"idx\":0,\"revised\":\"修正后的简体中文译文\"}]}。\n\n"
             f"【待校对项目】\n{json.dumps(prepared, ensure_ascii=False)}"
         )
         proofread_api_key = self.proofread_api_key or self.api_key
@@ -2596,6 +2596,14 @@ class JaZhTranslator:
             return ""
         return "【示例引导】\n" + "\n\n".join(sections)
 
+    @staticmethod
+    def _simplified_chinese_output_rule() -> str:
+        return (
+            "【简体中文输出要求】\n"
+            "必须输出简体中文。不要输出繁体字、异体字或台湾/香港用字；"
+            "如模型内部生成繁体表达，必须转换为大陆简体中文后再输出。"
+        )
+
     def _build_custom_prompt_guidance(self) -> str:
         text = str(getattr(self, "prompt_extra_instruction", "") or "").strip()
         if not text:
@@ -2675,7 +2683,7 @@ class JaZhTranslator:
                 "3. 专有名词按术语表策略处理：强制使用必须遵守；仅供参考/上下文命中不得机械强改；保留原文必须保留源词。\n"
                 "4. 保持原段落结构，不合并、不拆分段落。\n"
                 "5. 不解释原文，不输出注释，不输出修改说明。\n"
-                "6. 只输出修正后的中文译文。\n\n"
+                "6. 只输出修正后的简体中文译文。\n\n"
             )
         else:
             header = (
@@ -2687,10 +2695,11 @@ class JaZhTranslator:
                 "2. 专有名词按术语表策略处理：强制使用必须遵守；仅供参考/上下文命中需结合语境；保留原文不翻译。\n"
                 "3. 保持原段落结构，不合并、不拆分段落。\n"
                 "4. 保持人物语气、叙事节奏和情绪层次。\n"
-                "5. 只输出译文，不输出解释或注释。\n\n"
+                "5. 只输出简体中文译文，不输出解释或注释。\n\n"
             )
 
         parts = [
+            self._simplified_chinese_output_rule(),
             header + f"{genre_label}要求：\n{numbered(genre_rules[genre])}\n\n{tone_label}要求：\n{numbered(tone_rules[tone])}"
         ]
         examples = self._build_style_examples()
@@ -2724,7 +2733,7 @@ class JaZhTranslator:
             f"【术语表】\n{sample_glossary}\n\n"
             "【日文原文】\nここに校对対象の日本語が入ります。\n\n"
             "【中文初译】\n这里是中文初译。\n\n"
-            "【输出格式】\n只输出修正后的中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。"
+            "【输出格式】\n只输出修正后的简体中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。"
         )
         return (
             "【初译 System Prompt 片段】\n"
@@ -2811,8 +2820,8 @@ JSON 顶层字段：
         """Return the user-facing translation instruction for the active style."""
         genre, _, _, _ = self._get_style_profile()
         if genre == "historical_mystery":
-            return "请将以下日文准确、克制、自然地翻译为中文，不要自由润色、不要补充解释："
-        return "请将以下日文翻译为优美流畅的中文："
+            return "请将以下日文准确、克制、自然地翻译为简体中文，不要自由润色、不要补充解释："
+        return "请将以下日文翻译为优美流畅的简体中文："
 
     def _get_moderation_fallback_config(self) -> Optional[Dict[str, str]]:
         """Use the configured proofread model as a translation fallback after moderation blocks."""
@@ -2957,7 +2966,7 @@ JSON 顶层字段：
 3. 专业术语：按术语表翻译，保持一致
 4. 成语典故：可用恰当中文成语替代，但要自然不生硬
 【输出要求】：
-1. 输出仅为译文，不要解释或添加原文
+1. 输出仅为简体中文译文，不要解释或添加原文
 2. 保持原文段落结构，不合并或拆分段落
 3. 保留专有名词一致性（人名、地名、作品名等）
 4. 标点符号使用中文规范
@@ -4007,8 +4016,10 @@ JSON 顶层字段：
                 "历史推理少量剩余文本启用保守重试: batch_size=1，不走批量 JSON，禁用自由润色"
             )
         if self.provider == "hymt2" and effective_batch_size > 1:
-            effective_batch_size = 1
-            logger.info("Hy-MT2 本地模型启用保守翻译: batch_size=1")
+            old_effective_batch_size = effective_batch_size
+            effective_batch_size = min(effective_batch_size, 5)
+            if old_effective_batch_size != effective_batch_size:
+                logger.info("Hy-MT2 本地模型启用保守翻译: batch_size=%s", effective_batch_size)
 
         if progress_callback:
             progress_callback(completed, total)

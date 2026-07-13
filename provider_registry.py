@@ -51,7 +51,7 @@ PROVIDER_DEFAULTS: Dict[str, ProviderDefaults] = {
     ),
     "hymt2": ProviderDefaults(
         api_url="http://127.0.0.1:8080/v1/chat/completions",
-        model="Hy-MT2-1.8B-1.25bit-GGUF",
+        model="Hy-MT2-1.8B-Q4_K_M",
         requires_api_key=False,
     ),
     "custom": ProviderDefaults(api_url="", model=""),

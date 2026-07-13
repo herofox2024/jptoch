@@ -29,7 +29,7 @@ class PythonLlamaService:
         model_path: str,
         host: str = "127.0.0.1",
         port: int = 8080,
-        model_name: str = "Hy-MT2-1.8B-1.25bit-GGUF",
+        model_name: str = "Hy-MT2-1.8B-Q4_K_M",
         n_gpu_layers: int = 0,
         ctx_size: int = 4096,
         n_threads: int | None = None,
@@ -82,10 +82,8 @@ class PythonLlamaService:
             if "failed to load model" in message.lower() and "hy-mt2" in lower_path:
                 raise RuntimeError(
                     "当前 llama-cpp-python 不能加载这个 Hy-MT2 GGUF。"
-                    "Hy-MT2 的 1.25bit/2bit GGUF 依赖 llama.cpp 的 STQ kernel，"
-                    "普通 llama-cpp-python 预编译 wheel 通常不包含该内核。"
-                    "请改用支持 STQ 的 llama.cpp/llama-server.exe 模式，"
-                    "或安装/编译包含 STQ kernel 的 llama-cpp-python。"
+                    "1.25bit/2bit GGUF 当前 llama 不支持，"
+                    "请改用 Hy-MT2-1.8B-Q4_K_M.gguf。"
                 ) from exc
             raise
 

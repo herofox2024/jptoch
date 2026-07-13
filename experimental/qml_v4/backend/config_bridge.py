@@ -29,7 +29,7 @@ WENXIN_MODEL = "ernie-4.5-turbo-128k"
 LONGCAT_API_URL = "https://api.longcat.chat/openai/v1/chat/completions"
 LONGCAT_MODEL = "LongCat-2.0"
 HYMT2_API_URL = "http://127.0.0.1:8080/v1/chat/completions"
-HYMT2_MODEL = "Hy-MT2-1.8B-1.25bit-GGUF"
+HYMT2_MODEL = "Hy-MT2-1.8B-Q4_K_M"
 
 PROVIDER_DEFAULTS = {
     "deepseek": {"url": DEEPSEEK_API_URL, "model": DEEPSEEK_MODEL},
@@ -60,7 +60,7 @@ PROVIDER_CAPABILITY = {
     "gemini": "Gemini 免费版有限流",
     "wenxin": "文心一言/千帆：建议先低并发低批量测试，旧版 access_token RPC 接口不兼容",
     "longcat": "LongCat：已自动限制并发≤8、batch≤9；遇到内容审核会拆分/降级处理",
-    "hymt2": "Hy-MT2 本地：自动限制并发=1、batch=1；适合离线初译或审核备用，不建议默认承担最终校对",
+    "hymt2": "Hy-MT2 本地：自动限制并发≤5、batch≤5；适合离线初译或审核备用，不建议默认承担最终校对",
 }
 
 PERF_UI_PRESETS = {

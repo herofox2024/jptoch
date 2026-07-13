@@ -18,7 +18,7 @@ Page {
         "deepseek": "DeepSeek：推荐主力翻译；付费版支持高并发批量。",
         "doubao": "Doubao：火山方舟 OpenAI 兼容接口。",
         "sakura": "Sakura：本地模型，无需 API Key。",
-        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；可使用 Python 本地模式或 llama-server.exe 模式，默认按低并发低批量运行。",
+        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；可使用 Python 本地模式或 llama-server.exe 模式，默认限制并发≤5、批量≤5。",
         "gemini": "Gemini：不支持 thinking 参数；免费版易限流。",
         "glm": "GLM/智谱：免费版限流明显，建议用性能预设。",
         "wenxin": "文心一言/千帆：使用百度千帆 OpenAI 兼容接口；旧版 access_token RPC 接口不兼容。",
@@ -54,7 +54,7 @@ Page {
         cfg.setProvider("hymt2")
         cfg.apiKey = "sk-local"
         cfg.apiUrl = page.localModel.localApiUrl
-        cfg.model = page.localModel.modelName || "Hy-MT2-1.8B-1.25bit-GGUF"
+        cfg.model = page.localModel.modelName || "Hy-MT2-1.8B-Q4_K_M"
         page.currentProvider = "hymt2"
         page.isCustom = false
         page.isLocalProvider = true
@@ -261,7 +261,7 @@ Page {
 
                 Label {
                     Layout.fillWidth: true
-                    text: "可以由本软件下载 Hy-MT2 GGUF 模型，也可以手动选择已下载的模型文件。Hy-MT2 的 1.25bit/2bit GGUF 依赖 STQ kernel，普通 llama-cpp-python wheel 可能无法加载；若 Python 本地模式失败，请优先使用支持 STQ 的 llama-server.exe 模式。"
+                    text: "可以由本软件下载 Hy-MT2 Q4_K_M GGUF 模型，也可以手动选择已下载的模型文件。1.25bit/2bit GGUF 当前 llama 不支持，默认不再推荐下载；请优先使用 Q4_K_M。"
                     color: AppPalette.mutedText
                     wrapMode: Text.WordWrap
                     font.pixelSize: AppStyle.fontSmall
