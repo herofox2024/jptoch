@@ -51,7 +51,7 @@ PROVIDER_HINTS = {
     "glm":      "智谱开放平台，免费版限制并发",
     "wenxin":   "百度千帆/文心一言 OpenAI 兼容接口，需使用千帆 API Key",
     "longcat":  "美团 LongCat OpenAI 兼容接口，默认模型 LongCat-2.0",
-    "hymt2":    "腾讯 Hy-MT2 本地翻译模型，需先启动 llama-server，无需 API Key",
+    "hymt2":    "腾讯 Hy-MT2 本地翻译模型，无需 API Key；可用 Python 本地模式或 llama-server.exe 模式",
     "custom":   "任意 OpenAI 兼容端点，请手动填写 URL 和模型名",
 }
 

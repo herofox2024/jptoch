@@ -1,4 +1,4 @@
-﻿<div align="center">
+﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -191,11 +191,19 @@ QML/V4 支持将腾讯 Hy-MT2-1.8B GGUF 作为本地 OpenAI 兼容 provider 使�
 - 默认下载目录：`~/.epub_translator/models/hymt2/`。
 - 下载使用 `.part` 临时文件，取消后可再次点击继续断点下载。
 - 如果 HuggingFace 因代理或网络超时失败，可点击「使用镜像」切换到 `hf-mirror.com`；也可以手动下载 GGUF 后在页面选择本地文件。
-- 需要本机存在 `llama-server`；可以从 `PATH` 自动查找，也可以手动选择 `llama-server.exe`。
-- 点击「启动本地服务」后，软件会调用本地 `llama-server` 并暴露 `http://127.0.0.1:8080/v1/chat/completions`。
+- 现在支持两种本地运行方式：
+  - **Python 本地模式**：由软件直接通过 `llama-cpp-python` 加载 GGUF，不需要 `llama-server.exe`。
+  - **llama-server.exe 模式**：继续兼容外部 `llama-server` 启动方式。
+- Python 本地模式会启动内置 OpenAI 兼容服务，默认监听 `http://127.0.0.1:8080/v1/chat/completions`。
+- GPU 模式支持「自动 / CUDA / CPU」：
+  - 自动模式会先检测 `nvidia-smi`，有 NVIDIA 显卡则尝试 CUDA。
+  - 如果 CUDA 加载失败，会自动回退到 CPU。
+  - 集成显卡或未安装 CUDA 版 `llama-cpp-python` 时，会按 CPU 启动。
 - 点击「应用到 Hy-MT2 配置」会自动切换 provider、URL 和模型名。
 
 Hy-MT2 会自动使用保守参数：并发 `1`、批量 `1`。它适合离线初译、隐私场景或内容审核备用，不建议默认替代云模型承担最终校对。
+
+注意：Python 本地模式依赖 `llama-cpp-python`。如果你当前环境只有 Python 3.13，而对应 CUDA/CPU wheel 不可用，建议继续使用 `llama-server.exe` 模式，或者换到有可用 wheel 的 Python 版本再启用 Python 本地模式。
 
 ### 小说风格 Prompt
 
@@ -606,7 +614,7 @@ python -m pytest -q
 - 增加停止按钮、暂停恢复续译、状态页预计翻译时长/预计剩余时间。
 - 增加文心一言供应商。
 - 增加 LongCat 2.0 供应商，内置官方 OpenAI 兼容接口、默认模型和 `LONGCAT_API_KEY` 环境变量读取。
-- 增加 Hy-MT2 本地 provider，支持在 API 页下载 GGUF 模型、选择 `llama-server`、启动本地 OpenAI 兼容服务并一键应用配置。
+- 增加 Hy-MT2 本地 provider，支持在 API 页下载 GGUF 模型、Python 本地模式、`llama-server` 模式、GPU 自动检测与 CPU 回退，并可一键应用配置。
 - 增加内容审核备用模型机制，主模型遇到 `security_audit_fail` / `contentFilter` 等审核拦截时，可使用校对模型配置重译单段。
 - 增加小说风格设置和本地风格识别，风格可影响初译和译后校对 Prompt。
 - 修复当前书清理缓存不完整的问题，覆盖旧版明文 key、哈希 key 和跨模型同源文本缓存。

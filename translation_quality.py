@@ -27,6 +27,7 @@ JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
 JAPANESE_NAME_KANJI_NORMALIZATION = {
     "銀": "银",
     "時": "时",
+    "鶴": "鹤",
 }
 COMMON_JAPANESE_RESIDUE_REPAIRS = {
     "这些すべて": "这一切",
@@ -38,13 +39,14 @@ JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
 KNOWN_KATAKANA_TERMS_FILE = "known_katakana_terms.json"
 DEFAULT_KNOWN_KATAKANA_TERMS: Dict[str, str] = {
     "チロリ": "烫酒壶",
+    "ドサ帰り": "从佐渡归来",
 }
 ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
     r"[「『“\"'（(【\[]?\s*[\u30a0-\u30ff\uff66-\uff9f]\s*[」』”\"'）)】\]]?\s*(?:の\s*)?(?:字形|字型|字状|形|型|状|字)"
 )
 ALLOWED_LATIN_MIDDLE_DOT_RE = re.compile(r"(?<=[A-Za-z0-9])・(?=[A-Za-z0-9])")
 JAPANESE_EXPLANATORY_QUOTE_CUE_RE = re.compile(
-    r"(?:说法|所谓|写作|写成|写出来|读作|读成|发音|原文|日文|词语|词|意思|叫做|称作|表示)"
+    r"(?:说法|所谓|写作|写成|写出来|读作|读成|发音|原文|日文|词语|词|意思|叫做|称作|称呼|表示)"
 )
 JAPANESE_READING_PUZZLE_RUN_RE = re.compile(
     r"(?<![A-Za-z0-9])[\u30a0-\u30ff\uff66-\uff9f](?:[、,，・･\s]*[\u30a0-\u30ff\uff66-\uff9f]){2,}(?![A-Za-z0-9])"
@@ -245,6 +247,19 @@ def strip_user_allowed_japanese_literals(text: str) -> str:
 
     for literal in allowlist.get("exact") or []:
         stripped = stripped.replace(literal, "")
+    for literal in sorted(quoted_literals, key=len, reverse=True):
+        if not literal or literal not in stripped:
+            continue
+        for match in re.finditer(re.escape(literal), stripped):
+            context_start = max(0, match.start() - 50)
+            context_end = min(len(stripped), match.end() + 50)
+            context = stripped[context_start:context_end]
+            if (
+                JAPANESE_EXPLANATORY_QUOTE_CUE_RE.search(context)
+                or JAPANESE_READING_PUZZLE_CONTEXT_RE.search(context)
+            ):
+                stripped = stripped.replace(literal, "")
+                break
     for pattern in allowlist.get("regex") or []:
         stripped = pattern.sub("", stripped)
     return stripped
@@ -394,6 +409,21 @@ def repair_orphan_japanese_o_name_prefix_residue(dst: str) -> str:
     return re.sub(r"お([\u3400-\u9fff々])", repl, translated)
 
 
+def repair_japanese_san_suffix_residue(dst: str) -> str:
+    """Remove Japanese honorific さん after Chinese-rendered names."""
+    translated = str(dst or "")
+    if "さん" not in translated:
+        return translated
+
+    def normalize_name(match: re.Match[str]) -> str:
+        name = match.group(1)
+        for source, target in JAPANESE_NAME_KANJI_NORMALIZATION.items():
+            name = name.replace(source, target)
+        return name
+
+    return re.sub(r"((?:阿|小|老)?[\u3400-\u9fff々]{1,4})さん", normalize_name, translated)
+
+
 def repair_common_japanese_residue_terms(dst: str) -> str:
     translated = str(dst or "")
     if not translated:
@@ -430,6 +460,7 @@ def postprocess_translation(src: str, dst: Optional[str]) -> str:
         return ""
     translated = repair_japanese_o_name_prefix_residue(src, translated)
     translated = repair_orphan_japanese_o_name_prefix_residue(translated)
+    translated = repair_japanese_san_suffix_residue(translated)
     translated = repair_common_japanese_residue_terms(translated)
     return repair_known_katakana_terms(src, translated)
 

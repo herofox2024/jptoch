@@ -994,6 +994,42 @@ class TranslatorTests(unittest.TestCase):
         self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(text))
         self.assertTrue(JaZhTranslator._is_incomplete_translation("source", text))
 
+    def test_save_time_repairs_known_residue_from_hymt2_cache(self):
+        text = "从佐渡平安回来的人被称为“ドサ帰り”，在流浪者中被视为最高荣誉的勋章。"
+        repaired = tq.repair_save_time_japanese_residue("", text)
+        self.assertIn("从佐渡归来", repaired)
+        self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(repaired))
+
+    def test_save_time_repairs_japanese_san_suffix(self):
+        text = "为什么把凶手的名字告诉了阿景さん，说是弁藏呢？阿鶴さん也离开了。"
+        repaired = tq.repair_save_time_japanese_residue("", text)
+        self.assertEqual(repaired, "为什么把凶手的名字告诉了阿景，说是弁藏呢？阿鹤也离开了。")
+        self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(repaired))
+
+    def test_allowlisted_reading_fragment_inside_explanation_does_not_block(self):
+        with temp_test_dir() as d:
+            path = Path(d) / "japanese_residue_allowlist.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "quoted": ["べん", "べんぞう", "ざう", "おじご"],
+                        "exact": [],
+                        "quoted_regex": [],
+                        "regex": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            tq.configure_data_dir(lambda: Path(d))
+            samples = [
+                "弥一郎写的“べん”和阿里说的“弁蔵”是同一个字。べんぞう是个人的名字，应该写作弁藏。",
+                "国定忠治称呼年长十七岁的荣五郎为“おじご”，一眼就能看出关系不一般。",
+            ]
+            for text in samples:
+                with self.subTest(text=text):
+                    self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(text))
+
     def test_pre_translate_strips_japanese_quotes(self):
         t = DummyTranslator()
         result = t._pre_translate("「はい」")

@@ -18,7 +18,7 @@ Page {
         "deepseek": "DeepSeek：推荐主力翻译；付费版支持高并发批量。",
         "doubao": "Doubao：火山方舟 OpenAI 兼容接口。",
         "sakura": "Sakura：本地模型，无需 API Key。",
-        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，需先启动 llama-server，无需 API Key；默认按低并发低批量运行。",
+        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；可使用 Python 本地模式或 llama-server.exe 模式，默认按低并发低批量运行。",
         "gemini": "Gemini：不支持 thinking 参数；免费版易限流。",
         "glm": "GLM/智谱：免费版限流明显，建议用性能预设。",
         "wenxin": "文心一言/千帆：使用百度千帆 OpenAI 兼容接口；旧版 access_token RPC 接口不兼容。",
@@ -261,7 +261,7 @@ Page {
 
                 Label {
                     Layout.fillWidth: true
-                    text: "可以由本软件下载 Hy-MT2 GGUF 模型，也可以手动选择已下载的模型文件。选择 llama-server 程序后，可由本软件启动本地 OpenAI 兼容服务。"
+                    text: "可以由本软件下载 Hy-MT2 GGUF 模型，也可以手动选择已下载的模型文件。Python 本地模式会直接在本软件内加载 GGUF；llama-server.exe 模式则使用外部服务。"
                     color: AppPalette.mutedText
                     wrapMode: Text.WordWrap
                     font.pixelSize: AppStyle.fontSmall
@@ -338,6 +338,59 @@ Page {
                     rowSpacing: 10
                     columnSpacing: 12
 
+                    FieldLabel { text: "运行模式" }
+                    ComboBox {
+                        id: backendModeCombo
+                        Layout.fillWidth: true
+                        model: ["Python 本地模式", "llama-server.exe 模式"]
+                        currentIndex: page.localModel && page.localModel.backendMode === "server" ? 1 : 0
+                        onActivated: {
+                            if (!page.localModel) return
+                            page.showLocalModelResult(page.localModel.setBackendMode(currentIndex === 0 ? "python" : "server"))
+                        }
+                    }
+                    Button {
+                        text: "检测 GPU"
+                        enabled: page.localModel
+                        onClicked: {
+                            if (!page.localModel) return
+                            page.showLocalModelResult(page.localModel.detectGpuBackend())
+                        }
+                    }
+
+                    FieldLabel { text: "GPU 模式" }
+                    ComboBox {
+                        id: gpuModeCombo
+                        Layout.fillWidth: true
+                        model: ["自动", "CUDA", "CPU"]
+                        currentIndex: {
+                            if (!page.localModel) return 0
+                            if (page.localModel.gpuMode === "cuda") return 1
+                            if (page.localModel.gpuMode === "cpu") return 2
+                            return 0
+                        }
+                        onActivated: {
+                            if (!page.localModel) return
+                            var mode = currentIndex === 1 ? "cuda" : (currentIndex === 2 ? "cpu" : "auto")
+                            page.showLocalModelResult(page.localModel.setGpuMode(mode))
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: page.localModel ? page.localModel.gpuStatus : ""
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: AppStyle.fontSmall
+                    }
+
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 3
+                    rowSpacing: 10
+                    columnSpacing: 12
+
                     FieldLabel { text: "GGUF 模型" }
                     TextField {
                         Layout.fillWidth: true
@@ -351,16 +404,18 @@ Page {
                         onClicked: modelFileDialog.open()
                     }
 
-                    FieldLabel { text: "llama-server" }
+                    FieldLabel { text: "llama-server"; visible: page.localModel && page.localModel.backendMode === "server" }
                     TextField {
                         Layout.fillWidth: true
                         text: page.localModel ? page.localModel.serverPath : ""
                         readOnly: true
                         selectByMouse: true
                         placeholderText: "可自动查找 PATH，或手动选择 llama-server.exe"
+                        visible: page.localModel && page.localModel.backendMode === "server"
                     }
                     RowLayout {
                         spacing: AppStyle.spacingSmall
+                        visible: page.localModel && page.localModel.backendMode === "server"
                         Button {
                             text: "自动查找"
                             onClicked: {
