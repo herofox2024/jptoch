@@ -427,7 +427,7 @@ Page {
                             SpinBox {
                                 id: apiTimeoutSpin
                                 from: 1
-                                to: 300
+                                to: 600
                                 value: cfg ? cfg.apiTimeout : 120
                                 editable: true
                                 onValueChanged: {
@@ -461,7 +461,8 @@ Page {
                                     { key: "extreme", label: "极端" },
                                     { key: "glm_free", label: "智谱免费版" },
                                     { key: "gemini_free", label: "Gemini 免费版" },
-                                    { key: "deepseek_paid", label: "DeepSeek 付费版" }
+                                    { key: "deepseek_paid", label: "DeepSeek 付费版" },
+                                    { key: "hymt2_local", label: "Hy-MT2 本地" }
                                 ]
                                 Button {
                                     text: modelData.label
@@ -1293,7 +1294,8 @@ Page {
             "extreme": "极端：极限速度，高风险",
             "glm_free": "智谱免费版：低并发低批量，降低限流概率",
             "gemini_free": "Gemini 免费版：保守参数避免限流",
-            "deepseek_paid": "DeepSeek 付费版：较高并发和批量"
+            "deepseek_paid": "DeepSeek 付费版：较高并发和批量",
+            "hymt2_local": "Hy-MT2 本地：并发1、批量1、超时300，优先保证稳定保存"
         }
         presetHint.text = labels[key] || ("已应用: " + key)
     }

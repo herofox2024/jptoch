@@ -663,6 +663,10 @@ class JaZhTranslator:
     ENABLE_BATCH_ITEM_CONTEXT = False  # 批量 JSON 不默认给每条塞 prev/next，避免大幅增加 token
     CONTEXT_PREVIEW_LEN = 80       # 前后文预览最大字符数
 
+    def _provider_uses_context_window(self) -> bool:
+        """Hy-MT2 is prone to leaking reference context into the translation."""
+        return self.ENABLE_CONTEXT_WINDOW and self.provider != "hymt2"
+
     def _build_context_guidance(self, prev_text: Optional[str], next_text: Optional[str]) -> str:
         """构建上下文提示（仅附加到 user_prompt，不影响 system_prompt）。"""
         parts = []
@@ -771,8 +775,8 @@ class JaZhTranslator:
         raw_api_url = (api_url or default_url).strip()
         self.api_url = self._normalize_api_url(raw_api_url)
         self.model = (model or default_model).strip()
-        default_temperature = 0.1 if self.provider == "sakura" else (0.7 if self.provider == "hymt2" else 0.3)
-        default_top_p = 0.3 if self.provider == "sakura" else (0.6 if self.provider == "hymt2" else None)
+        default_temperature = 0.1 if self.provider in {"sakura", "hymt2"} else 0.3
+        default_top_p = 0.3 if self.provider in {"sakura", "hymt2"} else None
         self.temperature = temperature if temperature is not None else default_temperature
         self.top_p = top_p if top_p is not None else default_top_p
         self.frequency_penalty = (
@@ -787,13 +791,14 @@ class JaZhTranslator:
             max_text_size_for_batch = min(max_text_size_for_batch, 150)
         if self.provider == "hymt2":
             old_workers, old_batch = max_workers, batch_size
-            max_workers = min(max_workers, 5)
-            batch_size = min(batch_size, 5)
-            max_batch_length = min(max_batch_length, 800)
-            max_text_size_for_batch = min(max_text_size_for_batch, 200)
+            max_workers = min(max_workers, 1)
+            batch_size = min(batch_size, 1)
+            max_batch_length = min(max_batch_length, 300)
+            max_text_size_for_batch = min(max_text_size_for_batch, 120)
+            api_timeout = max(api_timeout, 300)
             if (old_workers, old_batch) != (max_workers, batch_size):
                 logger.info(
-                    "Hy-MT2 本地模型保护: 并发 %s→%s，批量 %s→%s",
+                    "Hy-MT2 本地稳定模式: 并发 %s→%s，批量 %s→%s",
                     old_workers,
                     max_workers,
                     old_batch,
@@ -2146,7 +2151,7 @@ class JaZhTranslator:
     def _is_context_cache_text(self, text: str) -> bool:
         """Short dialogue fragments are context-sensitive and should not share one global cache entry."""
         text = (text or "").strip()
-        if not self.ENABLE_CONTEXT_WINDOW or not text:
+        if not self._provider_uses_context_window() or not text:
             return False
         if len(text) > self.SMART_BATCH_SHORT:
             return False
@@ -2991,7 +2996,7 @@ JSON 顶层字段：
 
         selected_entries = self._select_glossary_entries(text)
         context_guidance = ""
-        if self.ENABLE_CONTEXT_WINDOW and (prev_text or next_text):
+        if self._provider_uses_context_window() and (prev_text or next_text):
             context_guidance = "\n\n" + self._build_context_guidance(prev_text, next_text)
         residue_guidance_text = f"\n\n{residue_guidance}" if residue_guidance else ""
         user_prompt = (
@@ -3200,7 +3205,7 @@ JSON 顶层字段：
         context_guidance = ""
         if item_contexts:
             context_guidance = "\n\nJSON 中的 prev/next 字段是上下文参考，只用于理解语境；只翻译 text 字段。"
-        elif self.ENABLE_CONTEXT_WINDOW and (prev_text or next_text):
+        elif self._provider_uses_context_window() and (prev_text or next_text):
             context_guidance = "\n\n" + self._build_context_guidance(prev_text, next_text)
 
         user_prompt = (
@@ -3847,7 +3852,7 @@ JSON 顶层字段：
             context_sequence = list(texts)
 
         def get_context_for_index(idx: int) -> Tuple[Optional[str], Optional[str]]:
-            if not self.ENABLE_CONTEXT_WINDOW or idx < 0 or idx >= len(context_sequence):
+            if not self._provider_uses_context_window() or idx < 0 or idx >= len(context_sequence):
                 return None, None
             prev_text = context_sequence[idx - 1] if idx > 0 else None
             next_text = context_sequence[idx + 1] if idx + 1 < len(context_sequence) else None
@@ -4017,9 +4022,9 @@ JSON 顶层字段：
             )
         if self.provider == "hymt2" and effective_batch_size > 1:
             old_effective_batch_size = effective_batch_size
-            effective_batch_size = min(effective_batch_size, 5)
+            effective_batch_size = 1
             if old_effective_batch_size != effective_batch_size:
-                logger.info("Hy-MT2 本地模型启用保守翻译: batch_size=%s", effective_batch_size)
+                logger.info("Hy-MT2 本地稳定模式: batch_size=1，不走批量 JSON")
 
         if progress_callback:
             progress_callback(completed, total)
@@ -4036,7 +4041,7 @@ JSON 顶层字段：
         batches = self._smart_batch_task_keys(uncached_unique, task_texts, effective_batch_size)
         logger.info(f"智能分批为 {len(batches)} 个批次进行并发翻译")
 
-        if self.ENABLE_CONTEXT_WINDOW:
+        if self._provider_uses_context_window():
             context_cache_count = sum(1 for key, task in pending_tasks.items() if key.startswith("v3ctx:"))
             logger.info(f"上下文窗口已启用: {len(context_sequence)} 条文本；上下文缓存任务 {context_cache_count} 个")
 
@@ -4333,7 +4338,7 @@ JSON 顶层字段：
             # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
             item_contexts = (
                 [get_context_for_task(task_key) for task_key in batch]
-                if self.ENABLE_CONTEXT_WINDOW and self.ENABLE_BATCH_ITEM_CONTEXT
+                if self._provider_uses_context_window() and self.ENABLE_BATCH_ITEM_CONTEXT
                 else None
             )
             batch_prev_ctx, batch_next_ctx = get_context_for_task(batch[0])

@@ -18,7 +18,7 @@ Page {
         "deepseek": "DeepSeek：推荐主力翻译；付费版支持高并发批量。",
         "doubao": "Doubao：火山方舟 OpenAI 兼容接口。",
         "sakura": "Sakura：本地模型，无需 API Key。",
-        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；可使用 Python 本地模式或 llama-server.exe 模式，默认限制并发≤5、批量≤5。",
+        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；可使用 Python 本地模式或 llama-server.exe 模式，默认使用并发1、批量1的稳定模式。",
         "gemini": "Gemini：不支持 thinking 参数；免费版易限流。",
         "glm": "GLM/智谱：免费版限流明显，建议用性能预设。",
         "wenxin": "文心一言/千帆：使用百度千帆 OpenAI 兼容接口；旧版 access_token RPC 接口不兼容。",

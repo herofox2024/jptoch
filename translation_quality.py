@@ -34,6 +34,13 @@ COMMON_JAPANESE_RESIDUE_REPAIRS = {
     "這些すべて": "这一切",
     "这一切すべて": "这一切",
     "すべて": "全部",
+    "像ゴマの蠅那样": "像江湖骗子那样",
+    "ゴマの蠅": "江湖骗子",
+    "在その尽头": "在那尽头",
+    "その尽头": "那尽头",
+    "桑畑くわばたけ里的荣五郎": "桑田里的荣五郎",
+    "桑畑くわばたけ里": "桑田里",
+    "桑畑くわばたけ": "桑田",
 }
 JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
 KNOWN_KATAKANA_TERMS_FILE = "known_katakana_terms.json"
@@ -55,6 +62,10 @@ JAPANESE_READING_PUZZLE_CONTEXT_RE = re.compile(
     r"(?:首音|读|讀|发音|發音|音读|音讀|读音|讀音|拼读|拼讀|"
     r"左往右|右往左|从左|從左|从右|從右|横排|橫排|竖排|豎排|"
     r"连起来|連起來|串字符|字符|字串|片假名|假名|暗号|谜题|謎題|谜面|謎面|藏头|藏尾)"
+)
+LEAKED_PROMPT_BLOCK_RE = re.compile(
+    r"\s*【(?:前文上下文|后文上下文|本书内日文残留修复参考)[^】]*】.*?(?=(?:【(?:前文上下文|后文上下文|本书内日文残留修复参考)[^】]*】)|\Z)",
+    re.S,
 )
 
 _allowlist_cache: Optional[Dict[str, Any]] = None
@@ -433,6 +444,14 @@ def repair_common_japanese_residue_terms(dst: str) -> str:
     return translated
 
 
+def strip_leaked_prompt_context(dst: str) -> str:
+    """Remove prompt-only reference blocks leaked by small local models."""
+    translated = str(dst or "")
+    if "【前文上下文" not in translated and "【后文上下文" not in translated and "【本书内日文残留修复参考" not in translated:
+        return translated
+    return LEAKED_PROMPT_BLOCK_RE.sub("", translated).strip()
+
+
 def repair_known_katakana_terms(src: str, dst: str) -> str:
     """Translate known katakana item names that models sometimes preserve."""
     translated = str(dst or "")
@@ -458,6 +477,7 @@ def postprocess_translation(src: str, dst: Optional[str]) -> str:
     translated = str(dst or "").strip()
     if not translated:
         return ""
+    translated = strip_leaked_prompt_context(translated)
     translated = repair_japanese_o_name_prefix_residue(src, translated)
     translated = repair_orphan_japanese_o_name_prefix_residue(translated)
     translated = repair_japanese_san_suffix_residue(translated)

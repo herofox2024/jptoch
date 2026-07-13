@@ -925,10 +925,11 @@ class TranslatorTests(unittest.TestCase):
             self.assertEqual(t.api_key, "sk-local")
             self.assertEqual(t.api_url, "http://127.0.0.1:8080/v1/chat/completions")
             self.assertEqual(t.model, "Hy-MT2-1.8B-Q4_K_M")
-            self.assertEqual(t.temperature, 0.7)
-            self.assertEqual(t.top_p, 0.6)
-            self.assertEqual(t.max_workers, 5)
-            self.assertEqual(t.batch_size, 5)
+            self.assertEqual(t.temperature, 0.1)
+            self.assertEqual(t.top_p, 0.3)
+            self.assertEqual(t.max_workers, 1)
+            self.assertEqual(t.batch_size, 1)
+            self.assertGreaterEqual(t.API_TIMEOUT, 300)
 
     def test_prompt_preview_requires_simplified_chinese(self):
         t = DummyTranslator()
@@ -1005,6 +1006,23 @@ class TranslatorTests(unittest.TestCase):
         repaired = tq.repair_save_time_japanese_residue("", text)
         self.assertIn("从佐渡归来", repaired)
         self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(repaired))
+
+    def test_save_time_repairs_hymt2_common_residue_terms(self):
+        samples = [
+            ("道路沿线常有像ゴマの蠅那样的不良分子。", "江湖骗子"),
+            ("在その尽头，有一个狭长的坐席。", "在那尽头"),
+            ("桑畑くわばたけ里的荣五郎", "桑田里的荣五郎"),
+        ]
+        for text, expected in samples:
+            with self.subTest(text=text):
+                repaired = tq.repair_save_time_japanese_residue("", text)
+                self.assertIn(expected, repaired)
+                self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(repaired))
+
+    def test_postprocess_strips_leaked_context_blocks(self):
+        text = "“去哪里呢？”【前文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】女子对旅人说了话。"
+        repaired = tq.repair_save_time_japanese_residue("", text)
+        self.assertEqual(repaired, "“去哪里呢？”")
 
     def test_save_time_repairs_japanese_san_suffix(self):
         text = "为什么把凶手的名字告诉了阿景さん，说是弁藏呢？阿鶴さん也离开了。"

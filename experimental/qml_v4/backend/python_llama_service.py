@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -149,9 +150,14 @@ class PythonLlamaService:
                     payload = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
                     response = service._chat_completion(payload)
                     self._write_json(response)
+                except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, socket.timeout) as exc:
+                    logger.warning("Python llama client disconnected before response was sent: %s", exc)
                 except Exception as exc:  # pragma: no cover - defensive HTTP boundary
                     logger.exception("Python llama completion failed")
-                    self._write_json({"error": {"message": str(exc), "type": "server_error"}}, status=500)
+                    try:
+                        self._write_json({"error": {"message": str(exc), "type": "server_error"}}, status=500)
+                    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, socket.timeout) as write_exc:
+                        logger.warning("Python llama client disconnected while sending error response: %s", write_exc)
 
             def _write_json(self, payload: dict[str, Any], status: int = 200) -> None:
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

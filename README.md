@@ -203,7 +203,9 @@ QML/V4 支持将腾讯 Hy-MT2-1.8B GGUF 作为本地 OpenAI 兼容 provider 使�
   - 集成显卡或未安装 CUDA 版 `llama-cpp-python` 时，会按 CPU 启动。
 - 点击「应用到 Hy-MT2 配置」会自动切换 provider、URL 和模型名。
 
-Hy-MT2 会自动使用本地模型保护参数：并发最高 `5`、批量最高 `5`。它适合离线初译、隐私场景或内容审核备用，不建议默认替代云模型承担最终校对。
+Hy-MT2 默认使用本地稳定模式：并发 `1`、批量 `1`、API 超时至少 `300` 秒，并禁用批量 JSON。它适合离线初译、隐私场景或内容审核备用，不建议默认替代云模型承担最终校对。
+
+如果使用 CPU 运行 Python 本地模式，不建议手动提高并发或批量；本地服务内部会串行推理，较高并发只会增加超时和断连概率。如果使用 CUDA 或外部 `llama-server.exe`，可以小幅提高并发测试，但仍建议保持 `batch_size=1`。
 
 注意：Python 本地模式依赖 `llama-cpp-python`。如果你当前环境只有 Python 3.13，而对应 CUDA/CPU wheel 不可用，建议继续使用 `llama-server.exe` 模式，或者换到有可用 wheel 的 Python 版本再启用 Python 本地模式。
 

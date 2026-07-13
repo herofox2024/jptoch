@@ -60,7 +60,7 @@ PROVIDER_CAPABILITY = {
     "gemini": "Gemini 免费版有限流",
     "wenxin": "文心一言/千帆：建议先低并发低批量测试，旧版 access_token RPC 接口不兼容",
     "longcat": "LongCat：已自动限制并发≤8、batch≤9；遇到内容审核会拆分/降级处理",
-    "hymt2": "Hy-MT2 本地：自动限制并发≤5、batch≤5；适合离线初译或审核备用，不建议默认承担最终校对",
+    "hymt2": "Hy-MT2 本地：稳定模式自动限制并发=1、batch=1、超时≥300；适合离线初译或审核备用，不建议默认承担最终校对",
 }
 
 PERF_UI_PRESETS = {
@@ -87,6 +87,10 @@ PERF_UI_PRESETS = {
     "deepseek_paid": {
         "label": "DeepSeek 付费版", "hint": "较高并发和批量",
         "values": { "max_workers": 12, "batch_size": 10, "max_batch_length": 4000, "max_text_size_for_batch": 1000, "api_timeout": 120 },
+    },
+    "hymt2_local": {
+        "label": "Hy-MT2 本地", "hint": "本地小模型稳定保存优先，禁用批量 JSON",
+        "values": { "max_workers": 1, "batch_size": 1, "max_batch_length": 300, "max_text_size_for_batch": 120, "api_timeout": 300 },
     },
 }
 
