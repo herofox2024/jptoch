@@ -404,6 +404,27 @@ Page {
                         font.pixelSize: AppStyle.fontSmall
                     }
 
+                    FieldLabel { text: "Prompt 模式" }
+                    ComboBox {
+                        id: hymt2PromptModeCombo
+                        Layout.fillWidth: true
+                        model: ["官方简洁模板", "项目文学模板"]
+                        currentIndex: cfg && cfg.hymt2PromptMode === "project" ? 1 : 0
+                        onActivated: {
+                            if (!cfg) return
+                            cfg.hymt2PromptMode = currentIndex === 1 ? "project" : "official"
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: cfg && cfg.hymt2PromptMode === "project"
+                              ? "使用 QML/V4 原有文学翻译长 Prompt；表达更细，但 Hy-MT2 小模型更容易残留或失控。"
+                              : "使用 Hy-MT2 官方风格短 Prompt：只要求翻译为简体中文并输出结果，默认推荐。"
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: AppStyle.fontSmall
+                    }
+
                 }
 
                 GridLayout {

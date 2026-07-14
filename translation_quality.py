@@ -37,16 +37,27 @@ COMMON_JAPANESE_RESIDUE_REPAIRS = {
     "像ゴマの蠅那样": "像江湖骗子那样",
     "ゴマの蠅": "江湖骗子",
     "在その尽头": "在那尽头",
+    "在その深处": "在那深处",
     "その尽头": "那尽头",
+    "その深处": "那深处",
     "桑畑くわばたけ里的荣五郎": "桑田里的荣五郎",
     "桑畑くわばたけ里": "桑田里",
     "桑畑くわばたけ": "桑田",
+    "食いつめ浪人": "落魄浪人",
+    "善光寺みち": "善光寺道",
+    "七ツ时": "七时",
+    "汤面だけ的简餐": "只有热饭和汤面的简餐",
+    "汤面だけ": "只有汤面",
+    "切腹すること": "切腹",
+    "醉れど銀次": "醉鬼银次",
+    "醉れど银次": "醉鬼银次",
 }
 JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
 KNOWN_KATAKANA_TERMS_FILE = "known_katakana_terms.json"
 DEFAULT_KNOWN_KATAKANA_TERMS: Dict[str, str] = {
     "チロリ": "烫酒壶",
     "ドサ帰り": "从佐渡归来",
+    "アシビ": "马醉木",
 }
 ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
     r"[「『“\"'（(【\[]?\s*[\u30a0-\u30ff\uff66-\uff9f]\s*[」』”\"'）)】\]]?\s*(?:の\s*)?(?:字形|字型|字状|形|型|状|字)"
@@ -441,6 +452,8 @@ def repair_common_japanese_residue_terms(dst: str) -> str:
         return ""
     for source, target in COMMON_JAPANESE_RESIDUE_REPAIRS.items():
         translated = translated.replace(source, target)
+    translated = re.sub(r"为了阿清，我[\s，,、]*でも(?:也)?", "为了阿清，我也", translated)
+    translated = re.sub(r"就算有手癖不好控制[\s，,、]*でも", "就算有手癖不好控制，", translated)
     return translated
 
 

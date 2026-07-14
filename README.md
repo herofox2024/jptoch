@@ -1,4 +1,4 @@
-﻿﻿<div align="center">
+﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -212,6 +212,11 @@ Hy-MT2 本地模型页提供「生成模式」：
 
 - **稳定模式（默认）**：`temperature=0.1`、`top_p=0.3`，不额外传 `top_k`、`repetition_penalty`、`max_tokens`，优先保证稳定保存。
 - **官方推荐模式**：`temperature=0.7`、`top_p=0.6`、`top_k=20`、`repetition_penalty=1.05`、`max_tokens=4096`，更贴近官方示例，但可能增加超时、残留或格式失控，需要按机器性能实测。
+
+Hy-MT2 本地模型页还提供「Prompt 模式」：
+
+- **官方简洁模板（默认）**：不使用 system prompt，按官方示例使用短 user prompt：`将以下日语文本翻译为简体中文，注意只需要输出翻译后的结果，不要额外解释`。术语按 `原词 翻译成 译词` 的格式注入。
+- **项目文学模板**：沿用 QML/V4 原有复杂文学翻译 prompt。表达约束更细，但 Hy-MT2 1.8B 小模型更容易出现日文残留或格式失控。
 
 注意：Python 本地模式依赖 `llama-cpp-python`。如果你当前环境只有 Python 3.13，而对应 CUDA/CPU wheel 不可用，建议继续使用 `llama-server.exe` 模式，或者换到有可用 wheel 的 Python 版本再启用 Python 本地模式。
 

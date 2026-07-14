@@ -615,6 +615,9 @@ class JaZhTranslator:
         "はぁ": "唉",
         # 短标题/诗句。模型偶尔会把这类孤立短句返回为空或跳过，导致整本书保存前失败。
         "旅ゆけば": "旅行之中",
+        "「性が合わぬとは……？」": "“性情不合是指……？”",
+        "伊織は、『昔、飛衛といふ者あり』という兵法書の書き出しを、思い出していた。": "伊织想起了那本兵法书开头写着的《昔日有飞卫其人》。",
+        "「腹を切るほうが、よほど楽であり容易でもあろう。しかし、武士の切腹というものは、何ゆえに自害いたさねばならなかったのかと、世の中のさまざまな思惑を招くことになる。勇之介は事を荒立てまいと、手合わせに敗れたふうを装ったのだ」": "“切腹或许要轻松容易得多。可是，武士一旦切腹，世人就会揣测他为何非得自害不可，引来种种议论。勇之介是不想把事情闹大，才装作是在交手中败下阵来的样子。”",
     }
 
     # ---- Phase 1-①: 智能分批阈值 ----
@@ -759,6 +762,7 @@ class JaZhTranslator:
         prompt_extra_instruction: str = "",
         enable_prompt_examples: bool = True,
         hymt2_generation_mode: str = "stable",
+        hymt2_prompt_mode: str = "official",
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -782,6 +786,9 @@ class JaZhTranslator:
         self.hymt2_generation_mode = str(hymt2_generation_mode or "stable").strip().lower()
         if self.hymt2_generation_mode not in {"stable", "official"}:
             self.hymt2_generation_mode = "stable"
+        self.hymt2_prompt_mode = str(hymt2_prompt_mode or "official").strip().lower()
+        if self.hymt2_prompt_mode not in {"official", "project"}:
+            self.hymt2_prompt_mode = "official"
         hymt2_official_mode = self.provider == "hymt2" and self.hymt2_generation_mode == "official"
         default_temperature = 0.7 if hymt2_official_mode else (0.1 if self.provider in {"sakura", "hymt2"} else 0.3)
         default_top_p = 0.6 if hymt2_official_mode else (0.3 if self.provider in {"sakura", "hymt2"} else None)
@@ -938,8 +945,9 @@ class JaZhTranslator:
         )
         if self.provider == "hymt2":
             logger.info(
-                "Hy-MT2 生成模式: %s, temperature=%s, top_p=%s, top_k=%s, repetition_penalty=%s, max_tokens=%s",
+                "Hy-MT2 生成模式: %s, Prompt模式: %s, temperature=%s, top_p=%s, top_k=%s, repetition_penalty=%s, max_tokens=%s",
                 self.hymt2_generation_mode,
+                self.hymt2_prompt_mode,
                 self.temperature,
                 self.top_p,
                 self.top_k,
@@ -2607,6 +2615,53 @@ class JaZhTranslator:
             glossary_snapshot = dict(self.glossary)
         return gs_build_glossary_text(glossary_snapshot, self.glossary_categories, selected_entries)
 
+    def _hymt2_uses_official_prompt(self) -> bool:
+        return self.provider == "hymt2" and self.hymt2_prompt_mode == "official"
+
+    def _build_hymt2_official_glossary_text(self, selected_entries: Optional[List[Dict[str, str]]]) -> str:
+        lines: List[str] = []
+        for entry in selected_entries or []:
+            original = str(entry.get("original", "")).strip()
+            target = self._expected_glossary_translation(entry).strip()
+            if original and target:
+                lines.append(f"{original} 翻译成 {target}")
+        return "\n".join(lines)
+
+    def _build_hymt2_official_style_hint(self) -> str:
+        _, _, genre_label, tone_label = self._get_style_profile()
+        hints = []
+        if genre_label:
+            hints.append(genre_label)
+        if tone_label:
+            hints.append(tone_label)
+        if not hints:
+            return ""
+        return f"注意翻译风格要符合【{' + '.join(hints)}】，但不要添加解释。"
+
+    def _build_hymt2_official_user_prompt(
+        self,
+        text: str,
+        selected_entries: Optional[List[Dict[str, str]]] = None,
+        residue_guidance: str = "",
+    ) -> str:
+        parts: List[str] = []
+        glossary_text = self._build_hymt2_official_glossary_text(selected_entries)
+        if glossary_text:
+            parts.append(f"参考下面的翻译：\n{glossary_text}")
+        style_hint = self._build_hymt2_official_style_hint()
+        if style_hint:
+            parts.append(style_hint)
+        custom_guidance = self._build_custom_prompt_guidance()
+        if custom_guidance:
+            parts.append(custom_guidance)
+        if residue_guidance:
+            parts.append(residue_guidance)
+        parts.append(
+            "将以下日语文本翻译为简体中文，注意只需要输出翻译后的结果，不要额外解释：\n\n"
+            f"{text}"
+        )
+        return "\n\n".join(part for part in parts if part.strip())
+
     def _get_style_profile(self) -> Tuple[str, str, str, str]:
         genre = self.proofread_genre if self.proofread_genre in GENRE_LABELS else "general"
         tone = self.proofread_tone if self.proofread_tone in TONE_LABELS else "neutral"
@@ -2751,6 +2806,22 @@ class JaZhTranslator:
 
     def build_prompt_preview(self) -> str:
         """Build a local preview of active prompt fragments without calling any API."""
+        sample_glossary_entries = [
+            {"original": "術語A", "translation": "译名A"},
+            {"original": "術語B", "translation": "译名B"},
+        ]
+        if self._hymt2_uses_official_prompt():
+            single_user = self._build_hymt2_official_user_prompt(
+                "ここに翻訳対象の日本語が入ります。",
+                selected_entries=sample_glossary_entries,
+            )
+            return (
+                "【Hy-MT2 官方简洁 Prompt 模板】\n"
+                "System Prompt：不使用\n\n"
+                "【User Prompt 模板】\n"
+                f"{single_user}"
+            )
+
         translation_system = self._build_style_guidance("translation")
         proofread_system = self._build_proofread_system_prompt()
         sample_glossary = (
@@ -3029,25 +3100,33 @@ JSON 顶层字段：
 输出格式：译文1{sep.strip()}译文2{sep.strip()}译文3..."""
 
         selected_entries = self._select_glossary_entries(text)
-        context_guidance = ""
-        if self._provider_uses_context_window() and (prev_text or next_text):
-            context_guidance = "\n\n" + self._build_context_guidance(prev_text, next_text)
-        residue_guidance_text = f"\n\n{residue_guidance}" if residue_guidance else ""
-        user_prompt = (
-            f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
-            f"{self._translation_task_instruction()}\n{text}"
-            f"{context_guidance}"
-            f"{residue_guidance_text}"
-        )
+        if self._hymt2_uses_official_prompt():
+            user_prompt = self._build_hymt2_official_user_prompt(
+                text,
+                selected_entries=selected_entries,
+                residue_guidance=residue_guidance,
+            )
+            messages = [{"role": "user", "content": user_prompt}]
+        else:
+            context_guidance = ""
+            if self._provider_uses_context_window() and (prev_text or next_text):
+                context_guidance = "\n\n" + self._build_context_guidance(prev_text, next_text)
+            residue_guidance_text = f"\n\n{residue_guidance}" if residue_guidance else ""
+            user_prompt = (
+                f"【术语表】\n{self._build_glossary_text(selected_entries)}\n\n"
+                f"{self._translation_task_instruction()}\n{text}"
+                f"{context_guidance}"
+                f"{residue_guidance_text}"
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
         payload = {
             "model": self.model,
             "messages": messages,
@@ -3723,8 +3802,10 @@ JSON 顶层字段：
 
     # ---- Phase 1-③: 本地预翻译 ----
     def _pre_translate(self, text: str) -> Optional[str]:
-        stripped = text.strip()
-        stripped = stripped.strip('「」『』')
+        raw = text.strip()
+        if raw in self.PRE_TRANSLATE_RULES:
+            return self.PRE_TRANSLATE_RULES[raw]
+        stripped = raw.strip('「」『』')
         if stripped in self.PRE_TRANSLATE_RULES:
             return self.PRE_TRANSLATE_RULES[stripped]
         return None

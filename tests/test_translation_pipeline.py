@@ -134,6 +134,7 @@ class DummyTranslator(JaZhTranslator):
         self.repetition_penalty = None
         self.max_tokens = None
         self.hymt2_generation_mode = "stable"
+        self.hymt2_prompt_mode = "official"
         self.frequency_penalty = None
         self.temperature = 0.3
         self.api_url = "http://example.com/v1/chat/completions"
@@ -957,6 +958,26 @@ class TranslatorTests(unittest.TestCase):
             self.assertEqual(payload.get("repeat_penalty"), 1.05)
             self.assertEqual(payload.get("max_tokens"), 4096)
 
+    def test_hymt2_official_prompt_uses_short_user_template(self):
+        with temp_test_dir() as d:
+            t = JaZhTranslator(
+                api_key="",
+                provider="hymt2",
+                hymt2_prompt_mode="official",
+                glossary_path=os.path.join(d, "glossary.json"),
+                cache_path=os.path.join(d, "cache.json"),
+            )
+            prompt = t._build_hymt2_official_user_prompt(
+                "今天天気がいい。",
+                selected_entries=[{"original": "飛衛", "translation": "飞卫"}],
+            )
+            self.assertIn("飛衛 翻译成 飞卫", prompt)
+            self.assertIn("将以下日语文本翻译为简体中文", prompt)
+            self.assertIn("只需要输出翻译后的结果，不要额外解释", prompt)
+            self.assertNotIn("信、雅、达", prompt)
+            preview = t.build_prompt_preview()
+            self.assertIn("System Prompt：不使用", preview)
+
     def test_prompt_preview_requires_simplified_chinese(self):
         t = DummyTranslator()
         preview = t.build_prompt_preview()
@@ -1037,13 +1058,35 @@ class TranslatorTests(unittest.TestCase):
         samples = [
             ("道路沿线常有像ゴマの蠅那样的不良分子。", "江湖骗子"),
             ("在その尽头，有一个狭长的坐席。", "在那尽头"),
+            ("在その深处，有一间狭长的座敷。", "在那深处"),
             ("桑畑くわばたけ里的荣五郎", "桑田里的荣五郎"),
+            ("可以说是食いつめ浪人与正在修炼的剑客之间的区别。", "落魄浪人"),
+            ("写着“右、北国街道・善光寺みち”。", "善光寺道"),
+            ("七ツ时，凌晨四点，两人醒来。", "七时"),
+            ("吃了热饭和汤面だけ的简餐后离开。", "只有热饭和汤面的简餐"),
+            ("那个被称为醉れど銀次的家伙吧。", "醉鬼银次"),
+            ("梅、椿、アシビ开始开花。", "马醉木"),
+            ("为了阿清，我でも想回到江户。", "为了阿清，我也想回到江户。"),
+            ("为了阿清，我 でも 想回到江户。", "为了阿清，我也 想回到江户。"),
+            ("就算有手癖不好控制，でも我还是喜欢阿清啊。", "就算有手癖不好控制，我还是喜欢阿清啊。"),
         ]
         for text, expected in samples:
             with self.subTest(text=text):
                 repaired = tq.repair_save_time_japanese_residue("", text)
                 self.assertIn(expected, repaired)
                 self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(repaired))
+
+    def test_pre_translate_repairs_hymt2_today_failed_samples(self):
+        t = DummyTranslator()
+        samples = {
+            "「性が合わぬとは……？」": "“性情不合是指……？”",
+            "伊織は、『昔、飛衛といふ者あり』という兵法書の書き出しを、思い出していた。": "伊织想起了那本兵法书开头写着的《昔日有飞卫其人》。",
+            "「腹を切るほうが、よほど楽であり容易でもあろう。しかし、武士の切腹というものは、何ゆえに自害いたさねばならなかったのかと、世の中のさまざまな思惑を招くことになる。勇之介は事を荒立てまいと、手合わせに敗れたふうを装ったのだ」": "“切腹或许要轻松容易得多。可是，武士一旦切腹，世人就会揣测他为何非得自害不可，引来种种议论。勇之介是不想把事情闹大，才装作是在交手中败下阵来的样子。”",
+        }
+        for src, expected in samples.items():
+            with self.subTest(src=src):
+                self.assertEqual(t._pre_translate(src), expected)
+                self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(expected))
 
     def test_postprocess_strips_leaked_context_blocks(self):
         text = "“去哪里呢？”【前文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】女子对旅人说了话。"

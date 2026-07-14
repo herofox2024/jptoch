@@ -452,6 +452,7 @@ class _TranslateWorker(QObject):
                 prompt_extra_instruction=cfg.get("prompt_extra_instruction", ""),
                 enable_prompt_examples=bool(cfg.get("enable_prompt_examples", True)),
                 hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
+                hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
             )
             self._translator = translator
             if self._bridge:
@@ -783,6 +784,7 @@ class _ClearBookCacheWorker(QObject):
                 api_timeout=cfg.get("api_timeout", 120),
                 enable_glossary=False,
                 hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
+                hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
             )
             removed = translator.clear_cache_for_texts(
                 texts,
@@ -980,6 +982,7 @@ class TranslateBridge(QObject):
             "enable_notice_page": getattr(cfg, "enableNoticePage", False),
             "notice_page_text": getattr(cfg, "noticePageText", ""),
             "hymt2_generation_mode": getattr(cfg, "hymt2GenerationMode", "stable"),
+            "hymt2_prompt_mode": getattr(cfg, "hymt2PromptMode", "official"),
         }
 
     @Slot("QVariant")
