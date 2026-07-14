@@ -3820,6 +3820,9 @@ JSON 顶层字段：
         stripped = raw.strip('「」『』')
         if stripped in self.PRE_TRANSLATE_RULES:
             return self.PRE_TRANSLATE_RULES[stripped]
+        furigana_repaired = tq.repair_furigana_reading_residue(raw)
+        if furigana_repaired != raw and not self._has_blocking_japanese_residue(furigana_repaired):
+            return furigana_repaired
         return None
 
     # ---- Phase 1-①: 智能分批 ----

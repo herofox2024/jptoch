@@ -1096,6 +1096,10 @@ class TranslatorTests(unittest.TestCase):
             ("关于柚木ミドリ的事情则保持沉默。", "关于柚木绿的事情则保持沉默。"),
             ("如果由柳泽プロ的社长邀请他，应该也没问题。", "如果由柳泽制作公司的社长邀请他"),
             ("鬼头把装着一万日元纸币的信封塞到マチ子的手里。", "塞到町子的手里"),
+            ("点野 しめの 大阪", "点野 大阪"),
+            ("熟田津 にぎたづ 愛媛", "熟田津 爱媛"),
+            ("九十九 つくも 群馬・和歌山", "九十九 群马、和歌山"),
+            ("大豆戸 まめと 東京", "大豆户 东京"),
             ("为了阿清，我でも想回到江户。", "为了阿清，我也想回到江户。"),
             ("为了阿清，我 でも 想回到江户。", "为了阿清，我也 想回到江户。"),
             ("就算有手癖不好控制，でも我还是喜欢阿清啊。", "就算有手癖不好控制，我还是喜欢阿清啊。"),
@@ -1117,6 +1121,20 @@ class TranslatorTests(unittest.TestCase):
             with self.subTest(src=src):
                 self.assertEqual(t._pre_translate(src), expected)
                 self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(expected))
+
+    def test_pre_translate_removes_place_name_furigana_readings(self):
+        t = DummyTranslator()
+        samples = {
+            "点野 しめの 大阪": "点野 大阪",
+            "熟田津 にぎたづ 愛媛": "熟田津 爱媛",
+            "九十九 つくも 群馬・和歌山": "九十九 群马、和歌山",
+            "大豆戸 まめと 東京": "大豆户 东京",
+        }
+        for src, expected in samples.items():
+            with self.subTest(src=src):
+                result = t._pre_translate(src)
+                self.assertEqual(result, expected)
+                self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(result))
 
     def test_postprocess_strips_leaked_context_blocks(self):
         text = "“去哪里呢？”【前文上下文（仅供参考，帮助理解当前文本的语境，无需翻译）】女子对旅人说了话。"

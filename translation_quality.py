@@ -29,6 +29,12 @@ JAPANESE_NAME_KANJI_NORMALIZATION = {
     "時": "时",
     "鶴": "鹤",
 }
+JAPANESE_PLACE_KANJI_NORMALIZATION = {
+    "愛": "爱",
+    "馬": "马",
+    "戸": "户",
+    "東": "东",
+}
 COMMON_JAPANESE_RESIDUE_REPAIRS = {
     "这些すべて": "这一切",
     "這些すべて": "这一切",
@@ -493,6 +499,36 @@ def repair_common_japanese_residue_terms(dst: str) -> str:
     return translated
 
 
+def normalize_japanese_place_kanji(text: str) -> str:
+    value = str(text or "")
+    for source, target in JAPANESE_PLACE_KANJI_NORMALIZATION.items():
+        value = value.replace(source, target)
+    return value
+
+
+def repair_furigana_reading_residue(dst: str) -> str:
+    """Remove inline hiragana readings in compact place-name lists."""
+    translated = str(dst or "")
+    if not translated or not re.search(r"[\u3040-\u309f]", translated):
+        return translated
+    if len(translated) > 80:
+        return translated
+
+    # Examples: "熟田津 にぎたづ 愛媛", "大豆戸 まめと 東京".
+    compact_chars = re.sub(r"[\s　・･、,，.。・-]", "", translated)
+    if re.search(r"[^\u3040-\u309f\u3400-\u9fff々A-Za-z0-9]", compact_chars):
+        return translated
+
+    repaired = re.sub(
+        r"(?<=[\u3400-\u9fff々])[\s　]+[\u3040-\u309f]{2,12}(?=[\s　]+[\u3400-\u9fff々])",
+        "",
+        translated,
+    )
+    repaired = re.sub(r"(?<=[\u3400-\u9fff々])・(?=[\u3400-\u9fff々])", "、", repaired)
+    repaired = re.sub(r"[\s　]{2,}", " ", repaired).strip()
+    return normalize_japanese_place_kanji(repaired)
+
+
 def strip_leaked_prompt_context(dst: str) -> str:
     """Remove prompt-only reference blocks leaked by small local models."""
     translated = str(dst or "")
@@ -531,6 +567,7 @@ def postprocess_translation(src: str, dst: Optional[str]) -> str:
     translated = repair_orphan_japanese_o_name_prefix_residue(translated)
     translated = repair_japanese_san_suffix_residue(translated)
     translated = repair_common_japanese_residue_terms(translated)
+    translated = repair_furigana_reading_residue(translated)
     return repair_known_katakana_terms(src, translated)
 
 
