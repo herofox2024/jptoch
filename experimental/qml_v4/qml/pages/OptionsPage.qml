@@ -462,7 +462,8 @@ Page {
                                     { key: "glm_free", label: "智谱免费版" },
                                     { key: "gemini_free", label: "Gemini 免费版" },
                                     { key: "deepseek_paid", label: "DeepSeek 付费版" },
-                                    { key: "hymt2_local", label: "Hy-MT2 本地" }
+                                    { key: "hymt2_local", label: "Hy-MT2 CPU" },
+                                    { key: "hymt2_gpu", label: "Hy-MT2 GPU" }
                                 ]
                                 Button {
                                     text: modelData.label
@@ -1286,6 +1287,11 @@ Page {
             cfg.maxTextSizeForBatch = vals.max_text_size_for_batch
             cfg.apiTimeout = vals.api_timeout
         }
+        if (key === "hymt2_gpu") {
+            cfg.hymt2RuntimeMode = "gpu"
+        } else if (key === "hymt2_local") {
+            cfg.hymt2RuntimeMode = "cpu"
+        }
         page.applyingPreset = false
 
         var labels = {
@@ -1295,7 +1301,8 @@ Page {
             "glm_free": "智谱免费版：低并发低批量，降低限流概率",
             "gemini_free": "Gemini 免费版：保守参数避免限流",
             "deepseek_paid": "DeepSeek 付费版：较高并发和批量",
-            "hymt2_local": "Hy-MT2 本地：并发1、批量1、超时300，优先保证稳定保存"
+            "hymt2_local": "Hy-MT2 CPU：并发1、批量1、超时300，优先保证稳定保存",
+            "hymt2_gpu": "Hy-MT2 GPU：并发4、批量4、超时300，RTX 2070 8GB 推荐起点"
         }
         presetHint.text = labels[key] || ("已应用: " + key)
     }

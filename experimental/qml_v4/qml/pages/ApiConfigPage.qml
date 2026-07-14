@@ -18,7 +18,7 @@ Page {
         "deepseek": "DeepSeek：推荐主力翻译；付费版支持高并发批量。",
         "doubao": "Doubao：火山方舟 OpenAI 兼容接口。",
         "sakura": "Sakura：本地模型，无需 API Key。",
-        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；可使用 Python 本地模式或 llama-server.exe 模式，默认使用并发1、批量1的稳定模式。",
+        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；CPU 默认 1/1，GPU 默认 4/4，GPU 最大建议并发6、批量8。",
         "gemini": "Gemini：不支持 thinking 参数；免费版易限流。",
         "glm": "GLM/智谱：免费版限流明显，建议用性能预设。",
         "wenxin": "文心一言/千帆：使用百度千帆 OpenAI 兼容接口；旧版 access_token RPC 接口不兼容。",
@@ -49,19 +49,40 @@ Page {
         }
     }
 
+    function localHyMt2UsesGpu() {
+        if (!page.localModel) return false
+        if (page.localModel.gpuMode === "cuda") return true
+        var status = String(page.localModel.gpuStatus || "")
+        return page.localModel.gpuMode === "auto"
+               && (status.indexOf("CUDA") >= 0 || status.indexOf("NVIDIA") >= 0 || status.indexOf("GPU") >= 0)
+               && status.indexOf("未找到") < 0
+               && status.indexOf("未检测到") < 0
+               && status.indexOf("尚未检测") < 0
+               && status.indexOf("回退") < 0
+    }
+
     function applyLocalHyMt2Config() {
         if (!cfg || !page.localModel) return
+        var useGpu = page.localHyMt2UsesGpu()
         cfg.setProvider("hymt2")
         cfg.apiKey = "sk-local"
         cfg.apiUrl = page.localModel.localApiUrl
         cfg.model = page.localModel.modelName || "Hy-MT2-1.8B-Q4_K_M"
+        cfg.hymt2RuntimeMode = useGpu ? "gpu" : "cpu"
+        cfg.maxWorkers = useGpu ? 4 : 1
+        cfg.batchSize = useGpu ? 4 : 1
+        cfg.maxBatchLength = useGpu ? 1000 : 300
+        cfg.maxTextSizeForBatch = useGpu ? 250 : 120
+        cfg.apiTimeout = Math.max(cfg.apiTimeout || 0, 300)
         page.currentProvider = "hymt2"
         page.isCustom = false
         page.isLocalProvider = true
         page.needsKey = false
-        page.connectionResult = "已应用 Hy-MT2 本地配置，请启动服务后测试连接。"
+        page.connectionResult = useGpu
+            ? "已应用 Hy-MT2 GPU 配置：并发4、批量4。请启动服务后测试连接。"
+            : "已应用 Hy-MT2 CPU 配置：并发1、批量1。请启动服务后测试连接。"
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
-            ToastBridge.showSuccess("已应用 Hy-MT2 本地配置")
+            ToastBridge.showSuccess(useGpu ? "已应用 Hy-MT2 GPU 配置" : "已应用 Hy-MT2 CPU 配置")
         }
     }
 
@@ -382,6 +403,18 @@ Page {
                         wrapMode: Text.WordWrap
                         font.pixelSize: AppStyle.fontSmall
                     }
+
+                    FieldLabel { text: "性能配置" }
+                    Label {
+                        Layout.fillWidth: true
+                        text: cfg && cfg.hymt2RuntimeMode === "gpu"
+                              ? "GPU 模式：默认并发4、批量4；翻译器最大允许并发6、批量8。超过 6/6 可能增加超时、OOM 或残留风险。"
+                              : "CPU 模式：强制并发1、批量1，优先稳定保存。"
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: AppStyle.fontSmall
+                    }
+                    Item {}
 
                     FieldLabel { text: "生成模式" }
                     ComboBox {

@@ -60,7 +60,7 @@ PROVIDER_CAPABILITY = {
     "gemini": "Gemini 免费版有限流",
     "wenxin": "文心一言/千帆：建议先低并发低批量测试，旧版 access_token RPC 接口不兼容",
     "longcat": "LongCat：已自动限制并发≤8、batch≤9；遇到内容审核会拆分/降级处理",
-    "hymt2": "Hy-MT2 本地：稳定模式自动限制并发=1、batch=1、超时≥300；适合离线初译或审核备用，不建议默认承担最终校对",
+    "hymt2": "Hy-MT2 本地：CPU 限制并发=1、batch=1；GPU 默认 4/4，最大并发≤6、batch≤8；适合离线初译或审核备用",
 }
 
 PERF_UI_PRESETS = {
@@ -89,8 +89,12 @@ PERF_UI_PRESETS = {
         "values": { "max_workers": 12, "batch_size": 10, "max_batch_length": 4000, "max_text_size_for_batch": 1000, "api_timeout": 120 },
     },
     "hymt2_local": {
-        "label": "Hy-MT2 本地", "hint": "本地小模型稳定保存优先，禁用批量 JSON",
+        "label": "Hy-MT2 CPU", "hint": "CPU 稳定保存优先",
         "values": { "max_workers": 1, "batch_size": 1, "max_batch_length": 300, "max_text_size_for_batch": 120, "api_timeout": 300 },
+    },
+    "hymt2_gpu": {
+        "label": "Hy-MT2 GPU", "hint": "RTX 2070 8GB 等 GPU 推荐起点",
+        "values": { "max_workers": 4, "batch_size": 4, "max_batch_length": 1000, "max_text_size_for_batch": 250, "api_timeout": 300 },
     },
 }
 
@@ -102,7 +106,7 @@ _CONFIG_KEYS = [
     "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
     "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
-    "enable_notice_page", "notice_page_text", "hymt2_generation_mode", "hymt2_prompt_mode",
+    "enable_notice_page", "notice_page_text", "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -217,6 +221,7 @@ class ConfigBridge(QObject):
     _noticePageTextChanged = Signal()
     _hymt2GenerationModeChanged = Signal()
     _hymt2PromptModeChanged = Signal()
+    _hymt2RuntimeModeChanged = Signal()
     _themeChanged = Signal()
     japaneseResidueAllowlistChanged = Signal()
     knownKatakanaTermsChanged = Signal()
@@ -252,6 +257,7 @@ class ConfigBridge(QObject):
         self._notice_page_text = DEFAULT_NOTICE_PAGE_TEXT
         self._hymt2_generation_mode = "stable"
         self._hymt2_prompt_mode = "official"
+        self._hymt2_runtime_mode = "cpu"
         self._theme = "light"
         self._autosave_enabled = False
         self._load_from_disk()
@@ -294,6 +300,8 @@ class ConfigBridge(QObject):
                 self._hymt2_generation_mode = "stable"
             if getattr(self, "_hymt2_prompt_mode", "") not in {"official", "project"}:
                 self._hymt2_prompt_mode = "official"
+            if getattr(self, "_hymt2_runtime_mode", "") not in {"cpu", "gpu"}:
+                self._hymt2_runtime_mode = "cpu"
             logger.info(f"配置已加载: {path}")
         except Exception as e:
             logger.warning(f"加载配置失败: {e}")
@@ -693,6 +701,16 @@ class ConfigBridge(QObject):
             val = "official"
         if val != self._hymt2_prompt_mode:
             self._hymt2_prompt_mode = val; self._emit_changed(self._hymt2PromptModeChanged)
+
+    @Property(str, notify=_hymt2RuntimeModeChanged)
+    def hymt2RuntimeMode(self) -> str: return self._hymt2_runtime_mode
+    @hymt2RuntimeMode.setter
+    def hymt2RuntimeMode(self, val: str):
+        val = str(val or "cpu").strip().lower()
+        if val not in {"cpu", "gpu"}:
+            val = "cpu"
+        if val != self._hymt2_runtime_mode:
+            self._hymt2_runtime_mode = val; self._emit_changed(self._hymt2RuntimeModeChanged)
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

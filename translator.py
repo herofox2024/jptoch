@@ -763,6 +763,7 @@ class JaZhTranslator:
         enable_prompt_examples: bool = True,
         hymt2_generation_mode: str = "stable",
         hymt2_prompt_mode: str = "official",
+        hymt2_runtime_mode: str = "cpu",
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -789,6 +790,9 @@ class JaZhTranslator:
         self.hymt2_prompt_mode = str(hymt2_prompt_mode or "official").strip().lower()
         if self.hymt2_prompt_mode not in {"official", "project"}:
             self.hymt2_prompt_mode = "official"
+        self.hymt2_runtime_mode = str(hymt2_runtime_mode or "cpu").strip().lower()
+        if self.hymt2_runtime_mode not in {"cpu", "gpu"}:
+            self.hymt2_runtime_mode = "cpu"
         hymt2_official_mode = self.provider == "hymt2" and self.hymt2_generation_mode == "official"
         default_temperature = 0.7 if hymt2_official_mode else (0.1 if self.provider in {"sakura", "hymt2"} else 0.3)
         default_top_p = 0.6 if hymt2_official_mode else (0.3 if self.provider in {"sakura", "hymt2"} else None)
@@ -813,14 +817,21 @@ class JaZhTranslator:
             max_text_size_for_batch = min(max_text_size_for_batch, 150)
         if self.provider == "hymt2":
             old_workers, old_batch = max_workers, batch_size
-            max_workers = min(max_workers, 1)
-            batch_size = min(batch_size, 1)
-            max_batch_length = min(max_batch_length, 300)
-            max_text_size_for_batch = min(max_text_size_for_batch, 120)
+            if self.hymt2_runtime_mode == "gpu":
+                max_workers = min(max_workers, 6)
+                batch_size = min(batch_size, 8)
+                max_batch_length = min(max_batch_length, 1000)
+                max_text_size_for_batch = min(max_text_size_for_batch, 250)
+            else:
+                max_workers = min(max_workers, 1)
+                batch_size = min(batch_size, 1)
+                max_batch_length = min(max_batch_length, 300)
+                max_text_size_for_batch = min(max_text_size_for_batch, 120)
             api_timeout = max(api_timeout, 300)
             if (old_workers, old_batch) != (max_workers, batch_size):
                 logger.info(
-                    "Hy-MT2 本地稳定模式: 并发 %s→%s，批量 %s→%s",
+                    "Hy-MT2 本地%s模式: 并发 %s→%s，批量 %s→%s",
+                    "GPU" if self.hymt2_runtime_mode == "gpu" else "CPU",
                     old_workers,
                     max_workers,
                     old_batch,
@@ -945,9 +956,10 @@ class JaZhTranslator:
         )
         if self.provider == "hymt2":
             logger.info(
-                "Hy-MT2 生成模式: %s, Prompt模式: %s, temperature=%s, top_p=%s, top_k=%s, repetition_penalty=%s, max_tokens=%s",
+                "Hy-MT2 生成模式: %s, Prompt模式: %s, 运行模式: %s, temperature=%s, top_p=%s, top_k=%s, repetition_penalty=%s, max_tokens=%s",
                 self.hymt2_generation_mode,
                 self.hymt2_prompt_mode,
+                self.hymt2_runtime_mode,
                 self.temperature,
                 self.top_p,
                 self.top_k,
@@ -4135,7 +4147,7 @@ JSON 顶层字段：
             logger.info(
                 "历史推理少量剩余文本启用保守重试: batch_size=1，不走批量 JSON，禁用自由润色"
             )
-        if self.provider == "hymt2" and effective_batch_size > 1:
+        if self.provider == "hymt2" and self.hymt2_runtime_mode != "gpu" and effective_batch_size > 1:
             old_effective_batch_size = effective_batch_size
             effective_batch_size = 1
             if old_effective_batch_size != effective_batch_size:

@@ -135,6 +135,7 @@ class DummyTranslator(JaZhTranslator):
         self.max_tokens = None
         self.hymt2_generation_mode = "stable"
         self.hymt2_prompt_mode = "official"
+        self.hymt2_runtime_mode = "cpu"
         self.frequency_penalty = None
         self.temperature = 0.3
         self.api_url = "http://example.com/v1/chat/completions"
@@ -934,6 +935,27 @@ class TranslatorTests(unittest.TestCase):
             self.assertEqual(t.top_p, 0.3)
             self.assertEqual(t.max_workers, 1)
             self.assertEqual(t.batch_size, 1)
+            self.assertGreaterEqual(t.API_TIMEOUT, 300)
+
+    def test_hymt2_gpu_runtime_allows_higher_workers_and_batch(self):
+        with temp_test_dir() as d:
+            t = JaZhTranslator(
+                api_key="",
+                provider="hymt2",
+                hymt2_runtime_mode="gpu",
+                max_workers=8,
+                batch_size=8,
+                max_batch_length=2000,
+                max_text_size_for_batch=500,
+                glossary_path=os.path.join(d, "glossary.json"),
+                cache_path=os.path.join(d, "cache.json"),
+            )
+
+            self.assertEqual(t.hymt2_runtime_mode, "gpu")
+            self.assertEqual(t.max_workers, 6)
+            self.assertEqual(t.batch_size, 8)
+            self.assertEqual(t.max_batch_length, 1000)
+            self.assertEqual(t.max_text_size_for_batch, 250)
             self.assertGreaterEqual(t.API_TIMEOUT, 300)
 
     def test_hymt2_official_generation_mode_applies_sampling_params(self):
