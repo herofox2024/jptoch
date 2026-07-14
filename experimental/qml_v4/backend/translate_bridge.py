@@ -5,6 +5,7 @@
 
 import os
 import math
+import json
 import logging
 import threading
 import time
@@ -20,6 +21,8 @@ from backend.toast_bridge import ToastBridge
 CANCELLED_RESULT = "__CANCELLED__"
 STOPPED_RESULT = "__STOPPED__"
 logger = logging.getLogger(__name__)
+
+JAPANESE_RESIDUE_POLICIES = {"strict", "balanced", "lenient"}
 
 _FILENAME_EXPLANATION_MARKERS = (
     "或依意译",
@@ -79,6 +82,40 @@ def _sanitize_filename(name):
     if cleaned.split('.', 1)[0].upper() in reserved:
         cleaned = cleaned + '_'
     return cleaned
+
+
+def _residue_report_dir() -> Path:
+    return Path.home() / ".epub_translator" / "residue_reports"
+
+
+def _write_japanese_residue_report(
+    *,
+    output_path: str,
+    policy: str,
+    blocked_total: int,
+    scan: Any,
+) -> str:
+    report_dir = _residue_report_dir()
+    report_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    base = _sanitize_filename(Path(output_path or "translation").stem) or "translation"
+    report_path = report_dir / f"{stamp}-{base}-japanese-residue.json"
+    payload = {
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "output_path": output_path,
+        "policy": policy,
+        "blocking_total": int(getattr(scan, "blocking_total", 0)),
+        "hard_blocking_total": int(getattr(scan, "hard_blocking_total", 0)),
+        "low_risk_total": int(getattr(scan, "low_risk_total", 0)),
+        "weak_total": int(getattr(scan, "weak_total", 0)),
+        "blocked_total": int(blocked_total),
+        "blocking_samples": list(getattr(scan, "blocking_samples", []) or []),
+        "hard_blocking_samples": list(getattr(scan, "hard_blocking_samples", []) or []),
+        "low_risk_samples": list(getattr(scan, "low_risk_samples", []) or []),
+        "weak_samples": list(getattr(scan, "weak_samples", []) or []),
+    }
+    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(report_path)
 
 
 def _strip_model_explanation_notes(text, markers):
@@ -587,19 +624,44 @@ class _TranslateWorker(QObject):
             residue_scan = book_service.scan_japanese_residue(docs)
             residue_total = residue_scan.blocking_total
             residue_samples = residue_scan.blocking_samples
+            hard_residue_total = getattr(residue_scan, "hard_blocking_total", residue_total)
+            hard_residue_samples = getattr(residue_scan, "hard_blocking_samples", residue_samples)
+            low_risk_residue_total = getattr(residue_scan, "low_risk_total", 0)
+            low_risk_residue_samples = getattr(residue_scan, "low_risk_samples", [])
             weak_residue_total = residue_scan.weak_total
             weak_residue_samples = residue_scan.weak_samples
+            residue_policy = str(cfg.get("japanese_residue_policy") or "balanced").strip().lower()
+            if residue_policy not in JAPANESE_RESIDUE_POLICIES:
+                residue_policy = "balanced"
 
-            if residue_total:
+            if residue_policy == "strict":
+                blocking_residue_total = residue_total
+                blocking_residue_samples = residue_samples
+            elif residue_policy == "balanced":
+                blocking_residue_total = hard_residue_total
+                blocking_residue_samples = hard_residue_samples
+            else:
+                blocking_residue_total = 0
+                blocking_residue_samples = []
+
+            if blocking_residue_total:
                 translator.flush_cache()
-                samples = "\n".join(f"- {text}" for text in residue_samples)
+                report_path = _write_japanese_residue_report(
+                    output_path=cfg.get("out", ""),
+                    policy=residue_policy,
+                    blocked_total=blocking_residue_total,
+                    scan=residue_scan,
+                )
+                samples = "\n".join(f"- {text}" for text in blocking_residue_samples)
                 logger.error(
-                    "保存前检查发现 %s 处疑似日文残留，已阻止保存。样例:\n%s",
-                    residue_total,
+                    "保存前检查发现 %s 处硬日文残留，策略=%s，已阻止保存。报告: %s\n样例:\n%s",
+                    blocking_residue_total,
+                    residue_policy,
+                    report_path,
                     samples,
                 )
                 message = (
-                    f"保存前检查发现 {residue_total} 处疑似日文残留。"
+                    f"保存前检查发现 {blocking_residue_total} 处高风险日文残留。"
                     "已阻止保存完成品，请调整参数或切换模型后恢复续译。"
                 )
                 self.statusChanged.emit(message)
@@ -612,9 +674,33 @@ class _TranslateWorker(QObject):
                     "\n如果确认某个片段是必须保留的字形、符号或原文标记，"
                     f"才加入日文残留白名单: {allowlist_path}"
                 )
-                self.errorDetail.emit(message + hint + (f"\n样例:\n{samples}" if samples else ""))
+                self.errorDetail.emit(
+                    message
+                    + hint
+                    + f"\n残留报告: {report_path}"
+                    + (f"\n样例:\n{samples}" if samples else "")
+                )
                 self.failed.emit(message)
                 return
+            if residue_total:
+                report_path = _write_japanese_residue_report(
+                    output_path=cfg.get("out", ""),
+                    policy=residue_policy,
+                    blocked_total=0,
+                    scan=residue_scan,
+                )
+                logger.warning(
+                    "保存前检查发现 %s 处日文残留，策略=%s，低风险=%s，硬残留=%s，已允许保存并写入报告: %s。样例: %s",
+                    residue_total,
+                    residue_policy,
+                    low_risk_residue_total,
+                    hard_residue_total,
+                    report_path,
+                    " | ".join((low_risk_residue_samples or residue_samples)[:8]),
+                )
+                self.statusChanged.emit(
+                    f"保存前检查发现 {residue_total} 处日文残留，已按{residue_policy}策略允许保存。报告: {report_path}"
+                )
             if weak_residue_total:
                 logger.warning(
                     "保存前检查发现 %s 处弱日文残留，已提示但不阻塞保存。样例: %s",
@@ -986,6 +1072,7 @@ class TranslateBridge(QObject):
             "hymt2_generation_mode": getattr(cfg, "hymt2GenerationMode", "stable"),
             "hymt2_prompt_mode": getattr(cfg, "hymt2PromptMode", "official"),
             "hymt2_runtime_mode": getattr(cfg, "hymt2RuntimeMode", "cpu"),
+            "japanese_residue_policy": getattr(cfg, "japaneseResiduePolicy", "balanced"),
         }
 
     @Slot("QVariant")

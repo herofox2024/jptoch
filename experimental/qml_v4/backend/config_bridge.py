@@ -107,6 +107,7 @@ _CONFIG_KEYS = [
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
     "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
     "enable_notice_page", "notice_page_text", "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
+    "japanese_residue_policy",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -222,6 +223,7 @@ class ConfigBridge(QObject):
     _hymt2GenerationModeChanged = Signal()
     _hymt2PromptModeChanged = Signal()
     _hymt2RuntimeModeChanged = Signal()
+    _japaneseResiduePolicyChanged = Signal()
     _themeChanged = Signal()
     japaneseResidueAllowlistChanged = Signal()
     knownKatakanaTermsChanged = Signal()
@@ -258,6 +260,7 @@ class ConfigBridge(QObject):
         self._hymt2_generation_mode = "stable"
         self._hymt2_prompt_mode = "official"
         self._hymt2_runtime_mode = "cpu"
+        self._japanese_residue_policy = "balanced"
         self._theme = "light"
         self._autosave_enabled = False
         self._load_from_disk()
@@ -302,6 +305,8 @@ class ConfigBridge(QObject):
                 self._hymt2_prompt_mode = "official"
             if getattr(self, "_hymt2_runtime_mode", "") not in {"cpu", "gpu"}:
                 self._hymt2_runtime_mode = "cpu"
+            if getattr(self, "_japanese_residue_policy", "") not in {"strict", "balanced", "lenient"}:
+                self._japanese_residue_policy = "balanced"
             logger.info(f"配置已加载: {path}")
         except Exception as e:
             logger.warning(f"加载配置失败: {e}")
@@ -711,6 +716,16 @@ class ConfigBridge(QObject):
             val = "cpu"
         if val != self._hymt2_runtime_mode:
             self._hymt2_runtime_mode = val; self._emit_changed(self._hymt2RuntimeModeChanged)
+
+    @Property(str, notify=_japaneseResiduePolicyChanged)
+    def japaneseResiduePolicy(self) -> str: return self._japanese_residue_policy
+    @japaneseResiduePolicy.setter
+    def japaneseResiduePolicy(self, val: str):
+        val = str(val or "balanced").strip().lower()
+        if val not in {"strict", "balanced", "lenient"}:
+            val = "balanced"
+        if val != self._japanese_residue_policy:
+            self._japanese_residue_policy = val; self._emit_changed(self._japaneseResiduePolicyChanged)
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

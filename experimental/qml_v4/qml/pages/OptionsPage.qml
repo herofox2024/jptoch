@@ -25,6 +25,8 @@ Page {
     property var proofreadToneLabels: ["自动识别（推荐）", "中性口吻", "轻小说口吻", "文学化口吻"]
     property var proofreadProviderValues: ["", "deepseek", "doubao", "sakura", "hymt2", "gemini", "glm", "wenxin", "longcat", "custom"]
     property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Hy-MT2 本地", "Gemini", "智谱 GLM", "文心一言", "LongCat 2.0", "自定义"]
+    property var residuePolicyValues: ["balanced", "strict", "lenient"]
+    property var residuePolicyLabels: ["推荐模式（推荐）", "严格模式", "宽松模式"]
     property string residueAllowlistPath: cfg ? cfg.japaneseResidueAllowlistPath : ""
     property string residueAllowlistStatus: ""
     property string knownKatakanaTermsPath: cfg ? cfg.knownKatakanaTermsPath : ""
@@ -117,6 +119,21 @@ Page {
     function refreshPromptPreview() {
         if (!cfg || !cfg.buildPromptPreview) return
         page.promptPreviewText = cfg.buildPromptPreview()
+    }
+
+    function residuePolicyIndex(value) {
+        var idx = page.residuePolicyValues.indexOf(value || "balanced")
+        return idx >= 0 ? idx : 0
+    }
+
+    function residuePolicyDescription(value) {
+        if (value === "strict") {
+            return "严格模式：发现任何阻断级日文残留都会停止保存，适合最终精校。"
+        }
+        if (value === "lenient") {
+            return "宽松模式：保存前只生成残留报告，不阻止保存，适合先拿到可打开的 EPUB。"
+        }
+        return "推荐模式：整句/长句日文仍阻止保存；短标题、人名、机构名等低风险残留允许保存并生成报告。"
     }
 
     function batchAddNoticePages(files, noticeText) {
@@ -764,6 +781,52 @@ Page {
                                 selectByMouse: true
                                 onTextChanged: { if (cfg) cfg.proofreadModel = text }
                             }
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: "保存前日文残留策略"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: AppStyle.gapMedium
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            rowSpacing: 10
+                            columnSpacing: 12
+
+                            Label { text: "处理策略" }
+                            ComboBox {
+                                id: residuePolicyCombo
+                                Layout.fillWidth: true
+                                model: page.residuePolicyLabels
+                                currentIndex: page.residuePolicyIndex(cfg ? cfg.japaneseResiduePolicy : "balanced")
+                                onActivated: function(index) {
+                                    if (cfg) {
+                                        cfg.japaneseResiduePolicy = page.residuePolicyValues[index]
+                                    }
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.residuePolicyDescription(cfg ? cfg.japaneseResiduePolicy : "balanced")
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: AppStyle.fontSmall
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: "残留报告会保存到 C:\\Users\\HUAWEI\\.epub_translator\\residue_reports。不要把明显应该翻译的日文加入白名单，优先加入片假名术语修复词表。"
+                            color: AppPalette.warning
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: AppStyle.fontSmall
                         }
                     }
                 }

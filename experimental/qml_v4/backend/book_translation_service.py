@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """EPUB book-level translation helpers for the QML/V4 workflow."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from bs4 import NavigableString
@@ -40,6 +40,10 @@ class JapaneseResidueScan:
     blocking_samples: List[str]
     weak_total: int
     weak_samples: List[str]
+    hard_blocking_total: int = 0
+    hard_blocking_samples: List[str] = field(default_factory=list)
+    low_risk_total: int = 0
+    low_risk_samples: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -235,8 +239,12 @@ def build_toc_translation_map(
 def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
     hidden_tags = {"rt", "rp", "script", "style", "noscript"}
     blocking_samples: List[str] = []
+    hard_blocking_samples: List[str] = []
+    low_risk_samples: List[str] = []
     weak_samples: List[str] = []
     blocking_total = 0
+    hard_blocking_total = 0
+    low_risk_total = 0
     weak_total = 0
 
     for _, soup, _ in docs:
@@ -250,10 +258,19 @@ def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
                 continue
             if JaZhTranslator.has_blocking_japanese_residue(raw):
                 blocking_total += 1
+                fragments = JaZhTranslator.japanese_residue_fragments(raw)
+                fragment_text = " / ".join(fragments[:5]) if fragments else "unknown"
+                sample = f"fragment: {fragment_text} | text: {raw[:120]}"
                 if len(blocking_samples) < 8:
-                    fragments = JaZhTranslator.japanese_residue_fragments(raw)
-                    fragment_text = " / ".join(fragments[:5]) if fragments else "unknown"
-                    blocking_samples.append(f"fragment: {fragment_text} | text: {raw[:120]}")
+                    blocking_samples.append(sample)
+                if tq.is_low_risk_japanese_residue(raw):
+                    low_risk_total += 1
+                    if len(low_risk_samples) < 8:
+                        low_risk_samples.append(sample)
+                else:
+                    hard_blocking_total += 1
+                    if len(hard_blocking_samples) < 8:
+                        hard_blocking_samples.append(sample)
             elif JaZhTranslator.has_weak_japanese_residue(raw):
                 weak_total += 1
                 if len(weak_samples) < 5:
@@ -266,6 +283,10 @@ def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
         blocking_samples=blocking_samples,
         weak_total=weak_total,
         weak_samples=weak_samples,
+        hard_blocking_total=hard_blocking_total,
+        hard_blocking_samples=hard_blocking_samples,
+        low_risk_total=low_risk_total,
+        low_risk_samples=low_risk_samples,
     )
 
 

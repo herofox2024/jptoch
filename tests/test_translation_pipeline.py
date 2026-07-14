@@ -1088,6 +1088,14 @@ class TranslatorTests(unittest.TestCase):
             ("吃了热饭和汤面だけ的简餐后离开。", "只有热饭和汤面的简餐"),
             ("那个被称为醉れど銀次的家伙吧。", "醉鬼银次"),
             ("梅、椿、アシビ开始开花。", "马醉木"),
+            ("热门歌曲《恋のバラード》的出色表现以及销售成绩等综合因素。", "热门歌曲《恋之叙事曲》的出色表现"),
+            ("今年的《生きて明日なく》非常出色。", "今年的《活着却无明日》非常出色。"),
+            ("他们都是毫无用处的ミソッカスの宾客罢了。", "他们都是毫无用处的无足轻重的宾客罢了。"),
+            ("三人在咖啡馆“ドガ”二楼相遇了。", "三人在咖啡馆德加二楼相遇了。"),
+            ("一旦成为另一个男人的もの，完全成熟的美铃的肉体便有新鲜感。", "一旦成为另一个男人的女人"),
+            ("关于柚木ミドリ的事情则保持沉默。", "关于柚木绿的事情则保持沉默。"),
+            ("如果由柳泽プロ的社长邀请他，应该也没问题。", "如果由柳泽制作公司的社长邀请他"),
+            ("鬼头把装着一万日元纸币的信封塞到マチ子的手里。", "塞到町子的手里"),
             ("为了阿清，我でも想回到江户。", "为了阿清，我也想回到江户。"),
             ("为了阿清，我 でも 想回到江户。", "为了阿清，我也 想回到江户。"),
             ("就算有手癖不好控制，でも我还是喜欢阿清啊。", "就算有手癖不好控制，我还是喜欢阿清啊。"),
@@ -1709,8 +1717,21 @@ class AppLogicTests(unittest.TestCase):
         scan = scan_japanese_residue_in_docs(docs)
 
         self.assertEqual(scan.blocking_total, 1)
+        self.assertEqual(scan.hard_blocking_total, 1)
+        self.assertEqual(scan.low_risk_total, 0)
         self.assertEqual(scan.weak_total, 0)
         self.assertIn("逃げる", scan.blocking_samples[0])
+
+    def test_book_translation_service_classifies_low_risk_title_residue(self):
+        html = "<html><body><p>今年的《生きて明日なく》非常出色，她拥有很多粉丝。</p></body></html>"
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+
+        scan = scan_japanese_residue_in_docs(docs)
+
+        self.assertEqual(scan.blocking_total, 1)
+        self.assertEqual(scan.hard_blocking_total, 0)
+        self.assertEqual(scan.low_risk_total, 1)
+        self.assertIn("生きて", scan.low_risk_samples[0])
 
     def test_multi_anchor_node_replacement(self):
         html = '<p>前文 <a href="a">链接A</a> 中间 <a href="b">链接B</a> 后文</p>'

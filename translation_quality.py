@@ -51,6 +51,10 @@ COMMON_JAPANESE_RESIDUE_REPAIRS = {
     "切腹すること": "切腹",
     "醉れど銀次": "醉鬼银次",
     "醉れど银次": "醉鬼银次",
+    "恋のバラード": "恋之叙事曲",
+    "生きて明日なく": "活着却无明日",
+    "ミソッカスの": "无足轻重的",
+    "另一个男人的もの": "另一个男人的女人",
 }
 JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
 KNOWN_KATAKANA_TERMS_FILE = "known_katakana_terms.json"
@@ -58,6 +62,10 @@ DEFAULT_KNOWN_KATAKANA_TERMS: Dict[str, str] = {
     "チロリ": "烫酒壶",
     "ドサ帰り": "从佐渡归来",
     "アシビ": "马醉木",
+    "ドガ": "德加",
+    "柚木ミドリ": "柚木绿",
+    "柳泽プロ": "柳泽制作公司",
+    "マチ子": "町子",
 }
 ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
     r"[「『“\"'（(【\[]?\s*[\u30a0-\u30ff\uff66-\uff9f]\s*[」』”\"'）)】\]]?\s*(?:の\s*)?(?:字形|字型|字状|形|型|状|字)"
@@ -73,6 +81,12 @@ JAPANESE_READING_PUZZLE_CONTEXT_RE = re.compile(
     r"(?:首音|读|讀|发音|發音|音读|音讀|读音|讀音|拼读|拼讀|"
     r"左往右|右往左|从左|從左|从右|從右|横排|橫排|竖排|豎排|"
     r"连起来|連起來|串字符|字符|字串|片假名|假名|暗号|谜题|謎題|谜面|謎面|藏头|藏尾)"
+)
+LOW_RISK_JAPANESE_QUOTED_TITLE_RE = re.compile(
+    r"[《「『“\"']([^《》「」『』“”\"'\r\n]{1,40}[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f][^《》「」『』“”\"'\r\n]{0,40})[》」』”\"']"
+)
+LOW_RISK_JAPANESE_NAME_ORG_RE = re.compile(
+    r"(?:[\u3400-\u9fff々]{1,8}[\u30a0-\u30ff\uff66-\uff9f]{1,12}(?:子|プロ)?|[\u30a0-\u30ff\uff66-\uff9f]{1,12}子)"
 )
 LEAKED_PROMPT_BLOCK_RE = re.compile(
     r"\s*【(?:前文上下文|后文上下文|本书内日文残留修复参考)[^】]*】.*?(?=(?:【(?:前文上下文|后文上下文|本书内日文残留修复参考)[^】]*】)|\Z)",
@@ -385,6 +399,28 @@ def has_blocking_japanese_residue(text: str) -> bool:
     if not JAPANESE_KANA_RE.search(stripped):
         return False
     return not has_weak_japanese_residue(stripped)
+
+
+def is_low_risk_japanese_residue(text: str) -> bool:
+    """Short title/name-like residue may be reported without blocking final save."""
+    value = str(text or "").strip()
+    if not value or not has_blocking_japanese_residue(value):
+        return False
+    if has_only_trivial_japanese_noise(value):
+        return True
+
+    han_count = len(re.findall(r"[\u4e00-\u9fff]", value))
+    kana_fragments = [fragment for fragment in JAPANESE_KANA_FRAGMENT_RE.findall(value) if fragment.strip()]
+    kana_total = sum(len(fragment) for fragment in kana_fragments)
+    if han_count < 8 or not kana_fragments:
+        return False
+    if kana_total > 24 or len(kana_fragments) > 4:
+        return False
+    if LOW_RISK_JAPANESE_QUOTED_TITLE_RE.search(value):
+        return True
+    if LOW_RISK_JAPANESE_NAME_ORG_RE.search(value) and kana_total <= 16:
+        return True
+    return False
 
 
 def repair_japanese_o_name_prefix_residue(src: str, dst: str) -> str:
