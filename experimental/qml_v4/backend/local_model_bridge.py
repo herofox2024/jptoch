@@ -56,7 +56,7 @@ class LocalModelBridge(QObject):
         self._server_path = ""
         self._backend_mode = "python"
         self._gpu_mode = "auto"
-        self._gpu_status = "尚未检测 GPU。自动模式会在启动时检测 NVIDIA 显卡。"
+        self._gpu_status = "Python 本地模式固定 CPU；GPU 模式仅用于 llama-server.exe 外部模式。"
         self._host = "127.0.0.1"
         self._port = 8080
         self._status = "请选择 Hy-MT2 GGUF 模型文件。Python 本地模式无需选择 llama-server。"
@@ -194,17 +194,20 @@ class LocalModelBridge(QObject):
             return True, f"检测到 NVIDIA GPU: {output.splitlines()[0]}"
         return False, "未检测到可用 NVIDIA GPU，按 CPU 模式启动。"
 
-    def _resolve_gpu_layers(self) -> tuple[int, str]:
+    def _resolve_python_gpu_layers(self) -> tuple[int, str]:
+        return 0, "Python 本地模式固定 CPU：当前 llama-cpp-python 未启用 CUDA。"
+
+    def _resolve_external_gpu_layers_arg(self) -> tuple[str, str]:
         mode = self._gpu_mode
         if mode == "cpu":
-            return 0, "已选择 CPU 模式。"
+            return "0", "llama-server 外部模式已选择 CPU：追加 --gpu-layers 0。"
         if mode == "cuda":
-            return -1, "已选择 CUDA 模式，将尝试 GPU 加速。"
+            return "all", "llama-server 外部模式已选择 CUDA：追加 --gpu-layers all。"
 
         has_gpu, message = self._detect_nvidia_gpu()
         if has_gpu:
-            return -1, message + " 自动启用 CUDA。"
-        return 0, message
+            return "all", message + " llama-server 外部模式自动追加 --gpu-layers all。"
+        return "0", message + " llama-server 外部模式追加 --gpu-layers 0。"
 
     def _download_target_for_url(self, url: str) -> Path:
         file_name = (url or "").rstrip("/").split("/")[-1].split("?")[0] or "model.gguf"
@@ -364,9 +367,16 @@ class LocalModelBridge(QObject):
         self._backend_mode = normalized
         self.backendModeChanged.emit()
         if normalized == "python":
-            self._set_status("已切换到 Python 本地模式：由本软件加载 GGUF 模型。")
+            self._set_status("已切换到 Python 本地模式：由本软件加载 GGUF 模型，固定 CPU。")
+            self._set_gpu_status("Python 本地模式固定 CPU；GPU 模式仅用于 llama-server.exe 外部模式。")
         else:
-            self._set_status("已切换到 llama-server.exe 模式：由外部程序加载 GGUF 模型。")
+            self._set_status("已切换到 llama-server.exe 模式：由外部程序加载 GGUF 模型，可按 GPU 模式追加 --gpu-layers。")
+            if self._gpu_mode == "cuda":
+                self._set_gpu_status("llama-server 外部模式已选择 CUDA：启动时追加 --gpu-layers all。")
+            elif self._gpu_mode == "cpu":
+                self._set_gpu_status("llama-server 外部模式已选择 CPU：启动时追加 --gpu-layers 0。")
+            else:
+                self._set_gpu_status("llama-server 外部模式已选择自动：启动时检测 NVIDIA GPU 并决定 --gpu-layers all/0。")
         return {"ok": True, "message": "运行模式已切换"}
 
     @Slot(str, result="QVariantMap")
@@ -379,11 +389,11 @@ class LocalModelBridge(QObject):
         self._gpu_mode = normalized
         self.gpuModeChanged.emit()
         if normalized == "auto":
-            self._set_gpu_status("已选择自动模式：启动时检测 NVIDIA GPU。")
+            self._set_gpu_status("已选择自动模式：llama-server 外部模式启动时检测 NVIDIA GPU；Python 模式仍固定 CPU。")
         elif normalized == "cuda":
-            self._set_gpu_status("已选择 CUDA 模式：如果 llama-cpp-python 不支持 CUDA，会自动回退 CPU。")
+            self._set_gpu_status("已选择 CUDA 模式：仅 llama-server 外部模式会追加 --gpu-layers all；Python 模式固定 CPU。")
         else:
-            self._set_gpu_status("已选择 CPU 模式：不会启用 CUDA。")
+            self._set_gpu_status("已选择 CPU 模式：llama-server 外部模式会追加 --gpu-layers 0；Python 模式固定 CPU。")
         return {"ok": True, "message": "GPU 模式已切换"}
 
     @Slot(result="QVariantMap")
@@ -458,7 +468,7 @@ class LocalModelBridge(QObject):
         if not self._is_port_available():
             return {"ok": False, "message": f"端口 {self._port} 已被占用，请先关闭已有本地模型服务。"}
 
-        n_gpu_layers, gpu_message = self._resolve_gpu_layers()
+        n_gpu_layers, gpu_message = self._resolve_python_gpu_layers()
         self._set_gpu_status(gpu_message)
         self._python_starting = True
         self._python_stop_requested = False
@@ -474,7 +484,6 @@ class LocalModelBridge(QObject):
         return {"ok": True, "message": "Python 本地服务正在启动，请等待状态变为运行中后再测试连接。"}
 
     def _python_start_worker(self, n_gpu_layers: int) -> None:
-        attempted_gpu = n_gpu_layers != 0
         try:
             self._python_service = PythonLlamaService(
                 model_path=self._model_path,
@@ -494,33 +503,12 @@ class LocalModelBridge(QObject):
                 self._set_status("Python 本地服务已取消启动。")
                 self._set_gpu_status("Python 本地服务已取消启动。")
                 return
-            mode_text = "CUDA" if n_gpu_layers != 0 else "CPU"
-            self._set_status(f"Python 本地服务已启动（{mode_text}），地址: http://{self._host}:{self._port}/v1")
-            self._set_gpu_status(f"当前运行模式: {mode_text}")
+            self._set_status(f"Python 本地服务已启动（CPU），地址: http://{self._host}:{self._port}/v1")
+            self._set_gpu_status("当前运行模式: CPU（Python 本地模式固定 CPU）")
         except Exception as exc:
-            if attempted_gpu:
-                logger.warning("CUDA 模式加载失败，准备回退 CPU: %s", exc)
-                self._set_gpu_status(f"CUDA 加载失败，自动回退 CPU: {exc}")
-                try:
-                    self._python_service = PythonLlamaService(
-                        model_path=self._model_path,
-                        host=self._host,
-                        port=self._port,
-                        model_name=self.modelName,
-                        n_gpu_layers=0,
-                        ctx_size=4096,
-                    )
-                    self._python_service.start()
-                    self._set_status(f"Python 本地服务已启动（CPU 回退），地址: http://{self._host}:{self._port}/v1")
-                    self._set_gpu_status("当前运行模式: CPU（CUDA 不可用，已回退）")
-                except Exception as fallback_exc:
-                    logger.exception("Python 本地服务 CPU 回退也启动失败")
-                    self._python_service = None
-                    self._set_status(f"Python 本地服务启动失败: {fallback_exc}")
-            else:
-                logger.exception("Python 本地服务启动失败")
-                self._python_service = None
-                self._set_status(f"Python 本地服务启动失败: {exc}")
+            logger.exception("Python 本地服务启动失败")
+            self._python_service = None
+            self._set_status(f"Python 本地服务启动失败: {exc}")
         finally:
             self._python_starting = False
             self.runningChanged.emit()
@@ -535,6 +523,8 @@ class LocalModelBridge(QObject):
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "llama-server.log"
         log_file = log_path.open("a", encoding="utf-8")
+        gpu_layers, gpu_message = self._resolve_external_gpu_layers_arg()
+        self._set_gpu_status(gpu_message)
         args = [
             self._server_path,
             "-m",
@@ -545,6 +535,8 @@ class LocalModelBridge(QObject):
             str(self._port),
             "--ctx-size",
             "4096",
+            "--gpu-layers",
+            gpu_layers,
         ]
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
@@ -562,7 +554,7 @@ class LocalModelBridge(QObject):
             return {"ok": False, "message": f"启动失败: {exc}"}
 
         self.runningChanged.emit()
-        self._set_status(f"llama-server 已启动，日志: {log_path}")
+        self._set_status(f"llama-server 已启动（--gpu-layers {gpu_layers}），日志: {log_path}")
         return {"ok": True, "message": f"服务已启动: http://{self._host}:{self._port}/v1"}
 
     @Slot(result="QVariantMap")

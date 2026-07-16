@@ -18,7 +18,7 @@ Page {
         "deepseek": "DeepSeek：推荐主力翻译；付费版支持高并发批量。",
         "doubao": "Doubao：火山方舟 OpenAI 兼容接口。",
         "sakura": "Sakura：本地模型，无需 API Key。",
-        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；CPU 默认 1/1，GPU 默认 4/4，GPU 最大建议并发6、批量8。",
+        "hymt2": "Hy-MT2：腾讯开源本地翻译模型，无需 API Key；Python 本地模式固定 CPU 默认 1/1；如需 CUDA，请使用 CUDA 版 llama-server.exe 外部模式，默认 4/4。",
         "gemini": "Gemini：不支持 thinking 参数；免费版易限流。",
         "glm": "GLM/智谱：免费版限流明显，建议用性能预设。",
         "wenxin": "文心一言/千帆：使用百度千帆 OpenAI 兼容接口；旧版 access_token RPC 接口不兼容。",
@@ -51,6 +51,7 @@ Page {
 
     function localHyMt2UsesGpu() {
         if (!page.localModel) return false
+        if (page.localModel.backendMode !== "server") return false
         if (page.localModel.gpuMode === "cuda") return true
         var status = String(page.localModel.gpuStatus || "")
         return page.localModel.gpuMode === "auto"
@@ -59,6 +60,7 @@ Page {
                && status.indexOf("未检测到") < 0
                && status.indexOf("尚未检测") < 0
                && status.indexOf("回退") < 0
+               && status.indexOf("CPU") < 0
     }
 
     function applyLocalHyMt2Config() {
@@ -372,7 +374,7 @@ Page {
                     }
                     Button {
                         text: "检测 GPU"
-                        enabled: page.localModel
+                        enabled: page.localModel && page.localModel.backendMode === "server"
                         onClicked: {
                             if (!page.localModel) return
                             page.showLocalModelResult(page.localModel.detectGpuBackend())
@@ -384,6 +386,7 @@ Page {
                         id: gpuModeCombo
                         Layout.fillWidth: true
                         model: ["自动", "CUDA", "CPU"]
+                        enabled: page.localModel && page.localModel.backendMode === "server"
                         currentIndex: {
                             if (!page.localModel) return 0
                             if (page.localModel.gpuMode === "cuda") return 1
@@ -404,12 +407,24 @@ Page {
                         font.pixelSize: AppStyle.fontSmall
                     }
 
+                    Item {}
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.columnSpan: 2
+                        text: page.localModel && page.localModel.backendMode === "server"
+                              ? "GPU 模式仅对 llama-server.exe 外部模式生效：CUDA 会追加 --gpu-layers all，CPU 会追加 --gpu-layers 0。注意必须使用 CUDA 版 llama-server.exe，CPU 版程序不会真正调用显卡。"
+                              : "Python 本地模式固定 CPU：当前 llama-cpp-python 不支持 CUDA，GPU 模式在此模式下不会生效。"
+                        color: AppPalette.mutedText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: AppStyle.fontSmall
+                    }
+
                     FieldLabel { text: "性能配置" }
                     Label {
                         Layout.fillWidth: true
-                        text: cfg && cfg.hymt2RuntimeMode === "gpu"
-                              ? "GPU 模式：默认并发4、批量4；翻译器最大允许并发6、批量8。超过 6/6 可能增加超时、OOM 或残留风险。"
-                              : "CPU 模式：强制并发1、批量1，优先稳定保存。"
+                        text: page.localHyMt2UsesGpu()
+                              ? "外部 CUDA 模式：默认并发4、批量4；翻译器最大允许并发6、批量8。超过 6/6 可能增加超时、OOM 或残留风险。"
+                              : "CPU 模式：Python 本地模式固定 CPU；外部 CPU 模式会追加 --gpu-layers 0。默认并发1、批量1，优先稳定保存。"
                         color: AppPalette.mutedText
                         wrapMode: Text.WordWrap
                         font.pixelSize: AppStyle.fontSmall
