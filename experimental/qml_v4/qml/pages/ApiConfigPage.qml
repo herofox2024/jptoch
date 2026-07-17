@@ -412,7 +412,7 @@ Page {
                         Layout.fillWidth: true
                         Layout.columnSpan: 2
                         text: page.localModel && page.localModel.backendMode === "server"
-                              ? "GPU 模式仅对 llama-server.exe 外部模式生效：CUDA 会追加 --gpu-layers all，CPU 会追加 --gpu-layers 0。注意必须使用 CUDA 版 llama-server.exe，CPU 版程序不会真正调用显卡。"
+                              ? "GPU 模式仅对 llama-server.exe 外部模式生效：CUDA 会追加 --gpu-layers 999，CPU 会追加 --gpu-layers 0。注意必须使用 CUDA 版 llama-server.exe，CPU 版程序不会真正调用显卡。"
                               : "Python 本地模式固定 CPU：当前 llama-cpp-python 不支持 CUDA，GPU 模式在此模式下不会生效。"
                         color: AppPalette.mutedText
                         wrapMode: Text.WordWrap

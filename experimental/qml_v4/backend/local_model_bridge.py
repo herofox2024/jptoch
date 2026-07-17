@@ -202,11 +202,11 @@ class LocalModelBridge(QObject):
         if mode == "cpu":
             return "0", "llama-server 外部模式已选择 CPU：追加 --gpu-layers 0。"
         if mode == "cuda":
-            return "all", "llama-server 外部模式已选择 CUDA：追加 --gpu-layers all。"
+            return "999", "llama-server 外部模式已选择 CUDA：追加 --gpu-layers 999。"
 
         has_gpu, message = self._detect_nvidia_gpu()
         if has_gpu:
-            return "all", message + " llama-server 外部模式自动追加 --gpu-layers all。"
+            return "999", message + " llama-server 外部模式自动追加 --gpu-layers 999。"
         return "0", message + " llama-server 外部模式追加 --gpu-layers 0。"
 
     def _download_target_for_url(self, url: str) -> Path:
@@ -372,11 +372,11 @@ class LocalModelBridge(QObject):
         else:
             self._set_status("已切换到 llama-server.exe 模式：由外部程序加载 GGUF 模型，可按 GPU 模式追加 --gpu-layers。")
             if self._gpu_mode == "cuda":
-                self._set_gpu_status("llama-server 外部模式已选择 CUDA：启动时追加 --gpu-layers all。")
+                self._set_gpu_status("llama-server 外部模式已选择 CUDA：启动时追加 --gpu-layers 999。")
             elif self._gpu_mode == "cpu":
                 self._set_gpu_status("llama-server 外部模式已选择 CPU：启动时追加 --gpu-layers 0。")
             else:
-                self._set_gpu_status("llama-server 外部模式已选择自动：启动时检测 NVIDIA GPU 并决定 --gpu-layers all/0。")
+                self._set_gpu_status("llama-server 外部模式已选择自动：启动时检测 NVIDIA GPU 并决定 --gpu-layers 999/0。")
         return {"ok": True, "message": "运行模式已切换"}
 
     @Slot(str, result="QVariantMap")
@@ -391,7 +391,7 @@ class LocalModelBridge(QObject):
         if normalized == "auto":
             self._set_gpu_status("已选择自动模式：llama-server 外部模式启动时检测 NVIDIA GPU；Python 模式仍固定 CPU。")
         elif normalized == "cuda":
-            self._set_gpu_status("已选择 CUDA 模式：仅 llama-server 外部模式会追加 --gpu-layers all；Python 模式固定 CPU。")
+            self._set_gpu_status("已选择 CUDA 模式：仅 llama-server 外部模式会追加 --gpu-layers 999；Python 模式固定 CPU。")
         else:
             self._set_gpu_status("已选择 CPU 模式：llama-server 外部模式会追加 --gpu-layers 0；Python 模式固定 CPU。")
         return {"ok": True, "message": "GPU 模式已切换"}
