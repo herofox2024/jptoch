@@ -1196,6 +1196,27 @@ class TranslatorTests(unittest.TestCase):
                 "把前后所有内容连起来，就是ニシノソノシニコクハクタノミマス。"
                 "如此一来，便组成了一句表意完整的话。"
             ),
+            (
+                "这是一张秘密的五十音对照表哦。只要把暗号中的假名对照这张表，"
+                "再读出时钟所指示的时间位置往后的那个假名就行了。比如说，"
+                "'あ'对应的时钟指向七点的位置，所以实际上要读的是五十音图中往后数第七个假名'く'。"
+                "'タ'的话，对应四点的位置，所以就是'や'，最后再接上'い'。"
+            ),
+            (
+                "这是一张秘密的五十音对照表哦。只要把密码中的假名对照这张表，"
+                "读出时钟所指时间往后推移的那个假名就行了。比如说，"
+                "'あ'对应的是七时的位置，所以实际上要读的是五十音图中往后数第七个的'く'。"
+                "'た'的话，对应的是四时的位置，所以就是'と'。零时位置上的'き'，就保持'き'不变。"
+                "没有设置时钟的，是や行的'い'和'え'，再加上わ行的'う'。"
+            ),
+            (
+                "这是一张秘密的五十音对照表。只要将暗号中的假名对照这张表，"
+                "读出时钟所指时间往后推移的那个假名就行了。比如说，"
+                "'あ'对应的是七时的位置，所以实际上就是五十音图中往后数第七个的'く'。"
+                "'た'对应的是四时的位置，所以就是'と'。零时位置上的'き'，就保持'き'不变。"
+                "没有设置时钟的，是や行的'い'和'え'，以及わ行的'う'。"
+                "因为这些与あ行重复，所以就省略了。"
+            ),
         ]
         for text in samples:
             with self.subTest(text=text):
@@ -1207,6 +1228,15 @@ class TranslatorTests(unittest.TestCase):
         text = "她は笑った。"
         self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(text))
         self.assertTrue(JaZhTranslator._is_incomplete_translation("source", text))
+
+    def test_reading_puzzle_rule_does_not_hide_japanese_grammar_residue(self):
+        text = (
+            "没有设置时钟的，是や行的'い'和'え'，"
+            "それからわ行の'う'。"
+        )
+        self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(text))
+        fragments = JaZhTranslator.japanese_residue_fragments(text)
+        self.assertTrue(any("それから" in fragment for fragment in fragments))
 
     def test_save_time_repairs_known_residue_from_hymt2_cache(self):
         text = "从佐渡平安回来的人被称为“ドサ帰り”，在流浪者中被视为最高荣誉的勋章。"

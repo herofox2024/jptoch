@@ -83,10 +83,14 @@ JAPANESE_EXPLANATORY_QUOTE_CUE_RE = re.compile(
 JAPANESE_READING_PUZZLE_RUN_RE = re.compile(
     r"(?<![A-Za-z0-9])[\u30a0-\u30ff\uff66-\uff9f](?:[、,，・･\s]*[\u30a0-\u30ff\uff66-\uff9f]){2,}(?![A-Za-z0-9])"
 )
+JAPANESE_READING_PUZZLE_ROW_RE = re.compile(
+    r"(?<![A-Za-z0-9])[\u3041-\u3096\u30a1-\u30fa\uff66-\uff9f]\s*(?:行|段|列)(?![A-Za-z0-9])"
+)
 JAPANESE_READING_PUZZLE_CONTEXT_RE = re.compile(
     r"(?:首音|读|讀|发音|發音|音读|音讀|读音|讀音|拼读|拼讀|"
     r"左往右|右往左|从左|從左|从右|從右|横排|橫排|竖排|豎排|"
-    r"连起来|連起來|串字符|字符|字串|片假名|假名|暗号|谜题|謎題|谜面|謎面|藏头|藏尾)"
+    r"连起来|連起來|串字符|字符|字串|片假名|假名|五十音|对照表|對照表|"
+    r"暗号|谜题|謎題|谜面|謎面|藏头|藏尾|时钟|時鐘|钟面|鐘面|位置|往后数|往後數)"
 )
 LOW_RISK_JAPANESE_QUOTED_TITLE_RE = re.compile(
     r"[《「『“\"']([^《》「」『』“”\"'\r\n]{1,40}[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f][^《》「」『』“”\"'\r\n]{0,40})[》」』”\"']"
@@ -319,7 +323,10 @@ def strip_builtin_allowed_quoted_literals(text: str) -> str:
             context_start = max(0, match.start() - 30)
             context_end = min(len(text), match.end() + 30)
             context = text[context_start:context_end]
-            if JAPANESE_EXPLANATORY_QUOTE_CUE_RE.search(context):
+            if (
+                JAPANESE_EXPLANATORY_QUOTE_CUE_RE.search(context)
+                or JAPANESE_READING_PUZZLE_CONTEXT_RE.search(context)
+            ):
                 return ""
         return match.group(0)
 
@@ -341,6 +348,21 @@ def strip_builtin_allowed_reading_puzzle_runs(text: str) -> str:
     return JAPANESE_READING_PUZZLE_RUN_RE.sub(replace, text)
 
 
+def strip_builtin_allowed_reading_puzzle_rows(text: str) -> str:
+    if not text:
+        return ""
+
+    def replace(match: re.Match) -> str:
+        context_start = max(0, match.start() - 60)
+        context_end = min(len(text), match.end() + 60)
+        context = text[context_start:context_end]
+        if JAPANESE_READING_PUZZLE_CONTEXT_RE.search(context):
+            return ""
+        return match.group(0)
+
+    return JAPANESE_READING_PUZZLE_ROW_RE.sub(replace, text)
+
+
 def strip_allowed_japanese_notation(text: str) -> str:
     """Ignore approved literal Japanese snippets that are not untranslated residue."""
     if not text:
@@ -348,6 +370,7 @@ def strip_allowed_japanese_notation(text: str) -> str:
     stripped = ALLOWED_LATIN_MIDDLE_DOT_RE.sub("", text)
     stripped = ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", stripped)
     stripped = strip_builtin_allowed_quoted_literals(stripped)
+    stripped = strip_builtin_allowed_reading_puzzle_rows(stripped)
     stripped = strip_builtin_allowed_reading_puzzle_runs(stripped)
     return strip_user_allowed_japanese_literals(stripped)
 

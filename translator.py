@@ -4372,9 +4372,14 @@ JSON 顶层字段：
                 return
             if translated is not None:
                 translated = self._postprocess_translation(key, translated)
-            failed_texts[key] = reason
             if translated is not None and self._has_blocking_japanese_residue(translated):
                 residue_texts[key] = translated
+                failed_texts[key] = "译文疑似仍有日文残留"
+                return
+            if translated is None and key in residue_texts:
+                failed_texts.setdefault(key, "译文疑似仍有日文残留")
+                return
+            failed_texts[key] = reason
 
         def mark_complete(text: str) -> None:
             key = str(text or "")
