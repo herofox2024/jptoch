@@ -52,6 +52,14 @@ from translation_cache import (
     text_cache_key as tc_text_cache_key,
 )
 
+try:
+    from backend import request_log as qml_request_log
+except Exception:  # pragma: no cover - non-QML entry points can run without it
+    try:
+        from experimental.qml_v4.backend import request_log as qml_request_log
+    except Exception:  # pragma: no cover
+        qml_request_log = None
+
 
 # ---------------------------------------------------------------------------
 # 结果数据类：用于 _call_deepseek_single / _call_deepseek_batch_json 返回
@@ -1193,6 +1201,87 @@ class JaZhTranslator:
             return ""
         return f" (尝试 {attempt + 1}/{max_retries})"
 
+    @staticmethod
+    def _summarize_prompt(messages: Optional[List[Dict[str, Any]]], limit: int = 700) -> str:
+        if not messages:
+            return ""
+        parts = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "-")
+            content = re.sub(r"\s+", " ", str(message.get("content") or "")).strip()
+            if content:
+                parts.append(f"{role}: {content}")
+        text = " | ".join(parts)
+        if qml_request_log is not None:
+            return qml_request_log.compact_text(text, limit)
+        return response_snippet(text, limit)
+
+    def _log_api_request_event(
+        self,
+        context: str,
+        started_at: float,
+        outcome: str,
+        *,
+        status_code: Optional[int] = None,
+        attempt: Optional[int] = None,
+        max_retries: Optional[int] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        url: Optional[str] = None,
+        batch_size: Optional[int] = None,
+        error: Optional[str] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        source_text: Optional[Any] = None,
+        response_text: Optional[Any] = None,
+        token_total: Optional[int] = None,
+        category: Optional[str] = None,
+    ) -> None:
+        """Log slow/failed API requests without leaking headers or API keys."""
+
+        elapsed_ms = int(max(0.0, time.time() - started_at) * 1000)
+        is_ok = str(outcome or "").lower() == "ok" and (
+            status_code is None or 200 <= int(status_code) < 300
+        )
+        if qml_request_log is not None:
+            try:
+                qml_request_log.record_event(
+                    context=context,
+                    provider=provider or self.provider or "-",
+                    model=model or self.model or "-",
+                    url=url or self.api_url or "-",
+                    status_code=status_code,
+                    outcome=outcome or "-",
+                    elapsed_ms=elapsed_ms,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=batch_size,
+                    prompt_summary=self._summarize_prompt(messages),
+                    source_text=source_text,
+                    response_text=response_text,
+                    error=str(error or ""),
+                    token_total=token_total,
+                    category=category or "",
+                )
+            except Exception:
+                pass
+        if is_ok and elapsed_ms < 15000:
+            return
+        logger.warning(
+            "API请求%s: context=%s, outcome=%s, status=%s, provider=%s, model=%s, url=%s, batch_size=%s, elapsed_ms=%s%s",
+            self._format_attempt(attempt, max_retries),
+            context,
+            outcome or "-",
+            status_code if status_code is not None else "-",
+            provider or self.provider or "-",
+            model or self.model or "-",
+            url or self.api_url or "-",
+            batch_size if batch_size is not None else "-",
+            elapsed_ms,
+            f", error={self._response_snippet(str(error), limit=240)}" if error else "",
+        )
+
     def _inc_stat(self, key: str, delta: int = 1):
         with self._stats_lock:
             self.stats[key] = self.stats.get(key, 0) + delta
@@ -1814,11 +1903,27 @@ class JaZhTranslator:
             try:
                 self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
+                request_started = time.time()
                 resp = self.session.post(
                     proofread_url,
                     headers=headers,
                     json=payload,
                     timeout=self.API_TIMEOUT,
+                )
+                self._log_api_request_event(
+                    "译后校对",
+                    request_started,
+                    "ok" if 200 <= resp.status_code < 300 else "http_error",
+                    status_code=resp.status_code,
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                    url=proofread_url,
+                    batch_size=1,
+                    messages=messages,
+                    source_text=src,
+                    response_text=getattr(resp, "text", ""),
                 )
                 if resp.status_code == 429:
                     self._inc_stat("api_requests_failed")
@@ -1857,11 +1962,41 @@ class JaZhTranslator:
             except requests.exceptions.Timeout as e:
                 self._inc_stat("api_requests_failed")
                 self._record_dynamic_limit_event("校对请求超时", kind="timeout")
+                self._log_api_request_event(
+                    "译后校对",
+                    locals().get("request_started", time.time()),
+                    "timeout",
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                    url=proofread_url,
+                    batch_size=1,
+                    messages=messages,
+                    source_text=src,
+                    error=e,
+                )
                 logger.warning(f"译后校对超时: {e}")
                 if attempt == 1:
                     return draft
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
+                self._log_api_request_event(
+                    "译后校对",
+                    locals().get("request_started", time.time()),
+                    "http_error",
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                    url=proofread_url,
+                    batch_size=1,
+                    messages=messages,
+                    source_text=src,
+                    response_text=getattr(getattr(e, "response", None), "text", ""),
+                    error=e,
+                )
                 self._log_http_error_response(
                     e,
                     "译后校对",
@@ -1972,11 +2107,27 @@ class JaZhTranslator:
                 self._wait_dynamic_backoff()
                 self._inc_stat("proofread_batch_requests")
                 self._inc_stat("api_requests_total")
+                request_started = time.time()
                 resp = self.session.post(
                     proofread_url,
                     headers=headers,
                     json=payload,
                     timeout=self.API_TIMEOUT,
+                )
+                self._log_api_request_event(
+                    "批量校对",
+                    request_started,
+                    "ok" if 200 <= resp.status_code < 300 else "http_error",
+                    status_code=resp.status_code,
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                    url=proofread_url,
+                    batch_size=len(prepared),
+                    messages=messages,
+                    source_text=prepared,
+                    response_text=getattr(resp, "text", ""),
                 )
                 if resp.status_code == 429:
                     self._inc_stat("api_requests_failed")
@@ -2091,11 +2242,41 @@ class JaZhTranslator:
             except requests.exceptions.Timeout as e:
                 self._inc_stat("api_requests_failed")
                 self._record_dynamic_limit_event("批量校对请求超时", kind="timeout")
+                self._log_api_request_event(
+                    "批量校对",
+                    locals().get("request_started", time.time()),
+                    "timeout",
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                    url=proofread_url,
+                    batch_size=len(prepared),
+                    messages=messages,
+                    source_text=prepared,
+                    error=e,
+                )
                 logger.warning(f"批量校对超时: {e}")
                 if attempt == 1:
                     return {}
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
+                self._log_api_request_event(
+                    "批量校对",
+                    locals().get("request_started", time.time()),
+                    "http_error",
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=self.proofread_provider or self.provider,
+                    model=proofread_model,
+                    url=proofread_url,
+                    batch_size=len(prepared),
+                    messages=messages,
+                    source_text=prepared,
+                    response_text=getattr(getattr(e, "response", None), "text", ""),
+                    error=e,
+                )
                 self._log_http_error_response(
                     e,
                     "批量校对",
@@ -2146,11 +2327,22 @@ class JaZhTranslator:
         try:
             self._wait_dynamic_backoff()
             self._inc_stat("api_requests_total")
+            request_started = time.time()
             resp = self.session.post(
                 self.api_url,
                 headers=headers,
                 json=payload,
                 timeout=self.API_TIMEOUT,
+            )
+            self._log_api_request_event(
+                "截断续取",
+                request_started,
+                "ok" if 200 <= resp.status_code < 300 else "http_error",
+                status_code=resp.status_code,
+                batch_size=1,
+                messages=continuation_messages,
+                source_text=continuation_prompt,
+                response_text=getattr(resp, "text", ""),
             )
             if resp.status_code in (429, 502):
                 if resp.status_code == 429:
@@ -2171,9 +2363,29 @@ class JaZhTranslator:
             return (additional or "").strip(), finish_reason
         except requests.exceptions.HTTPError as e:
             self._inc_stat("api_requests_failed")
+            self._log_api_request_event(
+                "截断续取",
+                locals().get("request_started", time.time()),
+                "http_error",
+                status_code=getattr(getattr(e, "response", None), "status_code", None),
+                batch_size=1,
+                messages=continuation_messages,
+                source_text=continuation_prompt,
+                response_text=getattr(getattr(e, "response", None), "text", ""),
+                error=e,
+            )
             self._log_http_error_response(e, "截断续取")
             return "", None
         except Exception as e:
+            self._log_api_request_event(
+                "截断续取",
+                locals().get("request_started", time.time()),
+                "request_error",
+                batch_size=1,
+                messages=continuation_messages,
+                source_text=continuation_prompt,
+                error=e,
+            )
             logger.warning(f"截断续取请求失败: {e}")
             return "", None
 
@@ -3008,11 +3220,27 @@ JSON 顶层字段：
             try:
                 self._inc_stat("moderation_fallback_requests")
                 self._inc_stat("api_requests_total")
+                request_started = time.time()
                 resp = self.session.post(
                     fallback["api_url"],
                     headers=headers,
                     json=payload,
                     timeout=self.API_TIMEOUT,
+                )
+                self._log_api_request_event(
+                    "内容审核备用翻译",
+                    request_started,
+                    "ok" if 200 <= resp.status_code < 300 else "http_error",
+                    status_code=resp.status_code,
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=provider,
+                    model=fallback["model"],
+                    url=fallback["api_url"],
+                    batch_size=1,
+                    messages=messages,
+                    source_text=messages,
+                    response_text=getattr(resp, "text", ""),
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -3033,6 +3261,22 @@ JSON 顶层字段：
                 )
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
+                self._log_api_request_event(
+                    "内容审核备用翻译",
+                    locals().get("request_started", time.time()),
+                    "http_error",
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=provider,
+                    model=fallback["model"],
+                    url=fallback["api_url"],
+                    batch_size=1,
+                    messages=messages,
+                    source_text=messages,
+                    response_text=getattr(getattr(e, "response", None), "text", ""),
+                    error=e,
+                )
                 self._log_http_error_response(
                     e,
                     "内容审核备用翻译",
@@ -3047,6 +3291,20 @@ JSON 顶层字段：
                 last_error = f"备用模型 HTTP 错误: {e}"
             except Exception as e:
                 self._inc_stat("api_requests_failed")
+                self._log_api_request_event(
+                    "内容审核备用翻译",
+                    locals().get("request_started", time.time()),
+                    "request_error",
+                    attempt=attempt,
+                    max_retries=2,
+                    provider=provider,
+                    model=fallback["model"],
+                    url=fallback["api_url"],
+                    batch_size=1,
+                    messages=messages,
+                    source_text=messages,
+                    error=e,
+                )
                 last_error = str(e)
                 logger.warning("内容审核备用翻译失败 (尝试 %s/2): %s", attempt + 1, e)
         logger.warning("内容审核备用翻译未成功: %s", last_error or "未知错误")
@@ -3158,11 +3416,24 @@ JSON 顶层字段：
             try:
                 self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
+                request_started = time.time()
                 resp = self.session.post(
                     self.api_url,
                     headers=headers,
                     json=payload,
                     timeout=self.API_TIMEOUT,
+                )
+                self._log_api_request_event(
+                    "单条翻译",
+                    request_started,
+                    "ok" if 200 <= resp.status_code < 300 else "http_error",
+                    status_code=resp.status_code,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=1,
+                    messages=messages,
+                    source_text=text,
+                    response_text=getattr(resp, "text", ""),
                 )
 
                 if resp.status_code == 429:
@@ -3240,13 +3511,48 @@ JSON 顶层字段：
                 self._inc_stat("api_requests_failed")
                 self._record_dynamic_limit_event("请求超时", kind="timeout")
                 last_error = "请求超时"
+                self._log_api_request_event(
+                    "单条翻译",
+                    locals().get("request_started", time.time()),
+                    "timeout",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=1,
+                    messages=messages,
+                    source_text=text,
+                    error=last_error,
+                )
                 logger.warning(f"API 请求超时 (尝试 {attempt + 1}/{max_retries})")
             except requests.exceptions.ConnectionError:
                 self._inc_stat("api_requests_failed")
                 last_error = "网络连接失败"
+                self._log_api_request_event(
+                    "单条翻译",
+                    locals().get("request_started", time.time()),
+                    "connection_error",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=1,
+                    messages=messages,
+                    source_text=text,
+                    error=last_error,
+                )
                 logger.warning(f"网络连接失败 (尝试 {attempt + 1}/{max_retries})")
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
+                self._log_api_request_event(
+                    "单条翻译",
+                    locals().get("request_started", time.time()),
+                    "http_error",
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=1,
+                    messages=messages,
+                    source_text=text,
+                    response_text=getattr(getattr(e, "response", None), "text", ""),
+                    error=e,
+                )
                 body_snippet = self._log_http_error_response(
                     e,
                     "单条翻译",
@@ -3385,11 +3691,24 @@ JSON 顶层字段：
             try:
                 self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
+                request_started = time.time()
                 resp = self.session.post(
                     self.api_url,
                     headers=headers,
                     json=payload,
                     timeout=self.API_TIMEOUT,
+                )
+                self._log_api_request_event(
+                    "批量JSON翻译",
+                    request_started,
+                    "ok" if 200 <= resp.status_code < 300 else "http_error",
+                    status_code=resp.status_code,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=len(texts),
+                    messages=messages,
+                    source_text=numbered,
+                    response_text=getattr(resp, "text", ""),
                 )
                 if resp.status_code == 429:
                     self._inc_stat("api_requests_failed")
@@ -3553,6 +3872,17 @@ JSON 顶层字段：
             except requests.exceptions.Timeout as e:
                 self._inc_stat("api_requests_failed")
                 self._record_dynamic_limit_event("批量 JSON 请求超时", kind="timeout")
+                self._log_api_request_event(
+                    "批量JSON翻译",
+                    locals().get("request_started", time.time()),
+                    "timeout",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=len(texts),
+                    messages=messages,
+                    source_text=numbered,
+                    error=e,
+                )
                 logger.warning(f"批量翻译请求超时 (尝试 {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt + random.uniform(0, 1)
@@ -3564,6 +3894,19 @@ JSON 顶层字段：
                 )
             except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
+                self._log_api_request_event(
+                    "批量JSON翻译",
+                    locals().get("request_started", time.time()),
+                    "http_error" if isinstance(e, requests.exceptions.HTTPError) else "request_error",
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=len(texts),
+                    messages=messages,
+                    source_text=numbered,
+                    response_text=getattr(getattr(e, "response", None), "text", ""),
+                    error=e,
+                )
                 if isinstance(e, requests.exceptions.HTTPError):
                     if self._is_content_moderation_http_error(e):
                         self._inc_stat("batch_moderation_reject")

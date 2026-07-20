@@ -429,6 +429,68 @@ def is_low_risk_japanese_residue(text: str) -> bool:
     return False
 
 
+def classify_japanese_residue(text: str) -> Dict[str, Any]:
+    """Classify Japanese residue severity for save-time diagnostics.
+
+    Risk values:
+    - none: no actionable residue after allowlist/notation stripping
+    - weak: tiny kana noise, never blocks saving
+    - low: title/name/term-like residue, allowed by balanced mode
+    - medium: short mixed Chinese/Japanese residue; blocks in balanced mode
+    - high: likely untranslated Japanese sentence or long kana residue
+    """
+
+    raw = str(text or "").strip()
+    stripped = strip_allowed_japanese_notation(raw)
+    fragments = extract_japanese_residue_fragments(raw)
+    if not raw or not JAPANESE_KANA_RE.search(stripped):
+        return {
+            "risk": "none",
+            "blocking": False,
+            "fragments": [],
+            "reason": "no_japanese_residue",
+        }
+    if is_short_quoted_japanese_literal(raw):
+        return {
+            "risk": "low",
+            "blocking": False,
+            "fragments": fragments,
+            "reason": "short_quoted_literal",
+        }
+    if has_weak_japanese_residue(raw):
+        return {
+            "risk": "weak",
+            "blocking": False,
+            "fragments": fragments,
+            "reason": "weak_single_kana_noise",
+        }
+    if is_low_risk_japanese_residue(raw):
+        return {
+            "risk": "low",
+            "blocking": True,
+            "fragments": fragments,
+            "reason": "title_name_or_term_like",
+        }
+
+    han_count = len(re.findall(r"[\u3400-\u9fff]", stripped))
+    kana_fragments = [fragment for fragment in JAPANESE_KANA_FRAGMENT_RE.findall(stripped) if fragment.strip()]
+    kana_total = sum(len(fragment) for fragment in kana_fragments)
+    kana_ratio = kana_total / max(1, len(stripped))
+    if kana_total >= 12 or kana_ratio >= 0.35 or (kana_total >= 5 and han_count <= 2):
+        return {
+            "risk": "high",
+            "blocking": True,
+            "fragments": fragments,
+            "reason": "long_or_sentence_like_kana",
+        }
+    return {
+        "risk": "medium",
+        "blocking": True,
+        "fragments": fragments,
+        "reason": "short_mixed_residue",
+    }
+
+
 def repair_japanese_o_name_prefix_residue(src: str, dst: str) -> str:
     """Convert likely Japanese female-name prefixes left by the model, e.g. お仲 -> 阿仲."""
     source = str(src or "")
@@ -529,6 +591,27 @@ def repair_furigana_reading_residue(dst: str) -> str:
     return normalize_japanese_place_kanji(repaired)
 
 
+def repair_inline_furigana_reading_residue(dst: str) -> str:
+    """Remove conservative inline hiragana readings after CJK names/places."""
+    translated = str(dst or "")
+    if not translated or not re.search(r"[\u3040-\u309f]", translated):
+        return translated
+
+    cjk = r"\u3400-\u9fff"
+    repaired = re.sub(
+        rf"(?<=[{cjk}])(?:\s+|[（(]\s*)[\u3040-\u309f]{{2,12}}\s*(?:[）)])?\s*(?=[{cjk}])",
+        "",
+        translated,
+    )
+    repaired = re.sub(
+        rf"(?<=[{cjk}])[（(]\s*[\u3040-\u309f]{{2,12}}\s*[）)](?=([，,。；;、：:\s]|$))",
+        "",
+        repaired,
+    )
+    repaired = re.sub(r"[ \t]{2,}", " ", repaired)
+    return normalize_japanese_place_kanji(repaired).strip()
+
+
 def strip_leaked_prompt_context(dst: str) -> str:
     """Remove prompt-only reference blocks leaked by small local models."""
     translated = str(dst or "")
@@ -568,6 +651,7 @@ def postprocess_translation(src: str, dst: Optional[str]) -> str:
     translated = repair_japanese_san_suffix_residue(translated)
     translated = repair_common_japanese_residue_terms(translated)
     translated = repair_furigana_reading_residue(translated)
+    translated = repair_inline_furigana_reading_residue(translated)
     return repair_known_katakana_terms(src, translated)
 
 

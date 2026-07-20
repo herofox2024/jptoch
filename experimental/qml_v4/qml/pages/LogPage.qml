@@ -13,6 +13,10 @@ Page {
     property bool paused: false
     property bool followTail: true
     property int maxLines: 900
+    property int activeTab: 0
+    property var requestRows: []
+    property var selectedRequest: null
+    readonly property var requestCategoryCodes: ["all", "failed", "timeout", "security", "format", "residue", "rate_limit", "ok"]
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     function reloadRecent(forceFollow) {
@@ -25,7 +29,7 @@ Page {
     }
 
     function appendLine(line) {
-        if (!line || page.paused) return
+        if (!line || page.paused || page.activeTab !== 0) return
         var nextText = logText.text ? (logText.text + "\n" + line) : line
         if (nextText.length > 260000) {
             nextText = "... 已截断较早日志，仅保留最新内容 ...\n" + nextText.slice(-220000)
@@ -38,8 +42,55 @@ Page {
         logText.cursorPosition = logText.text.length
     }
 
-    Component.onCompleted: page.reloadRecent(true)
-    onVisibleChanged: if (visible) page.reloadRecent(true)
+    function requestCategoryCode() {
+        var index = requestCategory.currentIndex
+        if (index < 0 || index >= page.requestCategoryCodes.length) return "all"
+        return page.requestCategoryCodes[index]
+    }
+
+    function reloadRequestLogs() {
+        if (!page.logBridge || !page.logBridge.readRequestLogs) {
+            page.requestRows = []
+            page.selectedRequest = null
+            return
+        }
+        page.requestRows = page.logBridge.readRequestLogs(350, page.requestCategoryCode(), requestSearch.text || "")
+        page.selectedRequest = page.requestRows.length > 0 ? page.requestRows[0] : null
+    }
+
+    function clearRequestLogs() {
+        if (!page.logBridge || !page.logBridge.clearRequestLogs) return
+        page.logBridge.clearRequestLogs()
+        page.reloadRequestLogs()
+    }
+
+    function formatRequest(row) {
+        if (!row) return "请选择一条请求日志"
+        return "时间: " + (row.ts || "-")
+            + "\n分类: " + (row.category || "-")
+            + "\n上下文: " + (row.context || "-")
+            + "\nProvider: " + (row.provider || "-")
+            + "\nModel: " + (row.model || "-")
+            + "\nURL: " + (row.url || "-")
+            + "\nHTTP: " + (row.status_code === undefined || row.status_code === null ? "-" : row.status_code)
+            + "\n结果: " + (row.outcome || "-")
+            + "\n耗时: " + (row.elapsed_ms || 0) + " ms"
+            + "\n批量: " + (row.batch_size === undefined || row.batch_size === null ? "-" : row.batch_size)
+            + "\nToken估算/实际: " + (row.token_total || 0)
+            + "\n\nPrompt摘要:\n" + (row.prompt_summary || "-")
+            + "\n\n原文/请求摘要:\n" + (row.source_summary || "-")
+            + "\n\n响应摘要:\n" + (row.response_summary || "-")
+            + "\n\n错误:\n" + (row.error || "-")
+    }
+
+    Component.onCompleted: {
+        page.reloadRecent(true)
+        page.reloadRequestLogs()
+    }
+    onVisibleChanged: if (visible) {
+        if (page.activeTab === 0) page.reloadRecent(true)
+        else page.reloadRequestLogs()
+    }
 
     Connections {
         target: page.logBridge
@@ -50,20 +101,31 @@ Page {
         }
 
         function onCurrentLogPathChanged() {
-            if (page.visible) page.reloadRecent(true)
+            if (page.visible && page.activeTab === 0) page.reloadRecent(true)
+        }
+
+        function onRequestLogChanged() {
+            if (page.visible && page.activeTab === 1) page.reloadRequestLogs()
         }
     }
 
     Timer {
         interval: 2500
-        running: page.visible && !page.paused
+        running: page.visible && !page.paused && page.activeTab === 0
         repeat: true
         onTriggered: page.reloadRecent(false)
     }
 
+    Timer {
+        interval: 5000
+        running: page.visible && page.activeTab === 1
+        repeat: true
+        onTriggered: page.reloadRequestLogs()
+    }
+
     ColumnLayout {
         anchors.fill: parent
-        spacing: AppStyle.spacingXLarge
+        spacing: AppStyle.spacingLarge
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -78,13 +140,41 @@ Page {
             }
 
             Label {
-                text: "实时查看翻译过程、API 报错、限流、校对和保存诊断信息。"
+                text: "运行日志用于看整体流程；请求日志用于定位 API 请求、模型响应、超时、安全拒绝和日文残留。"
                 color: AppPalette.mutedText
                 font.pixelSize: AppStyle.fontBody
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
         }
 
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: AppStyle.spacingSmall
+
+            Button {
+                text: "运行日志"
+                highlighted: page.activeTab === 0
+                onClicked: {
+                    page.activeTab = 0
+                    page.reloadRecent(true)
+                }
+            }
+
+            Button {
+                text: "请求日志"
+                highlighted: page.activeTab === 1
+                onClicked: {
+                    page.activeTab = 1
+                    page.reloadRequestLogs()
+                }
+            }
+
+            Item { Layout.fillWidth: true }
+        }
+
         Rectangle {
+            visible: page.activeTab === 0
             Layout.fillWidth: true
             Layout.preferredHeight: 112
             radius: AppPalette.radiusLarge
@@ -108,7 +198,6 @@ Page {
                     }
 
                     TextField {
-                        id: pathText
                         Layout.fillWidth: true
                         readOnly: true
                         text: page.logBridge ? page.logBridge.currentLogPath : ""
@@ -127,20 +216,9 @@ Page {
                     Layout.fillWidth: true
                     spacing: AppStyle.spacingMedium
 
-                    Button {
-                        text: "刷新"
-                        onClicked: page.reloadRecent(true)
-                    }
-
-                    Button {
-                        text: "清空显示"
-                        onClicked: logText.text = ""
-                    }
-
-                    Button {
-                        text: "打开日志目录"
-                        onClicked: if (page.logBridge) page.logBridge.openLogDirectory()
-                    }
+                    Button { text: "刷新"; onClicked: page.reloadRecent(true) }
+                    Button { text: "清空显示"; onClicked: logText.text = "" }
+                    Button { text: "打开日志目录"; onClicked: if (page.logBridge) page.logBridge.openLogDirectory() }
 
                     Item { Layout.fillWidth: true }
 
@@ -163,6 +241,54 @@ Page {
         }
 
         Rectangle {
+            visible: page.activeTab === 1
+            Layout.fillWidth: true
+            Layout.preferredHeight: 116
+            radius: AppPalette.radiusLarge
+            color: AppPalette.surfaceRaised
+            border.color: AppPalette.borderColor
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: AppStyle.spacingMedium
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingMedium
+
+                    ComboBox {
+                        id: requestCategory
+                        Layout.preferredWidth: 148
+                        model: ["全部", "失败", "超时", "安全拒绝", "格式错误", "日文残留", "限流", "成功"]
+                        onActivated: page.reloadRequestLogs()
+                    }
+
+                    TextField {
+                        id: requestSearch
+                        Layout.fillWidth: true
+                        placeholderText: "搜索原文、响应、错误、provider、model"
+                        selectByMouse: true
+                        onAccepted: page.reloadRequestLogs()
+                    }
+
+                    Button { text: "搜索"; onClicked: page.reloadRequestLogs() }
+                    Button { text: "刷新"; onClicked: page.reloadRequestLogs() }
+                    Button { text: "清空请求日志"; onClicked: page.clearRequestLogs() }
+                    Button { text: "打开目录"; onClicked: if (page.logBridge) page.logBridge.openRequestLogDirectory() }
+                }
+
+                Label {
+                    text: "仅记录诊断摘要并自动脱敏 API Key；默认保留最近 14 天、每天最多 2000 条。当前显示 " + page.requestRows.length + " 条。"
+                    color: AppPalette.mutedText
+                    font.pixelSize: AppStyle.fontSmall
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: AppPalette.radiusLarge
@@ -171,6 +297,7 @@ Page {
             clip: true
 
             ScrollView {
+                visible: page.activeTab === 0
                 anchors.fill: parent
                 anchors.margins: 14
                 clip: true
@@ -185,6 +312,102 @@ Page {
                     selectByMouse: true
                     wrapMode: TextEdit.NoWrap
                     textFormat: TextEdit.PlainText
+                    color: AppPalette.textColor
+                    selectedTextColor: "white"
+                    selectionColor: AppPalette.accentColor
+                    font.family: "Consolas"
+                    font.pixelSize: AppStyle.fontSmall
+                    background: Rectangle {
+                        color: AppPalette.fieldBg
+                        radius: AppPalette.radiusMedium
+                        border.color: AppPalette.lineColor
+                    }
+                }
+            }
+
+            RowLayout {
+                visible: page.activeTab === 1
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: AppStyle.spacingMedium
+
+                ListView {
+                    id: requestList
+                    Layout.preferredWidth: Math.min(520, parent.width * 0.48)
+                    Layout.fillHeight: true
+                    clip: true
+                    spacing: AppStyle.spacingSmall
+                    model: page.requestRows
+
+                    delegate: Rectangle {
+                        width: requestList.width
+                        height: Math.max(96, requestSummary.implicitHeight + 28)
+                        radius: AppPalette.radiusMedium
+                        color: modelData === page.selectedRequest ? AppPalette.accentSoft : AppPalette.fieldBg
+                        border.color: modelData === page.selectedRequest ? AppPalette.accentColor : AppPalette.lineColor
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: page.selectedRequest = modelData
+                        }
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: AppStyle.spacingCompact
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: AppStyle.spacingSmall
+
+                                Label {
+                                    text: "[" + (modelData.category || "-") + "] " + (modelData.context || "-")
+                                    color: AppPalette.textColor
+                                    font.pixelSize: AppStyle.fontSmall
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+
+                                Label {
+                                    text: (modelData.elapsed_ms || 0) + " ms"
+                                    color: AppPalette.mutedText
+                                    font.pixelSize: AppStyle.fontTiny
+                                }
+                            }
+
+                            Label {
+                                id: requestSummary
+                                Layout.fillWidth: true
+                                text: (modelData.ts || "-") + " | " + (modelData.provider || "-") + "/" + (modelData.model || "-")
+                                      + " | HTTP " + (modelData.status_code === undefined || modelData.status_code === null ? "-" : modelData.status_code)
+                                      + "\n" + ((modelData.error || modelData.source_summary || modelData.response_summary || "-"))
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontTiny
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    Label {
+                        anchors.centerIn: parent
+                        visible: page.requestRows.length === 0
+                        text: "暂无请求日志"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontBody
+                    }
+                }
+
+                TextArea {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextEdit.Wrap
+                    textFormat: TextEdit.PlainText
+                    text: page.formatRequest(page.selectedRequest)
                     color: AppPalette.textColor
                     selectedTextColor: "white"
                     selectionColor: AppPalette.accentColor

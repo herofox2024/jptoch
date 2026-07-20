@@ -11,12 +11,18 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
 import translation_quality as tq
 from backend.toast_bridge import ToastBridge
+from backend.task_history import (
+    TranslationTaskHistoryStore,
+    make_task_id,
+    normalize_failed_blocks,
+    sanitize_config,
+)
 
 CANCELLED_RESULT = "__CANCELLED__"
 STOPPED_RESULT = "__STOPPED__"
@@ -67,6 +73,18 @@ _TOC_EXPLANATION_MARKERS = _FILENAME_EXPLANATION_MARKERS + (
     "永远流动",
 )
 
+_TOC_TRAILING_AUTHOR_NAMES = (
+    "恒川光太郎",
+    "坂东真砂子",
+    "宇佐美诚",
+    "宇佐美まこと",
+    "小林泰三",
+    "竹本健治",
+    "小松左京",
+    "平山梦明",
+    "服部麻由美",
+)
+
 
 def _sanitize_filename(name):
     invalid = '<>:"/\\\\|?*'
@@ -100,21 +118,68 @@ def _write_japanese_residue_report(
     stamp = time.strftime("%Y%m%d-%H%M%S")
     base = _sanitize_filename(Path(output_path or "translation").stem) or "translation"
     report_path = report_dir / f"{stamp}-{base}-japanese-residue.json"
+    text_report_path = report_dir / f"{stamp}-{base}-japanese-residue.txt"
     payload = {
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "output_path": output_path,
         "policy": policy,
+        "text_report_path": str(text_report_path),
         "blocking_total": int(getattr(scan, "blocking_total", 0)),
         "hard_blocking_total": int(getattr(scan, "hard_blocking_total", 0)),
+        "high_risk_total": int(getattr(scan, "high_risk_total", 0)),
+        "medium_risk_total": int(getattr(scan, "medium_risk_total", 0)),
         "low_risk_total": int(getattr(scan, "low_risk_total", 0)),
         "weak_total": int(getattr(scan, "weak_total", 0)),
         "blocked_total": int(blocked_total),
         "blocking_samples": list(getattr(scan, "blocking_samples", []) or []),
         "hard_blocking_samples": list(getattr(scan, "hard_blocking_samples", []) or []),
+        "high_risk_samples": list(getattr(scan, "high_risk_samples", []) or []),
+        "medium_risk_samples": list(getattr(scan, "medium_risk_samples", []) or []),
         "low_risk_samples": list(getattr(scan, "low_risk_samples", []) or []),
         "weak_samples": list(getattr(scan, "weak_samples", []) or []),
+        "structured_samples": list(getattr(scan, "structured_samples", []) or []),
+        "risk_legend": {
+            "high": "likely untranslated Japanese sentence or long kana residue; always blocks except lenient mode",
+            "medium": "short mixed residue that still needs translation; blocks in strict/balanced mode",
+            "low": "title/name/term-like residue; strict blocks, balanced allows with report",
+            "weak": "tiny kana noise; warning only",
+        },
     }
     report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    lines = [
+        "EPUB Japanese Residue Report",
+        f"created_at: {payload['created_at']}",
+        f"output_path: {output_path}",
+        f"policy: {policy}",
+        f"blocked_total: {blocked_total}",
+        "",
+        "Totals",
+        f"- high: {payload['high_risk_total']}",
+        f"- medium: {payload['medium_risk_total']}",
+        f"- low: {payload['low_risk_total']}",
+        f"- weak: {payload['weak_total']}",
+        "",
+        "Recommended handling",
+        "- high: switch model or retranslate failed blocks before saving.",
+        "- medium: add a known katakana repair term if it is a term; otherwise retranslate.",
+        "- low: balanced mode can save with this report; strict mode blocks it.",
+        "- weak: warning only.",
+        "",
+    ]
+    for title, key in (
+        ("High risk samples", "high_risk_samples"),
+        ("Medium risk samples", "medium_risk_samples"),
+        ("Low risk samples", "low_risk_samples"),
+        ("Weak samples", "weak_samples"),
+    ):
+        lines.append(title)
+        samples = payload.get(key) or []
+        if not samples:
+            lines.append("- none")
+        else:
+            lines.extend(f"- {sample}" for sample in samples)
+        lines.append("")
+    text_report_path.write_text("\n".join(lines), encoding="utf-8")
     return str(report_path)
 
 
@@ -196,6 +261,12 @@ def _clean_translated_toc_title(candidate):
     cleaned = _strip_model_explanation_notes(value, _TOC_EXPLANATION_MARKERS)
     if not cleaned:
         return ""
+
+    if any(marker in value for marker in _TOC_EXPLANATION_MARKERS):
+        for author in _TOC_TRAILING_AUTHOR_NAMES:
+            if cleaned.endswith(author) and len(cleaned) > len(author):
+                cleaned = cleaned[: -len(author)].strip()
+                break
 
     for prefix in ("译文：", "译文:", "翻译：", "翻译:", "标题：", "标题:"):
         if cleaned.startswith(prefix):
@@ -402,50 +473,48 @@ class _TranslateWorker(QObject):
         start_ts = time.time()
         try:
             from translator import JaZhTranslator, TranslationIncompleteError
-            from epub_io import (
-                load_book,
-                save_book,
-                iter_text_nodes,
-                extract_toc_titles,
-                apply_toc_translations,
-                add_translation_notice_page,
-            )
-            from backend.book_translation_service import (
-                BookTranslationService,
-            )
-            from text_utils import is_translatable
-
-            book = load_book(cfg["inp"])
-            docs = list(iter_text_nodes(book))
-            toc_titles = extract_toc_titles(book)
-            book_service = BookTranslationService()
-            book_text_plan = book_service.build_text_plan(docs, toc_titles)
-            all_texts = book_text_plan.all_texts
-
-            # ====== 管线方式：风格检测阶段 ======
+            from epub_io import save_book
             from backend.pipeline import (
+                ApplyBookTranslationsStage,
+                BatchTranslateStage,
+                BuildTextPlanStage,
+                CreateTranslatorStage,
+                FinalizeBookContentStage,
+                LoadEpubStage,
                 PipelineContext,
                 StyleDetectStage,
                 TranslationPipeline,
             )
-
-            pipeline = TranslationPipeline()
-            pipeline.add_stage(StyleDetectStage(enabled=True))
+            from text_utils import is_translatable
 
             ctx = PipelineContext(
                 config=cfg,
-                texts=all_texts,
                 cancel_event=self._cancel_event,
                 extra={
                     "title": os.path.basename(cfg["inp"]),
-                    "toc_titles": toc_titles,
+                    "clean_title": _clean_translated_toc_title,
+                    "looks_like_refusal": _looks_like_model_refusal,
                 },
             )
-            ctx = pipeline.run(ctx)
+            ctx = (
+                TranslationPipeline()
+                .add_stage(LoadEpubStage())
+                .add_stage(BuildTextPlanStage())
+                .add_stage(StyleDetectStage(enabled=True))
+                .add_stage(CreateTranslatorStage())
+                .run(ctx)
+            )
 
-            # 发射风格检测信号
-            if ctx.proofread_style:
-                proofread_style = ctx.proofread_style
+            book = ctx.book
+            docs = ctx.docs
+            toc_titles = ctx.toc_titles
+            book_service = ctx.book_service
+            book_text_plan = ctx.text_plan
+            all_texts = ctx.texts
+
+            # 发送风格检测信号
+            proofread_style = ctx.proofread_style
+            if proofread_style:
                 self.proofreadStyleDetected.emit(
                     proofread_style.display_text,
                     proofread_style.reason,
@@ -454,44 +523,8 @@ class _TranslateWorker(QObject):
                 )
                 cfg["proofread_genre"] = proofread_style.genre
                 cfg["proofread_tone"] = proofread_style.tone
-            else:
-                # 风格检测未启用时使用默认值
-                from style_detector import StyleDetectionResult
-                proofread_style = StyleDetectionResult(
-                    genre=cfg.get("proofread_genre", "general"),
-                    tone=cfg.get("proofread_tone", "neutral"),
-                    confidence=0,
-                    reason="",
-                )
 
-            translator = JaZhTranslator(
-                api_key=cfg["api_key"],
-                provider=cfg["provider"],
-                api_url=cfg["api_url"],
-                model=cfg["model"],
-                max_workers=cfg["max_workers"],
-                batch_size=cfg["batch_size"],
-                max_batch_length=cfg["max_batch_length"],
-                max_text_size_for_batch=cfg["max_text_size_for_batch"],
-                api_timeout=cfg["api_timeout"],
-                cancel_event=self._cancel_event,
-                extract_glossary=cfg["extract_glossary"],
-                enable_glossary=cfg["enable_glossary"],
-                enable_thinking=cfg["enable_thinking"],
-                enable_proofread=cfg["enable_proofread"],
-                proofread_genre=proofread_style.genre,
-                proofread_tone=proofread_style.tone,
-                proofread_model=cfg.get("proofread_model") or None,  # P3-⑥
-                proofread_provider=cfg.get("proofread_provider") or None,
-                proofread_api_key=cfg.get("proofread_api_key") or None,
-                proofread_api_url=cfg.get("proofread_api_url") or None,
-                allow_text_cache_reuse=bool(cfg.get("allow_text_cache_reuse", True)),
-                prompt_extra_instruction=cfg.get("prompt_extra_instruction", ""),
-                enable_prompt_examples=bool(cfg.get("enable_prompt_examples", True)),
-                hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
-                hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
-                hymt2_runtime_mode=cfg.get("hymt2_runtime_mode", "cpu"),
-            )
+            translator = ctx.translator
             self._translator = translator
             if self._bridge:
                 self._bridge._active_translator = translator
@@ -499,6 +532,7 @@ class _TranslateWorker(QObject):
             total_chars = sum(len(t) for t in all_texts) or 1
             total_texts = len(all_texts)
             if self._bridge:
+                self._bridge._record_translation_task_text_plan(all_texts)
                 self._bridge._register_active_texts(all_texts, translator)
             estimated_seconds = _estimate_translation_duration(total_chars, total_texts, cfg)
             self.statusChanged.emit(f"开始翻译 预计翻译时长: {_format_duration(estimated_seconds)}")
@@ -535,6 +569,8 @@ class _TranslateWorker(QObject):
                 _emit_stat(completed, total)
 
             def on_item(src, dst):
+                if self._bridge:
+                    self._bridge._record_translation_item_success(src, dst)
                 self.itemTranslated.emit(src, dst)
 
             def on_proofread_detail(detail):
@@ -555,17 +591,18 @@ class _TranslateWorker(QObject):
                 )
 
             try:
-                results = translator.translate_batch(
-                    all_texts,
-                    progress_callback=on_progress,
-                    item_callback=on_item,
-                    proofread_callback=on_proofread_detail,
-                    context_texts=all_texts,
-                )
+                ctx.progress_callback = on_progress
+                ctx.item_callback = on_item
+                ctx.proofread_callback = on_proofread_detail
+                ctx = TranslationPipeline().add_stage(BatchTranslateStage()).run(ctx)
+                results = ctx.results
+                ordered_results = ctx.ordered_results
             except TranslationIncompleteError as e:
                 translator.flush_cache()
                 failed_count = len(e.failed_texts)
                 residue_count = len(e.residue_texts)
+                if self._bridge:
+                    self._bridge._record_translation_task_failures(e)
                 message = (
                     f"翻译未完成：{failed_count} 条未成功翻译，"
                     f"{residue_count} 条疑似日文残留。"
@@ -602,30 +639,24 @@ class _TranslateWorker(QObject):
                 self.finished.emit(CANCELLED_RESULT)
                 return
 
-            ordered_results = getattr(translator, "last_ordered_results", [])
-            if not isinstance(ordered_results, list) or len(ordered_results) != len(all_texts):
-                ordered_results = []
-            book_service.apply_translations(
-                book_text_plan,
-                results,
-                ordered_results,
-                _clean_translated_toc_title,
-                _looks_like_model_refusal,
-            )
-
-            repair_report = book_service.repair_known_katakana_terms(docs)
-            if repair_report.repaired_total:
+            ctx.results = results
+            ctx.ordered_results = ordered_results
+            ctx = TranslationPipeline().add_stage(ApplyBookTranslationsStage()).run(ctx)
+            repair_report = ctx.repair_report
+            if repair_report and repair_report.repaired_total:
                 logger.info(
                     "保存前自动修复日文残留 %s 处。样例: %s",
                     repair_report.repaired_total,
                     " | ".join(repair_report.samples),
                 )
 
-            residue_scan = book_service.scan_japanese_residue(docs)
+            residue_scan = ctx.residue_scan
             residue_total = residue_scan.blocking_total
             residue_samples = residue_scan.blocking_samples
             hard_residue_total = getattr(residue_scan, "hard_blocking_total", residue_total)
             hard_residue_samples = getattr(residue_scan, "hard_blocking_samples", residue_samples)
+            high_residue_total = getattr(residue_scan, "high_risk_total", 0)
+            medium_residue_total = getattr(residue_scan, "medium_risk_total", 0)
             low_risk_residue_total = getattr(residue_scan, "low_risk_total", 0)
             low_risk_residue_samples = getattr(residue_scan, "low_risk_samples", [])
             weak_residue_total = residue_scan.weak_total
@@ -653,15 +684,25 @@ class _TranslateWorker(QObject):
                     scan=residue_scan,
                 )
                 samples = "\n".join(f"- {text}" for text in blocking_residue_samples)
+                if self._bridge:
+                    self._bridge._record_translation_task_save_residue(
+                        blocking_residue_samples,
+                        blocking_residue_total,
+                        report_path,
+                    )
                 logger.error(
-                    "保存前检查发现 %s 处硬日文残留，策略=%s，已阻止保存。报告: %s\n样例:\n%s",
+                    "保存前检查发现 %s 处阻断级日文残留，策略=%s，高风险=%s，中风险=%s，低风险=%s，已阻止保存。报告: %s\n样例:\n%s",
                     blocking_residue_total,
                     residue_policy,
+                    high_residue_total,
+                    medium_residue_total,
+                    low_risk_residue_total,
                     report_path,
                     samples,
                 )
                 message = (
-                    f"保存前检查发现 {blocking_residue_total} 处高风险日文残留。"
+                    f"保存前检查发现 {blocking_residue_total} 处阻断级日文残留"
+                    f"（高风险 {high_residue_total}，中风险 {medium_residue_total}，低风险 {low_risk_residue_total}）。"
                     "已阻止保存完成品，请调整参数或切换模型后恢复续译。"
                 )
                 self.statusChanged.emit(message)
@@ -690,16 +731,18 @@ class _TranslateWorker(QObject):
                     scan=residue_scan,
                 )
                 logger.warning(
-                    "保存前检查发现 %s 处日文残留，策略=%s，低风险=%s，硬残留=%s，已允许保存并写入报告: %s。样例: %s",
+                    "保存前检查发现 %s 处日文残留，策略=%s，高风险=%s，中风险=%s，低风险=%s，硬残留=%s，已允许保存并写入报告: %s。样例: %s",
                     residue_total,
                     residue_policy,
+                    high_residue_total,
+                    medium_residue_total,
                     low_risk_residue_total,
                     hard_residue_total,
                     report_path,
                     " | ".join((low_risk_residue_samples or residue_samples)[:8]),
                 )
                 self.statusChanged.emit(
-                    f"保存前检查发现 {residue_total} 处日文残留，已按{residue_policy}策略允许保存。报告: {report_path}"
+                    f"保存前检查发现 {residue_total} 处日文残留（高 {high_residue_total} / 中 {medium_residue_total} / 低 {low_risk_residue_total}），已按{residue_policy}策略允许保存。报告: {report_path}"
                 )
             if weak_residue_total:
                 logger.warning(
@@ -708,23 +751,7 @@ class _TranslateWorker(QObject):
                     " | ".join(weak_residue_samples),
                 )
 
-            for item, soup, _ in docs:
-                item.set_content(str(soup).encode("utf-8"))
-
-            toc_translations = book_service.build_toc_translation_map(
-                book_text_plan,
-                results,
-                ordered_results,
-                _clean_translated_toc_title,
-                _looks_like_model_refusal,
-            )
-
-            if toc_translations:
-                apply_toc_translations(book, toc_translations)
-
-            if bool(cfg.get("enable_notice_page", False)):
-                add_translation_notice_page(book, cfg.get("notice_page_text") or "")
-                logger.info("已添加版权提示页")
+            ctx = TranslationPipeline().add_stage(FinalizeBookContentStage()).run(ctx)
 
             try:
                 logger.info("开始保存 EPUB: %s", cfg["out"])
@@ -884,6 +911,128 @@ class _ClearBookCacheWorker(QObject):
             self.failed.emit(str(e))
 
 
+class _RetranslateFailedBlocksWorker(QObject):
+    finished = Signal("QVariantMap")
+    failed = Signal(str)
+    statusChanged = Signal(str)
+
+    def __init__(self, config: Dict[str, Any], blocks: List[Dict[str, Any]], cancel_event):
+        super().__init__()
+        self._config = dict(config or {})
+        self._blocks = list(blocks or [])
+        self._cancel_event = cancel_event
+
+    @staticmethod
+    def _block_source(block: Dict[str, Any]) -> str:
+        kind = str(block.get("kind") or "")
+        if kind not in {"failed", "residue"}:
+            return ""
+        return str(block.get("text") or "").strip()
+
+    def run(self):
+        try:
+            from translator import JaZhTranslator, TranslationIncompleteError
+
+            cfg = self._config
+            sources = []
+            skipped = 0
+            for block in self._blocks:
+                if not isinstance(block, dict):
+                    skipped += 1
+                    continue
+                source = self._block_source(block)
+                if source:
+                    sources.append(source)
+                else:
+                    skipped += 1
+            sources = list(dict.fromkeys(sources))
+            if not sources:
+                self.finished.emit(
+                    {
+                        "ok": False,
+                        "message": "没有可自动重译的失败块；保存前残留块需要人工定位或继续整本续译。",
+                        "total": 0,
+                        "success": 0,
+                        "failed": 0,
+                        "skipped": skipped,
+                        "translations": {},
+                    }
+                )
+                return
+
+            self.statusChanged.emit(f"开始重译失败块: {len(sources)} 条")
+            translator = JaZhTranslator(
+                api_key=cfg.get("api_key") or "",
+                provider=cfg.get("provider") or "deepseek",
+                api_url=cfg.get("api_url") or None,
+                model=cfg.get("model") or None,
+                max_workers=max(1, min(int(cfg.get("max_workers") or 1), 2)),
+                batch_size=1,
+                max_batch_length=cfg.get("max_batch_length", 800),
+                max_text_size_for_batch=cfg.get("max_text_size_for_batch", 200),
+                api_timeout=cfg.get("api_timeout", 120),
+                cancel_event=self._cancel_event,
+                extract_glossary=False,
+                enable_glossary=bool(cfg.get("enable_glossary", True)),
+                enable_thinking=bool(cfg.get("enable_thinking", False)),
+                enable_proofread=bool(cfg.get("enable_proofread", False)),
+                proofread_genre=cfg.get("proofread_genre", "general"),
+                proofread_tone=cfg.get("proofread_tone", "neutral"),
+                proofread_model=cfg.get("proofread_model") or None,
+                proofread_provider=cfg.get("proofread_provider") or None,
+                proofread_api_key=cfg.get("proofread_api_key") or None,
+                proofread_api_url=cfg.get("proofread_api_url") or None,
+                allow_text_cache_reuse=True,
+                prompt_extra_instruction=cfg.get("prompt_extra_instruction", ""),
+                enable_prompt_examples=bool(cfg.get("enable_prompt_examples", True)),
+                hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
+                hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
+                hymt2_runtime_mode=cfg.get("hymt2_runtime_mode", "cpu"),
+            )
+
+            translations: Dict[str, str] = {}
+            failed = 0
+            try:
+                batch_results = translator.translate_batch(sources, batch_size=1)
+                translations.update(
+                    {
+                        str(src): str(dst)
+                        for src, dst in dict(batch_results or {}).items()
+                        if str(src or "").strip() and str(dst or "").strip()
+                    }
+                )
+            except TranslationIncompleteError as exc:
+                translations.update(
+                    {
+                        str(src): str(dst)
+                        for src, dst in dict(getattr(exc, "partial_results", {}) or {}).items()
+                        if str(src or "").strip() and str(dst or "").strip()
+                    }
+                )
+                failed = len(getattr(exc, "failed_texts", []) or []) + len(getattr(exc, "residue_texts", []) or [])
+                logger.warning("失败块重译部分完成: %s", exc)
+
+            for src, dst in translations.items():
+                translator.save_manual_translation(src, dst)
+
+            success = len(translations)
+            failed = max(failed, len(sources) - success)
+            self.finished.emit(
+                {
+                    "ok": success > 0,
+                    "message": f"失败块重译完成: 成功 {success}/{len(sources)}，失败 {failed}，跳过 {skipped}",
+                    "total": len(sources),
+                    "success": success,
+                    "failed": failed,
+                    "skipped": skipped,
+                    "translations": translations,
+                }
+            )
+        except Exception as exc:
+            logger.exception("失败块重译异常")
+            self.failed.emit(str(exc))
+
+
 class _TestWorker(QObject):
     result = Signal(str)
 
@@ -948,6 +1097,8 @@ class TranslateBridge(QObject):
     runtimeCleared = Signal()
     manualTranslationLookup = Signal(str)
     manualTranslationSaved = Signal(str)
+    translationTaskHistoryChanged = Signal()
+    failedBlocksRetranslated = Signal("QVariantMap")
 
     _progressValueChanged = Signal()
     _busyChanged = Signal()
@@ -966,6 +1117,10 @@ class TranslateBridge(QObject):
         self._active_translator = None
         self._active_texts = []
         self._stop_requested = False
+        self._task_history = TranslationTaskHistoryStore()
+        self._current_task_id = ""
+        self._resume_task_id = ""
+        self._last_task_history_update_ts = 0.0
 
     def _track_worker_thread(self, worker, thread):
         """Prevent GC by holding a reference until thread finishes."""
@@ -991,6 +1146,139 @@ class TranslateBridge(QObject):
             signal.connect(thread.quit)
         thread.start()
         return thread
+
+    def _update_translation_task_history(self, changes):
+        task_id = self._current_task_id
+        if not task_id:
+            return {}
+        try:
+            record = self._task_history.upsert(task_id, changes)
+            self.translationTaskHistoryChanged.emit()
+            return record
+        except Exception as exc:
+            logger.warning("保存翻译任务历史失败: %s", exc)
+            return {}
+
+    def _record_translation_task_started(self, config):
+        self._current_task_id = self._resume_task_id or make_task_id()
+        self._resume_task_id = ""
+        self._last_task_history_update_ts = 0.0
+        payload = {
+            "status": "running",
+            "started_at": int(time.time()),
+            "input_path": config.get("inp", ""),
+            "output_path": config.get("out", ""),
+            "provider": config.get("provider", ""),
+            "model": config.get("model", ""),
+            "max_workers": int(config.get("max_workers") or 0),
+            "batch_size": int(config.get("batch_size") or 0),
+            "config": sanitize_config(config),
+        }
+        self._update_translation_task_history(payload)
+
+    def _record_translation_task_text_plan(self, texts):
+        if not self._current_task_id:
+            return
+        try:
+            self._task_history.initialize_subtasks(self._current_task_id, list(texts or []), preserve_existing=True)
+            self.translationTaskHistoryChanged.emit()
+        except Exception as exc:
+            logger.warning("保存翻译文本块任务记录失败: %s", exc)
+
+    def _record_translation_item_success(self, src, dst):
+        if not self._current_task_id:
+            return
+        try:
+            self._task_history.mark_subtask_success(self._current_task_id, src, dst)
+        except Exception as exc:
+            logger.debug("保存文本块成功状态失败: %s", exc, exc_info=True)
+
+    def _record_translation_task_progress(self, completed, total, total_chars):
+        if not self._current_task_id:
+            return
+        now = time.time()
+        if completed < total and now - self._last_task_history_update_ts < 3.0:
+            return
+        self._last_task_history_update_ts = now
+        progress = float(completed) / float(total) if total > 0 else 0.0
+        self._update_translation_task_history(
+            {
+                "status": "running",
+                "completed_texts": int(completed),
+                "total_texts": int(total),
+                "total_chars": int(total_chars),
+                "progress": round(progress, 4),
+            }
+        )
+
+    def _record_translation_task_failures(self, exc):
+        if not self._current_task_id:
+            return
+        failed_texts = list(getattr(exc, "failed_texts", []) or [])
+        residue_texts = list(getattr(exc, "residue_texts", []) or [])
+        blocks = normalize_failed_blocks(
+            failed_details=list(getattr(exc, "failed_details", []) or []),
+            residue_details=list(getattr(exc, "residue_details", []) or []),
+        )
+        self._update_translation_task_history(
+            {
+                "failure_summary": {
+                    "failed_count": len(failed_texts),
+                    "residue_count": len(residue_texts),
+                    "block_count": len(blocks),
+                },
+                "failed_blocks": blocks,
+            }
+        )
+        try:
+            self._task_history.mark_subtasks_problem(self._current_task_id, blocks)
+        except Exception as mark_exc:
+            logger.debug("标记失败文本块状态失败: %s", mark_exc, exc_info=True)
+        if residue_texts:
+            try:
+                from backend import request_log
+
+                request_log.record_event(
+                    context="translation residue diagnostic",
+                    outcome="residue",
+                    category="residue",
+                    source_text=list(getattr(exc, "residue_details", []) or residue_texts)[:12],
+                    error=str(exc),
+                )
+            except Exception:
+                pass
+
+    def _record_translation_task_save_residue(self, residue_samples, residue_total, report_path):
+        if not self._current_task_id:
+            return
+        blocks = normalize_failed_blocks(residue_samples=list(residue_samples or []))
+        self._update_translation_task_history(
+            {
+                "failure_summary": {
+                    "failed_count": 0,
+                    "residue_count": int(residue_total or 0),
+                    "block_count": len(blocks),
+                    "report_path": str(report_path or ""),
+                },
+                "failed_blocks": blocks,
+            }
+        )
+        try:
+            self._task_history.mark_subtasks_problem(self._current_task_id, blocks)
+        except Exception as mark_exc:
+            logger.debug("标记保存前残留文本块状态失败: %s", mark_exc, exc_info=True)
+        try:
+            from backend import request_log
+
+            request_log.record_event(
+                context="pre-save residue diagnostic",
+                outcome="residue",
+                category="residue",
+                source_text=list(residue_samples or [])[:12],
+                error=f"pre-save residue count={residue_total}; report={report_path or ''}",
+            )
+        except Exception:
+            pass
 
     def _register_active_texts(self, texts, translator):
         self._active_texts = list(texts or [])
@@ -1079,33 +1367,40 @@ class TranslateBridge(QObject):
     def startTranslation(self, cfg):
         config = self._make_config(cfg)
         if not config["inp"] or not os.path.exists(config["inp"]):
+            self._resume_task_id = ""
             self.failed.emit("请选择有效的输入 EPUB")
             ToastBridge.warning("请先选择要翻译的 EPUB 文件")
             return
         if not config["out"]:
+            self._resume_task_id = ""
             self.failed.emit("请填写输出文件路径")
             ToastBridge.warning("请填写输出文件保存路径")
             return
         if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
+            self._resume_task_id = ""
             self.failed.emit("该提供方需要 API Key")
             ToastBridge.warning("请先在 API 页面配置 API Key")
             return
         if not config["api_url"] or not config["model"]:
+            self._resume_task_id = ""
             self.failed.emit("请填写 Base URL 和模型")
             ToastBridge.warning("请填写 API 地址和模型名称")
             return
         proofread_provider = config.get("proofread_provider") or ""
         if config.get("enable_proofread") and proofread_provider and proofread_provider != config["provider"]:
             if proofread_provider in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config.get("proofread_api_key"):
+                self._resume_task_id = ""
                 self.failed.emit("校对供应商需要单独填写 API Key")
                 ToastBridge.warning("请填写校对模型 API Key")
                 return
             if not config.get("proofread_api_url") or not config.get("proofread_model"):
+                self._resume_task_id = ""
                 self.failed.emit("请填写校对模型 Base URL 和模型名")
                 ToastBridge.warning("请填写校对模型地址和模型名称")
                 return
 
         self._last_cfg = config
+        self._record_translation_task_started(config)
         self._cancel_event.clear()
         self._is_paused = False
         self._stop_requested = False
@@ -1137,6 +1432,7 @@ class TranslateBridge(QObject):
     def _on_progress(self, completed, total, total_chars):
         self.progressChanged.emit(completed, total, total_chars)
         self.progressValue = float(completed) / float(total) if total > 0 else 0.0
+        self._record_translation_task_progress(completed, total, total_chars)
 
     def _on_finished(self, out_path):
         was_stopped = self._stop_requested
@@ -1148,17 +1444,39 @@ class TranslateBridge(QObject):
         if out_path == CANCELLED_RESULT:
             if was_stopped:
                 self.progressValue = 0.0
+                self._update_translation_task_history(
+                    {
+                        "status": "stopped",
+                        "finished_at": int(time.time()),
+                        "output_path": "",
+                    }
+                )
                 self.runtimeCleared.emit()
                 self.finished.emit(STOPPED_RESULT)
                 ToastBridge.info("翻译已停止")
             else:
+                self._update_translation_task_history(
+                    {
+                        "status": "cancelled",
+                        "finished_at": int(time.time()),
+                        "output_path": "",
+                    }
+                )
                 self.finished.emit(CANCELLED_RESULT)
                 ToastBridge.warning("翻译已取消")
         else:
             self.progressValue = 1.0
+            self._update_translation_task_history(
+                {
+                    "status": "completed",
+                    "finished_at": int(time.time()),
+                    "output_path": out_path,
+                }
+            )
             self.finished.emit(out_path)
             self.playCompletionVoice()
             ToastBridge.success(f"翻译完成！已保存到: {os.path.basename(out_path)}")
+        self._current_task_id = ""
         self._stop_requested = False
 
     def _on_failed(self, msg):
@@ -1166,6 +1484,14 @@ class TranslateBridge(QObject):
         self._active_texts = []
         self.busy = False
         text = str(msg or "")
+        status = "paused" if text.startswith("翻译未完成") else "failed"
+        self._update_translation_task_history(
+            {
+                "status": status,
+                "finished_at": int(time.time()),
+                "error_message": text[:2000],
+            }
+        )
         if text.startswith("翻译未完成"):
             self._is_paused = True
             self.statusChanged.emit("翻译未完成，可调整参数或切换模型后恢复续译")
@@ -1177,6 +1503,7 @@ class TranslateBridge(QObject):
 
     @Slot()
     def cancelTranslation(self):
+        self._update_translation_task_history({"status": "cancelling"})
         self._request_active_cancel(close_session=True)
         self.statusChanged.emit("正在取消...")
         ToastBridge.info("正在取消翻译...")
@@ -1185,6 +1512,7 @@ class TranslateBridge(QObject):
     def stopTranslation(self):
         self._is_paused = False
         self._stop_requested = True
+        self._update_translation_task_history({"status": "stopping"})
         self._request_active_cancel(close_session=True)
         removed = self._discard_and_clear_active_cache()
         self.progressValue = 0.0
@@ -1198,9 +1526,175 @@ class TranslateBridge(QObject):
     def pauseTranslation(self):
         self._is_paused = True
         self._stop_requested = False
+        self._update_translation_task_history({"status": "pausing"})
         self._request_active_cancel(close_session=True)
         self.statusChanged.emit("暂停中 — 等待当前请求完成...")
         ToastBridge.info("翻译已暂停，可切换模型后继续")
+
+    @Slot(int, result="QVariantList")
+    def getTranslationTaskHistory(self, limit: int = 20):
+        try:
+            return self._task_history.list_recent(limit)
+        except Exception as exc:
+            logger.warning("读取翻译任务历史失败: %s", exc)
+            return []
+
+    @Slot(result="QVariantMap")
+    def getLatestTranslationTask(self):
+        try:
+            return self._task_history.latest()
+        except Exception as exc:
+            logger.warning("读取最近翻译任务失败: %s", exc)
+            return {}
+
+    @Slot(result="QVariantMap")
+    def getLatestUnfinishedTranslationTask(self):
+        try:
+            return self._task_history.latest_unfinished()
+        except Exception as exc:
+            logger.warning("读取最近未完成翻译任务失败: %s", exc)
+            return {}
+
+    @Slot(int, result="QVariantList")
+    def getLatestFailedTranslationBlocks(self, limit: int = 20):
+        try:
+            record = self._task_history.latest()
+            blocks = record.get("failed_blocks", []) if isinstance(record, dict) else []
+            if not isinstance(blocks, list):
+                return []
+            limit = max(1, int(limit or 20))
+            return [dict(item) for item in blocks[:limit] if isinstance(item, dict)]
+        except Exception as exc:
+            logger.warning("读取最近失败文本块失败: %s", exc)
+            return []
+
+    def _latest_failed_blocks_for_retranslate(self, limit: int = 50):
+        record = self._task_history.latest()
+        task_id = str(record.get("task_id", "") if isinstance(record, dict) else "")
+        blocks = record.get("failed_blocks", []) if isinstance(record, dict) else []
+        if not task_id or not isinstance(blocks, list):
+            return task_id, []
+        limit = max(1, min(int(limit or 50), 200))
+        actionable = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("kind") or "") not in {"failed", "residue"}:
+                continue
+            if str(block.get("text") or "").strip():
+                actionable.append(dict(block))
+            if len(actionable) >= limit:
+                break
+        return task_id, actionable
+
+    @staticmethod
+    def _apply_retranslate_provider_mode(config, mode):
+        mode = str(mode or "current").strip().lower()
+        if mode != "proofread":
+            return config, ""
+        provider = str(config.get("proofread_provider") or "").strip()
+        api_url = str(config.get("proofread_api_url") or "").strip()
+        model = str(config.get("proofread_model") or "").strip()
+        api_key = str(config.get("proofread_api_key") or "").strip()
+        if not provider or not api_url or not model:
+            return config, "校对模型未配置完整，不能作为失败块重译备用 provider"
+        config = dict(config)
+        config["provider"] = provider
+        config["api_url"] = api_url
+        config["model"] = model
+        config["api_key"] = api_key or config.get("api_key", "")
+        config["enable_proofread"] = False
+        return config, ""
+
+    @Slot("QVariant", str, int)
+    def retranslateLatestFailedBlocks(self, cfg, provider_mode: str = "current", limit: int = 50):
+        if self.busy:
+            self.failed.emit("当前有任务运行中，不能重译失败块")
+            ToastBridge.warning("请等待当前任务完成后再重译失败块")
+            return
+        task_id, blocks = self._latest_failed_blocks_for_retranslate(limit)
+        if not task_id or not blocks:
+            self.failed.emit("没有可自动重译的失败块")
+            ToastBridge.warning("没有可自动重译的失败块")
+            return
+        config = self._make_config(cfg)
+        config, provider_error = self._apply_retranslate_provider_mode(config, provider_mode)
+        if provider_error:
+            self.failed.emit(provider_error)
+            ToastBridge.warning(provider_error)
+            return
+        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config.get("api_key"):
+            self.failed.emit("重译 provider 需要 API Key")
+            ToastBridge.warning("请先配置重译 provider 的 API Key")
+            return
+        if not config.get("api_url") or not config.get("model"):
+            self.failed.emit("重译 provider 缺少 Base URL 或模型名")
+            ToastBridge.warning("请先配置重译 provider 的 Base URL 和模型名")
+            return
+
+        self._cancel_event.clear()
+        self.busy = True
+        self.statusChanged.emit(f"正在重译失败块: {len(blocks)} 条")
+        ToastBridge.info("正在重译失败块")
+        worker = _RetranslateFailedBlocksWorker(config, blocks, self._cancel_event)
+        worker._task_id = task_id
+        self._start_worker(
+            worker,
+            [
+                (worker.statusChanged, self.statusChanged),
+                (worker.finished, self._on_failed_blocks_retranslated),
+                (worker.failed, self._on_failed_blocks_retranslate_failed),
+            ],
+            [worker.finished, worker.failed],
+        )
+
+    def _on_failed_blocks_retranslated(self, result):
+        self.busy = False
+        payload = dict(result or {})
+        translations = dict(payload.get("translations") or {})
+        try:
+            record = self._task_history.latest()
+            task_id = str(record.get("task_id", "") if isinstance(record, dict) else "")
+            if task_id and translations:
+                update = self._task_history.mark_blocks_success(task_id, translations)
+                remaining = int(update.get("remaining_blocks") or 0)
+                status = "paused" if remaining else "partial"
+                self._task_history.upsert(
+                    task_id,
+                    {
+                        "status": status,
+                        "failure_summary": {
+                            **dict((update.get("record") or {}).get("failure_summary") or {}),
+                            "block_count": remaining,
+                        },
+                    },
+                )
+                self.translationTaskHistoryChanged.emit()
+        except Exception as exc:
+            logger.warning("更新失败块重译任务历史失败: %s", exc)
+        self.failedBlocksRetranslated.emit(payload)
+        self.statusChanged.emit(str(payload.get("message") or "失败块重译完成"))
+        if payload.get("ok"):
+            ToastBridge.success(str(payload.get("message") or "失败块重译完成"))
+        else:
+            ToastBridge.warning(str(payload.get("message") or "失败块重译未成功"))
+
+    def _on_failed_blocks_retranslate_failed(self, error):
+        self.busy = False
+        text = str(error or "失败块重译失败")
+        self.statusChanged.emit(text)
+        self.failed.emit(text)
+        ToastBridge.error("失败块重译失败")
+
+    @Slot(result="QVariantMap")
+    def clearTranslationTaskHistory(self):
+        try:
+            removed = self._task_history.clear()
+            self.translationTaskHistoryChanged.emit()
+            return {"ok": True, "removed": removed, "message": f"已清空 {removed} 条任务历史"}
+        except Exception as exc:
+            logger.warning("清空翻译任务历史失败: %s", exc)
+            return {"ok": False, "removed": 0, "message": str(exc)}
 
     @Slot("QVariant")
     def clearCurrentBookCache(self, cfg):
@@ -1210,6 +1704,7 @@ class TranslateBridge(QObject):
             return
         config = self._make_config(cfg)
         if not config["inp"] or not os.path.exists(config["inp"]):
+            self._resume_task_id = ""
             self.cacheClearFailed.emit("请选择有效的输入 EPUB")
             ToastBridge.warning("请先选择要清理缓存的 EPUB")
             return
@@ -1350,10 +1845,81 @@ class TranslateBridge(QObject):
             self.failed.emit(f"查找译文失败: {e}")
             self.statusChanged.emit(f"查找译文失败: {e}")
 
+    def _apply_task_record_to_config(self, cfg, record):
+        if not cfg or not record:
+            return
+        config = record.get("config", {}) if isinstance(record, dict) else {}
+        values = dict(config or {})
+        values.setdefault("inp", record.get("input_path", ""))
+        values.setdefault("out", record.get("output_path", ""))
+        values.setdefault("provider", record.get("provider", ""))
+        values.setdefault("model", record.get("model", ""))
+        mapping = {
+            "inp": "inp",
+            "out": "out",
+            "provider": "provider",
+            "api_url": "apiUrl",
+            "model": "model",
+            "max_workers": "maxWorkers",
+            "batch_size": "batchSize",
+            "max_batch_length": "maxBatchLength",
+            "max_text_size_for_batch": "maxTextSizeForBatch",
+            "api_timeout": "apiTimeout",
+            "direction": "direction",
+            "enable_thinking": "enableThinking",
+            "enable_proofread": "enableProofread",
+            "proofread_genre": "proofreadGenre",
+            "proofread_tone": "proofreadTone",
+            "proofread_provider": "proofreadProvider",
+            "proofread_api_url": "proofreadApiUrl",
+            "proofread_model": "proofreadModel",
+            "allow_text_cache_reuse": "allowTextCacheReuse",
+            "prompt_extra_instruction": "promptExtraInstruction",
+            "enable_prompt_examples": "enablePromptExamples",
+            "hymt2_generation_mode": "hymt2GenerationMode",
+            "hymt2_prompt_mode": "hymt2PromptMode",
+            "hymt2_runtime_mode": "hymt2RuntimeMode",
+            "japanese_residue_policy": "japaneseResiduePolicy",
+        }
+        for source_key, attr in mapping.items():
+            if source_key not in values:
+                continue
+            value = values.get(source_key)
+            if value is None:
+                continue
+            try:
+                setattr(cfg, attr, value)
+            except Exception:
+                logger.debug("恢复任务配置字段失败: %s -> %s", source_key, attr, exc_info=True)
+        try:
+            cfg.allowTextCacheReuse = True
+            cfg.saveToDisk()
+        except Exception:
+            logger.debug("恢复任务时启用缓存复用失败", exc_info=True)
+
+    @Slot("QVariant")
+    def resumeLatestTranslation(self, cfg):
+        if self.busy:
+            self.failed.emit("翻译运行中，不能继续历史任务")
+            return
+        record = self.getLatestUnfinishedTranslationTask()
+        task_id = str(record.get("task_id", "") if isinstance(record, dict) else "")
+        if not task_id:
+            self.failed.emit("没有可继续的未完成任务")
+            ToastBridge.warning("没有可继续的未完成任务")
+            return
+        self._apply_task_record_to_config(cfg, record)
+        self._resume_task_id = task_id
+        self._is_paused = False
+        self.statusChanged.emit("正在继续上次未完成任务...")
+        ToastBridge.info("正在继续上次未完成任务")
+        self.startTranslation(cfg)
+
     @Slot("QVariant")
     def resumeTranslation(self, cfg):
         if not self._is_paused:
-            self.failed.emit("当前没有可恢复的暂停任务"); return
+            self.resumeLatestTranslation(cfg)
+            return
         if hasattr(cfg, "allowTextCacheReuse"):
             try:
                 cfg.allowTextCacheReuse = True

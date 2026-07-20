@@ -44,6 +44,11 @@ class JapaneseResidueScan:
     hard_blocking_samples: List[str] = field(default_factory=list)
     low_risk_total: int = 0
     low_risk_samples: List[str] = field(default_factory=list)
+    high_risk_total: int = 0
+    high_risk_samples: List[str] = field(default_factory=list)
+    medium_risk_total: int = 0
+    medium_risk_samples: List[str] = field(default_factory=list)
+    structured_samples: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -242,10 +247,27 @@ def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
     hard_blocking_samples: List[str] = []
     low_risk_samples: List[str] = []
     weak_samples: List[str] = []
+    high_risk_samples: List[str] = []
+    medium_risk_samples: List[str] = []
+    structured_samples: List[Dict[str, Any]] = []
     blocking_total = 0
     hard_blocking_total = 0
     low_risk_total = 0
     weak_total = 0
+    high_risk_total = 0
+    medium_risk_total = 0
+
+    def add_structured_sample(risk: str, raw: str, fragments: List[str], reason: str) -> None:
+        if len(structured_samples) >= 24:
+            return
+        structured_samples.append(
+            {
+                "risk": risk,
+                "fragments": list(fragments[:8]),
+                "reason": reason,
+                "text": raw[:240],
+            }
+        )
 
     for _, soup, _ in docs:
         root = soup.find("body") or soup
@@ -256,14 +278,18 @@ def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
             raw = str(node).strip()
             if not raw:
                 continue
-            if JaZhTranslator.has_blocking_japanese_residue(raw):
+            classification = tq.classify_japanese_residue(raw)
+            risk = str(classification.get("risk") or "none")
+            fragments = list(classification.get("fragments") or [])
+            reason = str(classification.get("reason") or "")
+            if risk in {"high", "medium", "low"} and classification.get("blocking"):
                 blocking_total += 1
-                fragments = JaZhTranslator.japanese_residue_fragments(raw)
                 fragment_text = " / ".join(fragments[:5]) if fragments else "unknown"
                 sample = f"fragment: {fragment_text} | text: {raw[:120]}"
+                add_structured_sample(risk, raw, fragments, reason)
                 if len(blocking_samples) < 8:
                     blocking_samples.append(sample)
-                if tq.is_low_risk_japanese_residue(raw):
+                if risk == "low":
                     low_risk_total += 1
                     if len(low_risk_samples) < 8:
                         low_risk_samples.append(sample)
@@ -271,10 +297,18 @@ def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
                     hard_blocking_total += 1
                     if len(hard_blocking_samples) < 8:
                         hard_blocking_samples.append(sample)
-            elif JaZhTranslator.has_weak_japanese_residue(raw):
+                    if risk == "high":
+                        high_risk_total += 1
+                        if len(high_risk_samples) < 8:
+                            high_risk_samples.append(sample)
+                    else:
+                        medium_risk_total += 1
+                        if len(medium_risk_samples) < 8:
+                            medium_risk_samples.append(sample)
+            elif risk == "weak":
                 weak_total += 1
+                add_structured_sample(risk, raw, fragments, reason)
                 if len(weak_samples) < 5:
-                    fragments = JaZhTranslator.japanese_residue_fragments(raw)
                     fragment_text = " / ".join(fragments[:5]) if fragments else "unknown"
                     weak_samples.append(f"fragment: {fragment_text} | text: {raw[:120]}")
 
@@ -287,6 +321,11 @@ def scan_japanese_residue_in_docs(docs: List[Any]) -> JapaneseResidueScan:
         hard_blocking_samples=hard_blocking_samples,
         low_risk_total=low_risk_total,
         low_risk_samples=low_risk_samples,
+        high_risk_total=high_risk_total,
+        high_risk_samples=high_risk_samples,
+        medium_risk_total=medium_risk_total,
+        medium_risk_samples=medium_risk_samples,
+        structured_samples=structured_samples,
     )
 
 

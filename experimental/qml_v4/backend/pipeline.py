@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Lightweight pipeline primitives for the QML/V4 translation workflow.
+"""Pipeline primitives for the QML/V4 translation workflow.
 
-The production workflow currently uses this module for style detection only.
-Translation, cache lookup, proofreading, EPUB mutation, and saving remain in
-``JaZhTranslator`` / ``BookTranslationService`` until those phases are migrated
-behind tests.
+The QML worker owns UI signals and user-facing error handling. This module owns
+the pure workflow stages so the bridge does not grow into one large procedure.
 """
 
 from __future__ import annotations
@@ -22,9 +20,18 @@ class PipelineContext:
     """Shared state passed between pipeline stages."""
 
     config: Dict[str, Any]
+    book: Any = None
     translator: Any = None
+    book_service: Any = None
+    docs: List[Any] = field(default_factory=list)
+    toc_titles: List[str] = field(default_factory=list)
+    text_plan: Any = None
     texts: List[str] = field(default_factory=list)
     results: Dict[str, str] = field(default_factory=dict)
+    ordered_results: List[Optional[str]] = field(default_factory=list)
+    repair_report: Any = None
+    residue_scan: Any = None
+    toc_translations: Dict[str, str] = field(default_factory=dict)
     detected_style: Any = None
     proofread_style: Any = None
     progress_callback: Any = None
@@ -88,6 +95,223 @@ class StyleDetectStage(PipelineStage):
         except Exception as exc:
             logger.warning("[style_detect] failed, continuing with defaults: %s", exc)
 
+        return ctx
+
+
+class LoadEpubStage(PipelineStage):
+    """Load the EPUB and collect text-node documents plus TOC titles."""
+
+    def __init__(self, enabled: bool = True):
+        super().__init__("epub_load", enabled)
+
+    def process(self, ctx: PipelineContext) -> PipelineContext:
+        if not self.enabled:
+            logger.debug("[epub_load] stage disabled; skipping")
+            return ctx
+
+        from epub_io import extract_toc_titles, iter_text_nodes, load_book
+
+        input_path = ctx.config["inp"]
+        ctx.book = load_book(input_path)
+        ctx.docs = list(iter_text_nodes(ctx.book))
+        ctx.toc_titles = extract_toc_titles(ctx.book)
+        ctx.extra["title"] = ctx.extra.get("title") or str(input_path)
+        ctx.extra["toc_titles"] = ctx.toc_titles
+        logger.info(
+            "[epub_load] docs=%s, toc_titles=%s",
+            len(ctx.docs),
+            len(ctx.toc_titles),
+        )
+        return ctx
+
+
+class BuildTextPlanStage(PipelineStage):
+    """Build the ordered list of translatable text blocks."""
+
+    def __init__(self, enabled: bool = True):
+        super().__init__("text_extract", enabled)
+
+    def process(self, ctx: PipelineContext) -> PipelineContext:
+        if not self.enabled:
+            logger.debug("[text_extract] stage disabled; skipping")
+            return ctx
+
+        from .book_translation_service import BookTranslationService
+
+        ctx.book_service = ctx.book_service or BookTranslationService()
+        ctx.text_plan = ctx.book_service.build_text_plan(ctx.docs, ctx.toc_titles)
+        ctx.texts = list(ctx.text_plan.all_texts)
+        ctx.extra["total_texts"] = ctx.text_plan.total_texts
+        ctx.extra["total_chars"] = ctx.text_plan.total_chars
+        logger.info(
+            "[text_extract] texts=%s, chars=%s",
+            ctx.text_plan.total_texts,
+            ctx.text_plan.total_chars,
+        )
+        return ctx
+
+
+class CreateTranslatorStage(PipelineStage):
+    """Create the configured JaZhTranslator instance."""
+
+    def __init__(self, enabled: bool = True):
+        super().__init__("translator_init", enabled)
+
+    def process(self, ctx: PipelineContext) -> PipelineContext:
+        if not self.enabled:
+            logger.debug("[translator_init] stage disabled; skipping")
+            return ctx
+
+        from translator import JaZhTranslator
+
+        cfg = ctx.config
+        style = ctx.proofread_style
+        if style is None:
+            from style_detector import StyleDetectionResult
+
+            style = StyleDetectionResult(
+                genre=cfg.get("proofread_genre", "general"),
+                tone=cfg.get("proofread_tone", "neutral"),
+                confidence=0,
+                reason="",
+            )
+            ctx.proofread_style = style
+
+        factory = ctx.extra.get("translator_factory") or JaZhTranslator
+        ctx.translator = factory(
+            api_key=cfg["api_key"],
+            provider=cfg["provider"],
+            api_url=cfg["api_url"],
+            model=cfg["model"],
+            max_workers=cfg["max_workers"],
+            batch_size=cfg["batch_size"],
+            max_batch_length=cfg["max_batch_length"],
+            max_text_size_for_batch=cfg["max_text_size_for_batch"],
+            api_timeout=cfg["api_timeout"],
+            cancel_event=ctx.cancel_event,
+            extract_glossary=cfg["extract_glossary"],
+            enable_glossary=cfg["enable_glossary"],
+            enable_thinking=cfg["enable_thinking"],
+            enable_proofread=cfg["enable_proofread"],
+            proofread_genre=style.genre,
+            proofread_tone=style.tone,
+            proofread_model=cfg.get("proofread_model") or None,
+            proofread_provider=cfg.get("proofread_provider") or None,
+            proofread_api_key=cfg.get("proofread_api_key") or None,
+            proofread_api_url=cfg.get("proofread_api_url") or None,
+            allow_text_cache_reuse=bool(cfg.get("allow_text_cache_reuse", True)),
+            prompt_extra_instruction=cfg.get("prompt_extra_instruction", ""),
+            enable_prompt_examples=bool(cfg.get("enable_prompt_examples", True)),
+            hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
+            hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
+            hymt2_runtime_mode=cfg.get("hymt2_runtime_mode", "cpu"),
+        )
+        logger.info(
+            "[translator_init] provider=%s, model=%s, workers=%s, batch=%s",
+            cfg.get("provider"),
+            cfg.get("model"),
+            cfg.get("max_workers"),
+            cfg.get("batch_size"),
+        )
+        return ctx
+
+
+class BatchTranslateStage(PipelineStage):
+    """Translate all extracted text blocks."""
+
+    def __init__(self, enabled: bool = True):
+        super().__init__("model_translate", enabled)
+
+    def process(self, ctx: PipelineContext) -> PipelineContext:
+        if not self.enabled:
+            logger.debug("[model_translate] stage disabled; skipping")
+            return ctx
+        if ctx.translator is None:
+            raise RuntimeError("BatchTranslateStage requires ctx.translator")
+
+        ctx.results = ctx.translator.translate_batch(
+            ctx.texts,
+            progress_callback=ctx.progress_callback,
+            item_callback=ctx.item_callback,
+            proofread_callback=ctx.proofread_callback,
+            context_texts=ctx.texts,
+        )
+        ordered = getattr(ctx.translator, "last_ordered_results", [])
+        if isinstance(ordered, list) and len(ordered) == len(ctx.texts):
+            ctx.ordered_results = ordered
+        else:
+            ctx.ordered_results = []
+        logger.info("[model_translate] translated=%s", len(ctx.results or {}))
+        return ctx
+
+
+class ApplyBookTranslationsStage(PipelineStage):
+    """Write translations into the in-memory EPUB and scan residue."""
+
+    def __init__(self, enabled: bool = True):
+        super().__init__("book_apply", enabled)
+
+    def process(self, ctx: PipelineContext) -> PipelineContext:
+        if not self.enabled:
+            logger.debug("[book_apply] stage disabled; skipping")
+            return ctx
+        if ctx.book_service is None or ctx.text_plan is None:
+            raise RuntimeError("ApplyBookTranslationsStage requires text_plan and book_service")
+
+        clean_title = ctx.extra["clean_title"]
+        looks_like_refusal = ctx.extra["looks_like_refusal"]
+        ctx.book_service.apply_translations(
+            ctx.text_plan,
+            ctx.results,
+            ctx.ordered_results,
+            clean_title,
+            looks_like_refusal,
+        )
+        ctx.repair_report = ctx.book_service.repair_known_katakana_terms(ctx.docs)
+        ctx.residue_scan = ctx.book_service.scan_japanese_residue(ctx.docs)
+        logger.info(
+            "[book_apply] repaired=%s, residue=%s",
+            getattr(ctx.repair_report, "repaired_total", 0),
+            getattr(ctx.residue_scan, "blocking_total", 0),
+        )
+        return ctx
+
+
+class FinalizeBookContentStage(PipelineStage):
+    """Finalize document content, TOC translations, and optional notice page."""
+
+    def __init__(self, enabled: bool = True):
+        super().__init__("book_finalize", enabled)
+
+    def process(self, ctx: PipelineContext) -> PipelineContext:
+        if not self.enabled:
+            logger.debug("[book_finalize] stage disabled; skipping")
+            return ctx
+        if ctx.book_service is None or ctx.text_plan is None:
+            raise RuntimeError("FinalizeBookContentStage requires text_plan and book_service")
+
+        from epub_io import add_translation_notice_page, apply_toc_translations
+
+        clean_title = ctx.extra["clean_title"]
+        looks_like_refusal = ctx.extra["looks_like_refusal"]
+        for item, soup, _ in ctx.docs:
+            item.set_content(str(soup).encode("utf-8"))
+
+        ctx.toc_translations = ctx.book_service.build_toc_translation_map(
+            ctx.text_plan,
+            ctx.results,
+            ctx.ordered_results,
+            clean_title,
+            looks_like_refusal,
+        )
+        if ctx.toc_translations:
+            apply_toc_translations(ctx.book, ctx.toc_translations)
+
+        if bool(ctx.config.get("enable_notice_page", False)):
+            add_translation_notice_page(ctx.book, ctx.config.get("notice_page_text") or "")
+            logger.info("[book_finalize] translation notice page added")
+
+        logger.info("[book_finalize] toc_translations=%s", len(ctx.toc_translations))
         return ctx
 
 

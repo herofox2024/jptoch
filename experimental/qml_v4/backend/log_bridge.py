@@ -8,6 +8,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
+try:
+    from backend import request_log
+except Exception:  # pragma: no cover - keeps old launch paths compatible
+    request_log = None
+
 
 def _data_dir() -> Path:
     path = Path.home() / ".epub_translator"
@@ -43,6 +48,7 @@ class _QtLogHandler(logging.Handler):
 class LogBridge(QObject):
     entryAppended = Signal(str)
     currentLogPathChanged = Signal()
+    requestLogChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -57,6 +63,12 @@ class LogBridge(QObject):
     @Property(str, constant=True)
     def logDirectory(self) -> str:
         return str(_logs_dir())
+
+    @Property(str, constant=True)
+    def requestLogDirectory(self) -> str:
+        if request_log is None:
+            return str(_data_dir() / "request_logs")
+        return str(request_log.request_log_dir())
 
     @Slot(int, result=str)
     def readRecent(self, maxLines: int = 800) -> str:
@@ -85,3 +97,22 @@ class LogBridge(QObject):
     @Slot(result=bool)
     def openLogDirectory(self) -> bool:
         return QDesktopServices.openUrl(QUrl.fromLocalFile(str(_logs_dir())))
+
+    @Slot(int, str, str, result=list)
+    def readRequestLogs(self, limit: int = 300, category: str = "", query: str = ""):
+        if request_log is None:
+            return []
+        return request_log.read_recent(limit=limit, category=category, query=query)
+
+    @Slot(result=bool)
+    def openRequestLogDirectory(self) -> bool:
+        path = self.requestLogDirectory
+        return QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    @Slot(result=dict)
+    def clearRequestLogs(self):
+        if request_log is None:
+            return {"ok": False, "removed": 0, "message": "request log module unavailable"}
+        removed = request_log.clear_logs()
+        self.requestLogChanged.emit()
+        return {"ok": True, "removed": removed, "message": f"cleared {removed} request log files"}

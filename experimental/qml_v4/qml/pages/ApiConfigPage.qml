@@ -31,7 +31,11 @@ Page {
     property bool needsKey: !isLocalProvider
     property bool testing: false
     property var localModel: typeof LocalModelBridge !== "undefined" ? LocalModelBridge : null
+    property var modelPromptPresets: []
+    property string presetResult: ""
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
+
+    onCfgChanged: page.refreshModelPromptPresets()
 
     Connections {
         target: TranslateBridge
@@ -47,6 +51,49 @@ Page {
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
             result.ok ? ToastBridge.showSuccess(message) : ToastBridge.showError(message)
         }
+    }
+
+    function refreshModelPromptPresets() {
+        if (!cfg || !cfg.getModelPromptPresets) {
+            page.modelPromptPresets = []
+            return
+        }
+        page.modelPromptPresets = cfg.getModelPromptPresets() || []
+    }
+
+    function applyModelPromptPreset(key) {
+        if (!cfg || !cfg.applyModelPromptPreset) return
+        var result = cfg.applyModelPromptPreset(key)
+        page.currentProvider = cfg.provider
+        page.isCustom = (page.currentProvider === "custom")
+        page.isLocalProvider = (page.currentProvider === "sakura" || page.currentProvider === "hymt2")
+        page.needsKey = !page.isLocalProvider
+        page.connectionResult = result && result.ok
+            ? ((result.message || "已应用模型/Prompt 预设") + "，请测试连接。")
+            : ((result && result.message) || "应用模型/Prompt 预设失败")
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result && result.ok ? ToastBridge.showSuccess(result.message || "已应用模型/Prompt 预设")
+                                : ToastBridge.showError((result && result.message) || "应用模型/Prompt 预设失败")
+        }
+    }
+
+    function showPresetResult(result) {
+        page.presetResult = (result && result.message) || ""
+        if (typeof ToastBridge !== "undefined" && ToastBridge && page.presetResult !== "") {
+            result && result.ok ? ToastBridge.showSuccess(page.presetResult)
+                                : ToastBridge.showError(page.presetResult)
+        }
+        if (result && result.ok) page.refreshModelPromptPresets()
+    }
+
+    function saveCurrentModelPromptPreset(label, hint) {
+        if (!cfg || !cfg.saveCurrentModelPromptPreset) return
+        page.showPresetResult(cfg.saveCurrentModelPromptPreset(label || "", hint || ""))
+    }
+
+    function deleteModelPromptPreset(key) {
+        if (!cfg || !cfg.deleteUserModelPromptPreset) return
+        page.showPresetResult(cfg.deleteUserModelPromptPreset(key))
     }
 
     function localHyMt2UsesGpu() {
@@ -242,6 +289,152 @@ Page {
                     wrapMode: Text.WordWrap
                     font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: modelPresetColumn.implicitHeight + 32
+            Layout.minimumHeight: modelPresetColumn.implicitHeight + 32
+            radius: AppPalette.radiusLarge
+            color: AppPalette.surfaceRaised
+            border.color: AppPalette.borderColor
+
+            ColumnLayout {
+                id: modelPresetColumn
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: AppStyle.spacingSmall
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "模型 / Prompt 预设"
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontSubHeader
+                        font.weight: Font.DemiBold
+                    }
+
+                    Button {
+                        text: "刷新"
+                        onClicked: page.refreshModelPromptPresets()
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: "预设分为模型、Prompt、组合三类。应用预设会写入当前任务配置；导出和保存自定义预设时会自动排除 API Key。"
+                    color: AppPalette.mutedText
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontSmall
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    width: parent.width
+                    spacing: AppStyle.spacingSmall
+
+                    Button {
+                        text: "保存当前为预设"
+                        onClicked: savePresetDialog.open()
+                    }
+                    Button {
+                        text: "导入预设"
+                        onClicked: presetImportDialog.open()
+                    }
+                    Button {
+                        text: "导出当前"
+                        onClicked: presetExportCurrentDialog.open()
+                    }
+                    Button {
+                        text: "导出自定义"
+                        onClicked: presetExportUserDialog.open()
+                    }
+                }
+
+                Flow {
+                    id: modelPresetFlow
+                    Layout.fillWidth: true
+                    width: parent.width
+                    spacing: AppStyle.spacingSmall
+
+                    Repeater {
+                        model: page.modelPromptPresets
+                        delegate: Rectangle {
+                            width: modelPresetFlow.width >= 760 ? Math.floor((modelPresetFlow.width - 2 * AppStyle.spacingSmall) / 3)
+                                                               : (modelPresetFlow.width >= 500 ? Math.floor((modelPresetFlow.width - AppStyle.spacingSmall) / 2)
+                                                                                                : modelPresetFlow.width)
+                            height: presetCardColumn.implicitHeight + 18
+                            radius: AppPalette.radiusMedium
+                            color: AppPalette.cardBg
+                            border.color: AppPalette.borderColor
+
+                            ColumnLayout {
+                                id: presetCardColumn
+                                anchors.fill: parent
+                                anchors.margins: 9
+                                spacing: 5
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: modelData.label || modelData.key
+                                        color: AppPalette.textColor
+                                        elide: Text.ElideRight
+                                        font.pixelSize: AppStyle.fontSmall
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Label {
+                                        text: modelData.categoryLabel || "组合"
+                                        color: AppPalette.accentColor
+                                        font.pixelSize: AppStyle.fontTiny
+                                    }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.hint || ""
+                                    color: AppPalette.mutedText
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 2
+                                    elide: Text.ElideRight
+                                    font.pixelSize: AppStyle.fontTiny
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+
+                                    Button {
+                                        Layout.fillWidth: true
+                                        text: "应用"
+                                        onClicked: page.applyModelPromptPreset(modelData.key)
+                                    }
+                                    Button {
+                                        text: "删除"
+                                        visible: modelData.user === true
+                                        onClicked: page.deleteModelPromptPreset(modelData.key)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: page.presetResult !== "" ? page.presetResult
+                                                     : (page.modelPromptPresets && page.modelPromptPresets.length > 0 ? "当前可用预设: " + page.modelPromptPresets.length + " 个" : "暂无可用预设")
+                    color: page.presetResult.indexOf("失败") >= 0 || page.presetResult.indexOf("不存在") >= 0 ? AppPalette.errorColor : AppPalette.mutedText
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontTiny
                 }
             }
         }
@@ -567,6 +760,82 @@ Page {
         }
     }
 
+    Dialog {
+        id: savePresetDialog
+        title: "保存当前模型 / Prompt 预设"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: Math.max(360, Math.min(520, page.width - 48))
+
+        ColumnLayout {
+            width: savePresetDialog.width - 48
+            spacing: AppStyle.spacingSmall
+
+            Label {
+                Layout.fillWidth: true
+                text: "将当前 provider、模型、并发批量、Prompt、校对与日文残留策略保存为自定义预设。API Key 不会保存。"
+                wrapMode: Text.WordWrap
+                color: AppPalette.mutedText
+                font.pixelSize: AppStyle.fontSmall
+            }
+            TextField {
+                id: savePresetName
+                Layout.fillWidth: true
+                placeholderText: "预设名称，例如 DeepSeek 我的稳定配置"
+                selectByMouse: true
+            }
+            TextField {
+                id: savePresetHint
+                Layout.fillWidth: true
+                placeholderText: "备注，可选"
+                selectByMouse: true
+            }
+        }
+
+        onAccepted: {
+            page.saveCurrentModelPromptPreset(savePresetName.text, savePresetHint.text)
+            savePresetName.text = ""
+            savePresetHint.text = ""
+        }
+    }
+
+    FileDialog {
+        id: presetImportDialog
+        title: "导入模型 / Prompt 预设 JSON"
+        nameFilters: ["JSON (*.json)", "全部文件 (*)"]
+        fileMode: FileDialog.OpenFile
+        onAccepted: {
+            if (!cfg || !selectedFile) return
+            page.showPresetResult(cfg.importModelPromptPresets(FilePathUtils.normalizeFileUrl(selectedFile)))
+        }
+    }
+
+    FileDialog {
+        id: presetExportCurrentDialog
+        title: "导出当前模型 / Prompt 预设"
+        nameFilters: ["JSON (*.json)", "全部文件 (*)"]
+        fileMode: FileDialog.SaveFile
+        onAccepted: {
+            if (!cfg || !selectedFile) return
+            var p = FilePathUtils.normalizeFileUrl(selectedFile)
+            if (!p.toLowerCase().endsWith(".json")) p += ".json"
+            page.showPresetResult(cfg.exportCurrentModelPromptPreset(p, savePresetName.text || "当前翻译配置"))
+        }
+    }
+
+    FileDialog {
+        id: presetExportUserDialog
+        title: "导出自定义模型 / Prompt 预设"
+        nameFilters: ["JSON (*.json)", "全部文件 (*)"]
+        fileMode: FileDialog.SaveFile
+        onAccepted: {
+            if (!cfg || !selectedFile) return
+            var p = FilePathUtils.normalizeFileUrl(selectedFile)
+            if (!p.toLowerCase().endsWith(".json")) p += ".json"
+            page.showPresetResult(cfg.exportModelPromptPresets(p))
+        }
+    }
+
     FileDialog {
         id: modelFileDialog
         title: "选择 Hy-MT2 GGUF 模型文件"
@@ -593,5 +862,9 @@ Page {
         font.pixelSize: AppStyle.fontBody
         font.weight: Font.DemiBold
         verticalAlignment: Text.AlignVCenter
+    }
+
+    Component.onCompleted: {
+        page.refreshModelPromptPresets()
     }
 }

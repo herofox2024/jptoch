@@ -823,6 +823,14 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
+                            text: "风险分层：高风险=整句或长假名疑似未译；中风险=短词残留但应翻译；低风险=标题、人名、机构名或术语类残留；弱风险=极短假名噪声。保存前会先自动修复已知片假名词和地名振假名。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: AppStyle.fontSmall
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
                             text: "残留报告会保存到 C:\\Users\\HUAWEI\\.epub_translator\\residue_reports。不要把明显应该翻译的日文加入白名单，优先加入片假名术语修复词表。"
                             color: AppPalette.warning
                             wrapMode: Text.WordWrap

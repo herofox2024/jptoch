@@ -83,6 +83,25 @@ def _is_document_item(item: Any) -> bool:
     return media_type in DOCUMENT_MEDIA_TYPES or file_name.endswith((".html", ".xhtml", ".htm"))
 
 
+def _content_body_visible_text(content: Any) -> str:
+    if content is None:
+        return ""
+    try:
+        soup = BeautifulSoup(content, "html.parser")
+        return extract_visible_text(soup.find("body") or soup)
+    except Exception:
+        return ""
+
+
+def _document_content_for_parsing(item: Any) -> Any:
+    content = item.get_content()
+    raw_content = getattr(item, "content", None)
+    if raw_content and _compact_text_len(_content_body_visible_text(content)) == 0:
+        if _compact_text_len(_content_body_visible_text(raw_content)) > 0:
+            return raw_content
+    return content
+
+
 def _first_anchor_attrs(node: Any) -> dict:
     """Return the first id/name anchor attributes found in a node tree."""
     if not isinstance(node, Tag):
@@ -453,6 +472,53 @@ def repair_epub(path: str) -> str:
         pass
 
 
+def _epub_opf_dir(path: str) -> str:
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            container = zf.read("META-INF/container.xml").decode("utf-8", errors="ignore")
+        soup = BeautifulSoup(container, "xml")
+        rootfile = soup.find("rootfile")
+        opf_path = rootfile.get("full-path") if rootfile else ""
+        return str(Path(opf_path).parent).replace("\\", "/").strip(".")
+    except Exception:
+        return ""
+
+
+def _restore_raw_document_content(book: epub.EpubBook, path: str) -> None:
+    """Restore raw XHTML when ebooklib drops body-direct text during read."""
+    try:
+        opf_dir = _epub_opf_dir(path)
+        with zipfile.ZipFile(path, "r") as zf:
+            names = set(zf.namelist())
+            for item in book.get_items():
+                if not _is_document_item(item):
+                    continue
+                file_name = str(getattr(item, "file_name", "") or "").replace("\\", "/")
+                if not file_name:
+                    continue
+                candidates = [file_name]
+                if opf_dir:
+                    candidates.append(f"{opf_dir}/{file_name}".strip("/"))
+                raw_name = next((name for name in candidates if name in names), "")
+                if not raw_name:
+                    continue
+                raw = zf.read(raw_name)
+                if not raw or not raw.strip():
+                    continue
+                try:
+                    current_soup = BeautifulSoup(item.get_content() or b"", "html.parser")
+                    raw_soup = BeautifulSoup(raw, "html.parser")
+                    current_visible = extract_visible_text(current_soup.find("body") or current_soup)
+                    raw_visible = extract_visible_text(raw_soup.find("body") or raw_soup)
+                except Exception:
+                    continue
+                if _compact_text_len(current_visible) == 0 and _compact_text_len(raw_visible) > 0:
+                    item.content = raw
+                    logger.info("Restored raw XHTML content dropped by ebooklib: %s", file_name)
+    except Exception as exc:
+        logger.debug("Skipping raw XHTML restore: %s", exc)
+
+
 
 def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
     """
@@ -466,7 +532,9 @@ def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
         epub.EpubBook 对象
     """
     try:
-        return epub.read_epub(path)
+        book = epub.read_epub(path)
+        _restore_raw_document_content(book, path)
+        return book
     except (KeyError, zipfile.BadZipFile, ValueError, OSError) as e:
         if not try_repair:
             raise RuntimeError(f"EPUB 文件损坏: {e}")
@@ -481,6 +549,7 @@ def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
             repaired_dir = os.path.dirname(repaired_path)
             shutil.rmtree(repaired_dir, ignore_errors=True)
             raise
+        _restore_raw_document_content(book, repaired_path)
         book._repaired_temp_path = repaired_path
         return book
 
@@ -494,7 +563,7 @@ def iter_text_nodes(book: epub.EpubBook) -> Generator[Tuple[Any, BeautifulSoup, 
     """
     for item in book.get_items():
         if _is_document_item(item):
-            content = item.get_content()
+            content = _document_content_for_parsing(item)
             # Guard against empty/whitespace-only documents that cause
             # BeautifulSoup to raise Document is empty on Python 3.12+.
             if content is None or not content.strip():

@@ -39,6 +39,10 @@ Page {
     readonly property bool busy: tbridge ? tbridge.busy : false
     readonly property bool readyToStart: cfg && cfg.inp !== "" && cfg.out !== ""
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
+    property var taskHistory: []
+    property var latestFailedBlocks: []
+    property var latestUnfinishedTask: ({})
+    property int failedBlockProviderModeIndex: 0
 
     signal navigateToStatus()
 
@@ -46,13 +50,20 @@ Page {
         manualEditDialog.openWith(src, dst)
     }
 
-    ColumnLayout {
+    ScrollView {
+        id: contentScroll
         anchors.fill: parent
-        spacing: AppStyle.sectionGap
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: AppStyle.spacingXLarge
+        ColumnLayout {
+            width: Math.max(0, contentScroll.availableWidth)
+            spacing: AppStyle.sectionGap
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: AppStyle.spacingXLarge
 
             ColumnLayout {
                 Layout.fillWidth: true
@@ -389,6 +400,238 @@ Page {
             onManualEditRequested: manualEditDialog.open()
         }
 
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: (taskPage.taskHistory.length > 0 ? (taskPage.width > 900 ? 188 : 236) : 112)
+                                    + (taskPage.latestFailedBlocks.length > 0 ? (taskPage.width > 900 ? 168 : 232) : 0)
+            radius: AppPalette.radiusLarge
+            color: AppPalette.surfaceRaised
+            border.color: AppPalette.borderColor
+            clip: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: AppStyle.spacingSmall
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingMedium
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: AppStyle.spacingNone
+                        Label {
+                            text: "最近任务"
+                            color: AppPalette.textColor
+                            font.pixelSize: AppStyle.fontSubHeader
+                            font.weight: Font.DemiBold
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "记录最近翻译任务的状态、进度和输入输出路径；API Key 不会写入历史。"
+                            color: AppPalette.mutedText
+                            font.pixelSize: AppStyle.fontCaption
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Button {
+                        text: "继续上次"
+                        enabled: !taskPage.busy && taskPage.latestUnfinishedTask && taskPage.latestUnfinishedTask.task_id
+                        onClicked: taskPage.resumeLatestTask()
+                    }
+                    Button {
+                        text: "刷新"
+                        onClicked: taskPage.refreshTaskHistory()
+                    }
+                    Button {
+                        text: "清空"
+                        enabled: taskPage.taskHistory.length > 0 && !taskPage.busy
+                        onClicked: taskPage.clearTaskHistory()
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: taskPage.taskHistory.length === 0
+                    text: "暂无任务历史。开始一次翻译后，这里会显示可追踪记录。"
+                    color: AppPalette.mutedText
+                    font.pixelSize: AppStyle.fontSmall
+                    wrapMode: Text.WordWrap
+                }
+
+                Repeater {
+                    model: taskPage.taskHistory
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: taskPage.width > 900 ? 38 : 54
+                        radius: AppPalette.radiusMedium
+                        color: AppPalette.fieldBg
+                        border.color: AppPalette.lineColor
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 8
+                            spacing: AppStyle.spacingSmall
+
+                            Rectangle {
+                                Layout.preferredWidth: 8
+                                Layout.preferredHeight: 8
+                                radius: 4
+                                color: taskPage.taskStatusColor(modelData.status)
+                            }
+
+                            Label {
+                                Layout.preferredWidth: 72
+                                text: taskPage.taskStatusLabel(modelData.status)
+                                color: taskPage.taskStatusColor(modelData.status)
+                                font.pixelSize: AppStyle.fontCaption
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                Layout.preferredWidth: 68
+                                text: taskPage.taskProgressText(modelData)
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontCaption
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: taskPage.fileName(modelData.input_path || "")
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontCaption
+                                elide: Text.ElideMiddle
+                            }
+
+                            Label {
+                                visible: taskPage.width > 900
+                                Layout.preferredWidth: 190
+                                text: (modelData.provider || "-") + " / " + (modelData.model || "-")
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontTiny
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                visible: taskPage.width > 980
+                                Layout.preferredWidth: 108
+                                text: taskPage.taskTimeText(modelData.updated_at || modelData.started_at || modelData.created_at)
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontTiny
+                                horizontalAlignment: Text.AlignRight
+                                elide: Text.ElideRight
+                            }
+
+                            Button {
+                                text: "载入"
+                                enabled: !taskPage.busy
+                                onClicked: taskPage.applyTaskRecord(modelData)
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: taskPage.width > 900 ? 150 : 214
+                    visible: taskPage.latestFailedBlocks.length > 0
+                    radius: AppPalette.radiusMedium
+                    color: AppPalette.fieldBg
+                    border.color: AppPalette.amberColor
+                    clip: true
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: AppStyle.spacingTight
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingSmall
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: AppStyle.spacingNone
+
+                                Label {
+                                    text: "失败块 / 日文残留"
+                                    color: AppPalette.amberColor
+                                    font.pixelSize: AppStyle.fontCaption
+                                    font.weight: Font.DemiBold
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "可自动重译未译/残留块；保存前残留样例仍建议人工定位或继续整本续译。"
+                                    color: AppPalette.mutedText
+                                    font.pixelSize: AppStyle.fontTiny
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            ComboBox {
+                                Layout.preferredWidth: 116
+                                model: ["当前模型", "校对模型"]
+                                currentIndex: taskPage.failedBlockProviderModeIndex
+                                onActivated: taskPage.failedBlockProviderModeIndex = currentIndex
+                            }
+
+                            Button {
+                                text: "重译失败块"
+                                enabled: !taskPage.busy && taskPage.latestFailedBlocks.length > 0
+                                onClicked: taskPage.retranslateFailedBlocks()
+                            }
+                        }
+
+                        Repeater {
+                            model: taskPage.latestFailedBlocks
+                            delegate: Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: taskPage.width > 900 ? 25 : 42
+                                radius: AppPalette.radiusSmall
+                                color: AppPalette.surfaceRaised
+                                border.color: AppPalette.lineColor
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 6
+                                    spacing: AppStyle.spacingSmall
+
+                                    Label {
+                                        Layout.preferredWidth: 76
+                                        text: taskPage.failedBlockKindLabel(modelData.kind)
+                                        color: modelData.kind === "save_residue" ? AppPalette.errorColor : AppPalette.amberColor
+                                        font.pixelSize: AppStyle.fontTiny
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: taskPage.failedBlockText(modelData)
+                                        color: AppPalette.textColor
+                                        font.pixelSize: AppStyle.fontTiny
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Button {
+                                        text: modelData.kind === "save_residue" ? "定位" : "人工修正"
+                                        enabled: !taskPage.busy
+                                        onClicked: taskPage.openManualEdit(modelData.text || "", modelData.translation || "")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Label {
             Layout.fillWidth: true
             text: "数据目录: " + (AppDir || "")
@@ -398,6 +641,7 @@ Page {
         }
 
         Item { Layout.fillHeight: true }
+    }
     }
 
     FileDialog {
@@ -472,6 +716,12 @@ Page {
                 manualEditDialog.showSaved()
             }
         }
+        function onTranslationTaskHistoryChanged() {
+            taskPage.refreshTaskHistory()
+        }
+        function onFailedBlocksRetranslated(result) {
+            taskPage.refreshTaskHistory()
+        }
         function onFailed(err) {
             if (typeof manualEditDialog !== "undefined") {
                 manualEditDialog.showError(err)
@@ -505,6 +755,117 @@ Page {
         return text.replace("预估字符:", "预估:")
     }
 
+    function refreshTaskHistory() {
+        if (!taskPage.tbridge || !taskPage.tbridge.getTranslationTaskHistory) {
+            taskPage.taskHistory = []
+            taskPage.latestFailedBlocks = []
+            taskPage.latestUnfinishedTask = ({})
+            return
+        }
+        var rows = taskPage.tbridge.getTranslationTaskHistory(3)
+        taskPage.taskHistory = rows || []
+        if (taskPage.tbridge.getLatestUnfinishedTranslationTask) {
+            taskPage.latestUnfinishedTask = taskPage.tbridge.getLatestUnfinishedTranslationTask() || ({})
+        } else {
+            taskPage.latestUnfinishedTask = ({})
+        }
+        if (taskPage.tbridge.getLatestFailedTranslationBlocks) {
+            taskPage.latestFailedBlocks = taskPage.tbridge.getLatestFailedTranslationBlocks(3) || []
+        } else {
+            taskPage.latestFailedBlocks = []
+        }
+    }
+
+    function clearTaskHistory() {
+        if (!taskPage.tbridge || !taskPage.tbridge.clearTranslationTaskHistory) return
+        var result = taskPage.tbridge.clearTranslationTaskHistory()
+        taskPage.refreshTaskHistory()
+        taskPage.latestFailedBlocks = []
+        taskPage.latestUnfinishedTask = ({})
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            if (result && result.ok) ToastBridge.showSuccess(result.message || "任务历史已清空")
+            else ToastBridge.showError((result && result.message) || "清空任务历史失败")
+        }
+    }
+
+    function applyTaskRecord(record) {
+        if (!cfg || !record) return
+        var inp = record.input_path || (record.config ? record.config.inp : "")
+        var out = record.output_path || (record.config ? record.config.out : "")
+        if (inp) cfg.inp = inp
+        if (out) cfg.out = out
+        else if (inp) cfg.out = taskPage.defaultOutputPath(inp)
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            ToastBridge.showInfo("已载入最近任务路径")
+        }
+    }
+
+    function resumeLatestTask() {
+        if (!taskPage.tbridge || !taskPage.tbridge.resumeLatestTranslation) return
+        taskPage.tbridge.resumeLatestTranslation(cfg)
+        taskPage.navigateToStatus()
+    }
+
+    function retranslateFailedBlocks() {
+        if (!taskPage.tbridge || !taskPage.tbridge.retranslateLatestFailedBlocks) return
+        var mode = taskPage.failedBlockProviderModeIndex === 1 ? "proofread" : "current"
+        taskPage.tbridge.retranslateLatestFailedBlocks(cfg, mode, 50)
+    }
+
+    function taskStatusLabel(status) {
+        var value = String(status || "")
+        if (value === "completed") return "已完成"
+        if (value === "running") return "运行中"
+        if (value === "paused") return "可续译"
+        if (value === "pausing") return "暂停中"
+        if (value === "stopping") return "停止中"
+        if (value === "stopped") return "已停止"
+        if (value === "cancelled") return "已取消"
+        if (value === "cancelling") return "取消中"
+        if (value === "failed") return "失败"
+        return value || "-"
+    }
+
+    function taskStatusColor(status) {
+        var value = String(status || "")
+        if (value === "completed") return AppPalette.successColor
+        if (value === "running" || value === "pausing" || value === "stopping" || value === "cancelling") return AppPalette.accentColor
+        if (value === "paused") return AppPalette.amberColor
+        if (value === "failed") return AppPalette.errorColor
+        return AppPalette.mutedText
+    }
+
+    function taskProgressText(record) {
+        if (!record) return "-"
+        var completed = Number(record.completed_texts || 0)
+        var total = Number(record.total_texts || 0)
+        if (total > 0) return completed + "/" + total
+        var progress = Number(record.progress || 0)
+        if (progress > 0) return Math.round(progress * 100) + "%"
+        return "-"
+    }
+
+    function taskTimeText(seconds) {
+        var value = Number(seconds || 0)
+        if (value <= 0) return "-"
+        return Qt.formatDateTime(new Date(value * 1000), "MM-dd hh:mm")
+    }
+
+    function failedBlockKindLabel(kind) {
+        var value = String(kind || "")
+        if (value === "failed") return "未译"
+        if (value === "residue") return "残留"
+        if (value === "save_residue") return "保存前"
+        return "问题"
+    }
+
+    function failedBlockText(block) {
+        if (!block) return "-"
+        var fragments = block.fragments && block.fragments.length > 0 ? (" [" + block.fragments.join(" / ") + "] ") : ""
+        var text = block.text || block.translation || "-"
+        return fragments + text
+    }
+
     function modelSummary() {
         if (!cfg) return "-"
         var provider = cfg.provider || "-"
@@ -527,6 +888,7 @@ Page {
     }
 
     Component.onCompleted: {
+        taskPage.refreshTaskHistory()
         Qt.callLater(function() {
             inpField.cursorPosition = 0
             outField.cursorPosition = 0

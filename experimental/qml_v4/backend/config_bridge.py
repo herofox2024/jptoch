@@ -5,6 +5,7 @@
 
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -98,6 +99,255 @@ PERF_UI_PRESETS = {
     },
 }
 
+PROMPT_TEXT_DEFAULT_LITERARY = """请以简体中文输出。保持原作叙事节奏、人物称谓和文学语气；不要添加解释、译者注或括号说明；无法确定的专名先直译并保持前后一致。"""
+PROMPT_TEXT_HYMT2_OFFICIAL = """Translate Japanese to Simplified Chinese. Output only the translation. Do not explain. Keep names and dialogue natural."""
+PROMPT_TEXT_SAFE_CONSERVATIVE = """请以简体中文输出。遇到敏感、暴力、恐怖或成人语境时，按文学叙事进行克制翻译，不要拒译、不要输出安全说明、不要省略原意。"""
+PROMPT_TEXT_FAILED_BLOCK_REPAIR = """请只修复当前失败文本块并输出简体中文译文。不要返回 JSON、编号、解释、原文或额外说明；保留必要专名，翻译所有可翻译的日文假名。"""
+PROMPT_TEXT_PROOFREAD_RETRANSLATE = """请以校对模型身份重译失败段落：输出流畅简体中文，修复漏译、日文残留、繁体字、JSON 破损和空返回问题；不要添加译者注。"""
+
+MODEL_PROMPT_PRESETS = [
+    {
+        "key": "deepseek_fast",
+        "label": "DeepSeek 快速",
+        "category": "model",
+        "source": "builtin",
+        "hint": "云端快速预设：适合先跑初译，保留基础残留检查。",
+        "values": {
+            "provider": "deepseek",
+            "api_url": DEEPSEEK_API_URL,
+            "model": DEEPSEEK_MODEL,
+            "max_workers": 10,
+            "batch_size": 8,
+            "max_batch_length": 3000,
+            "max_text_size_for_batch": 600,
+            "api_timeout": 120,
+            "enable_proofread": False,
+            "enable_prompt_examples": True,
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "deepseek_stable",
+        "label": "DeepSeek 稳定文学",
+        "category": "workflow",
+        "source": "builtin",
+        "hint": "主力云端翻译预设：自动风格、启用校对、保守并发，适合正式译书。",
+        "values": {
+            "provider": "deepseek",
+            "api_url": DEEPSEEK_API_URL,
+            "model": DEEPSEEK_MODEL,
+            "max_workers": 5,
+            "batch_size": 4,
+            "max_batch_length": 800,
+            "max_text_size_for_batch": 200,
+            "api_timeout": 120,
+            "enable_proofread": True,
+            "proofread_genre": "auto",
+            "proofread_tone": "auto",
+            "prompt_extra_instruction": PROMPT_TEXT_DEFAULT_LITERARY,
+            "enable_prompt_examples": True,
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "longcat_stable",
+        "label": "LongCat 稳定",
+        "category": "model",
+        "source": "builtin",
+        "hint": "LongCat 安全稳定预设：降低并发批量，减少超时和安全拒绝后的整批损失。",
+        "values": {
+            "provider": "longcat",
+            "api_url": LONGCAT_API_URL,
+            "model": LONGCAT_MODEL,
+            "max_workers": 4,
+            "batch_size": 4,
+            "max_batch_length": 1200,
+            "max_text_size_for_batch": 260,
+            "api_timeout": 300,
+            "enable_proofread": True,
+            "proofread_genre": "auto",
+            "proofread_tone": "auto",
+            "enable_prompt_examples": True,
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "longcat_balanced",
+        "label": "LongCat 平衡",
+        "category": "workflow",
+        "source": "builtin",
+        "hint": "LongCat 2.0 预设：限制到当前稳定上限，适合速度优先但保留残留检查。",
+        "values": {
+            "provider": "longcat",
+            "api_url": LONGCAT_API_URL,
+            "model": LONGCAT_MODEL,
+            "max_workers": 8,
+            "batch_size": 9,
+            "max_batch_length": 4000,
+            "max_text_size_for_batch": 600,
+            "api_timeout": 300,
+            "enable_proofread": True,
+            "proofread_genre": "auto",
+            "proofread_tone": "auto",
+            "prompt_extra_instruction": PROMPT_TEXT_SAFE_CONSERVATIVE,
+            "enable_prompt_examples": True,
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "hymt2_cpu_stable",
+        "label": "Hy-MT2 CPU 稳定",
+        "category": "model",
+        "source": "builtin",
+        "hint": "本地 CPU 预设：1/1、官方短 Prompt、稳定生成参数，优先保证可保存。",
+        "values": {
+            "provider": "hymt2",
+            "api_key": "sk-local",
+            "api_url": HYMT2_API_URL,
+            "model": HYMT2_MODEL,
+            "max_workers": 1,
+            "batch_size": 1,
+            "max_batch_length": 300,
+            "max_text_size_for_batch": 120,
+            "api_timeout": 300,
+            "enable_proofread": False,
+            "proofread_genre": "auto",
+            "proofread_tone": "auto",
+            "enable_prompt_examples": False,
+            "hymt2_generation_mode": "stable",
+            "hymt2_prompt_mode": "official",
+            "hymt2_runtime_mode": "cpu",
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "hymt2_gpu_stable",
+        "label": "Hy-MT2 GPU 稳定",
+        "category": "model",
+        "source": "builtin",
+        "hint": "本地 CUDA llama-server 预设：4/4、官方短 Prompt；如卡顿或 OOM 再降到 CPU 稳定。",
+        "values": {
+            "provider": "hymt2",
+            "api_key": "sk-local",
+            "api_url": HYMT2_API_URL,
+            "model": HYMT2_MODEL,
+            "max_workers": 4,
+            "batch_size": 4,
+            "max_batch_length": 1000,
+            "max_text_size_for_batch": 250,
+            "api_timeout": 300,
+            "enable_proofread": False,
+            "proofread_genre": "auto",
+            "proofread_tone": "auto",
+            "enable_prompt_examples": False,
+            "hymt2_generation_mode": "stable",
+            "hymt2_prompt_mode": "official",
+            "hymt2_runtime_mode": "gpu",
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "custom_openai",
+        "label": "Custom OpenAI 兼容",
+        "category": "model",
+        "source": "builtin",
+        "hint": "自定义兼容端点模板：只切换到 custom，不写入 URL、模型名或密钥。",
+        "values": {
+            "provider": "custom",
+            "max_workers": 3,
+            "batch_size": 3,
+            "max_batch_length": 800,
+            "max_text_size_for_batch": 200,
+            "api_timeout": 300,
+            "enable_prompt_examples": True,
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "prompt_literary_default",
+        "label": "默认文学 Prompt",
+        "category": "prompt",
+        "source": "builtin",
+        "hint": "强调简体中文、文学语气、不要解释或译者注。",
+        "values": {
+            "prompt_extra_instruction": PROMPT_TEXT_DEFAULT_LITERARY,
+            "enable_prompt_examples": True,
+            "proofread_genre": "auto",
+            "proofread_tone": "auto",
+        },
+    },
+    {
+        "key": "prompt_hymt2_official_short",
+        "label": "Hy-MT2 官方短 Prompt",
+        "category": "prompt",
+        "source": "builtin",
+        "hint": "适合 Hy-MT2 本地模型：短指令、少解释、降低跑偏概率。",
+        "values": {
+            "prompt_extra_instruction": PROMPT_TEXT_HYMT2_OFFICIAL,
+            "enable_prompt_examples": False,
+            "hymt2_generation_mode": "stable",
+            "hymt2_prompt_mode": "official",
+        },
+    },
+    {
+        "key": "prompt_safe_conservative",
+        "label": "安全保守翻译",
+        "category": "prompt",
+        "source": "builtin",
+        "hint": "用于容易被拒译的恐怖、暴力或成人语境，要求按文学叙事克制翻译。",
+        "values": {
+            "prompt_extra_instruction": PROMPT_TEXT_SAFE_CONSERVATIVE,
+            "enable_prompt_examples": False,
+            "japanese_residue_policy": "balanced",
+        },
+    },
+    {
+        "key": "prompt_failed_block_repair",
+        "label": "失败块修复 Prompt",
+        "category": "prompt",
+        "source": "builtin",
+        "hint": "用于单独重译失败块：禁止解释、编号和 JSON，直接给安全译文。",
+        "values": {
+            "prompt_extra_instruction": PROMPT_TEXT_FAILED_BLOCK_REPAIR,
+            "enable_prompt_examples": False,
+            "japanese_residue_policy": "lenient",
+        },
+    },
+    {
+        "key": "prompt_proofread_retranslate",
+        "label": "校对重译 Prompt",
+        "category": "prompt",
+        "source": "builtin",
+        "hint": "用于备用校对模型重译失败段落，重点修复漏译、残留和空返回。",
+        "values": {
+            "prompt_extra_instruction": PROMPT_TEXT_PROOFREAD_RETRANSLATE,
+            "enable_proofread": True,
+            "enable_prompt_examples": False,
+            "proofread_genre": "auto",
+            "proofread_tone": "auto",
+            "japanese_residue_policy": "balanced",
+        },
+    },
+]
+
+MODEL_PROMPT_PRESET_BY_KEY = {item["key"]: item for item in MODEL_PROMPT_PRESETS}
+
+PRESET_CONFIG_KEYS = {
+    "provider", "api_url", "model",
+    "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
+    "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
+    "proofread_provider", "proofread_api_url", "proofread_model",
+    "prompt_extra_instruction", "enable_prompt_examples",
+    "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
+    "japanese_residue_policy",
+}
+PRESET_SECRET_KEYS = {"api_key", "proofread_api_key"}
+PRESET_CATEGORY_LABELS = {
+    "model": "模型",
+    "prompt": "Prompt",
+    "workflow": "组合",
+}
+
 # Keys that are persisted
 _CONFIG_KEYS = [
     "inp", "out", "api_key", "provider", "api_url", "model",
@@ -112,6 +362,7 @@ _CONFIG_KEYS = [
 
 CONFIG_FILE_NAME = "config.json"
 JAPANESE_RESIDUE_ALLOWLIST_FILE_NAME = "japanese_residue_allowlist.json"
+MODEL_PROMPT_PRESETS_FILE_NAME = "model_prompt_presets.json"
 DEFAULT_NOTICE_PAGE_TEXT = (
     "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n"
     "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
@@ -132,6 +383,94 @@ def _config_path() -> Path:
 
 def _japanese_residue_allowlist_path() -> Path:
     return _data_dir() / JAPANESE_RESIDUE_ALLOWLIST_FILE_NAME
+
+
+def _model_prompt_presets_path() -> Path:
+    return _data_dir() / MODEL_PROMPT_PRESETS_FILE_NAME
+
+
+def _slugify_preset_key(text: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z_]+", "_", str(text or "").strip()).strip("_").lower()
+    if not slug:
+        slug = "preset"
+    return slug[:48]
+
+
+def _clean_preset_values(values: Any) -> Dict[str, Any]:
+    if not isinstance(values, dict):
+        return {}
+    cleaned: Dict[str, Any] = {}
+    for key, value in values.items():
+        if key in PRESET_SECRET_KEYS or key not in PRESET_CONFIG_KEYS:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+def _normalize_model_prompt_preset(item: Any, fallback_prefix: str = "user") -> Dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    values = _clean_preset_values(item.get("values"))
+    if not values:
+        return {}
+    raw_key = str(item.get("key") or item.get("label") or "").strip()
+    key = raw_key if raw_key.startswith("user_") else f"user_{_slugify_preset_key(raw_key)}"
+    if key == "user_":
+        key = f"user_{fallback_prefix}"
+    category = str(item.get("category") or "workflow").strip().lower()
+    if category not in PRESET_CATEGORY_LABELS:
+        category = "workflow"
+    label = str(item.get("label") or key.replace("user_", "")).strip()[:80]
+    hint = str(item.get("hint") or "").strip()[:240]
+    return {
+        "key": key,
+        "label": label or key,
+        "hint": hint,
+        "category": category,
+        "source": "user",
+        "values": values,
+    }
+
+
+def _load_user_model_prompt_presets() -> List[Dict[str, Any]]:
+    path = _model_prompt_presets_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        raw_items = data.get("presets") if isinstance(data, dict) else data
+        if not isinstance(raw_items, list):
+            return []
+        result: List[Dict[str, Any]] = []
+        seen = set()
+        for idx, item in enumerate(raw_items):
+            preset = _normalize_model_prompt_preset(item, fallback_prefix=f"preset_{idx + 1}")
+            key = preset.get("key")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append(preset)
+        return result
+    except Exception as exc:
+        logger.warning("加载模型/Prompt 用户预设失败: %s", exc)
+        return []
+
+
+def _save_user_model_prompt_presets(items: List[Dict[str, Any]]) -> None:
+    path = _model_prompt_presets_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned = []
+    seen = set()
+    for idx, item in enumerate(items or []):
+        preset = _normalize_model_prompt_preset(item, fallback_prefix=f"preset_{idx + 1}")
+        key = preset.get("key")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(preset)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"version": 1, "presets": cleaned}, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _normalize_residue_fragment(fragment: str) -> str:
@@ -351,6 +690,227 @@ class ConfigBridge(QObject):
     def getPerfPreset(self, key: str):
         preset = PERF_UI_PRESETS.get(key, {})
         return preset.get("values", {})
+
+    def _apply_config_values(self, values: Dict[str, Any]) -> bool:
+        signal_by_key = {
+            "api_key": self._apiKeyChanged,
+            "provider": self._providerChanged,
+            "api_url": self._apiUrlChanged,
+            "model": self._modelChanged,
+            "max_workers": self._maxWorkersChanged,
+            "batch_size": self._batchSizeChanged,
+            "max_batch_length": self._maxBatchLengthChanged,
+            "max_text_size_for_batch": self._maxTextSizeForBatchChanged,
+            "api_timeout": self._apiTimeoutChanged,
+            "enable_proofread": self._enableProofreadChanged,
+            "proofread_genre": self._proofreadGenreChanged,
+            "proofread_tone": self._proofreadToneChanged,
+            "proofread_provider": self._proofreadProviderChanged,
+            "proofread_api_url": self._proofreadApiUrlChanged,
+            "proofread_model": self._proofreadModelChanged,
+            "prompt_extra_instruction": self._promptExtraInstructionChanged,
+            "enable_prompt_examples": self._enablePromptExamplesChanged,
+            "hymt2_generation_mode": self._hymt2GenerationModeChanged,
+            "hymt2_prompt_mode": self._hymt2PromptModeChanged,
+            "hymt2_runtime_mode": self._hymt2RuntimeModeChanged,
+            "japanese_residue_policy": self._japaneseResiduePolicyChanged,
+        }
+        changed = False
+        for key, value in dict(values or {}).items():
+            attr = f"_{key}"
+            if not hasattr(self, attr):
+                continue
+            if getattr(self, attr) == value:
+                continue
+            setattr(self, attr, value)
+            signal = signal_by_key.get(key)
+            if signal:
+                signal.emit()
+            changed = True
+        if changed:
+            self._schedule_save()
+        return changed
+
+    @Slot(result="QVariantList")
+    def getModelPromptPresets(self):
+        items = list(MODEL_PROMPT_PRESETS) + _load_user_model_prompt_presets()
+        return [
+            {
+                "key": item.get("key", ""),
+                "label": item.get("label", ""),
+                "hint": item.get("hint", ""),
+                "category": item.get("category", "workflow"),
+                "categoryLabel": PRESET_CATEGORY_LABELS.get(item.get("category", "workflow"), "组合"),
+                "source": item.get("source", "builtin"),
+                "user": item.get("source") == "user",
+            }
+            for item in items
+        ]
+
+    def _find_model_prompt_preset(self, key: str) -> Dict[str, Any]:
+        key = str(key or "").strip()
+        if key in MODEL_PROMPT_PRESET_BY_KEY:
+            return MODEL_PROMPT_PRESET_BY_KEY[key]
+        for item in _load_user_model_prompt_presets():
+            if item.get("key") == key:
+                return item
+        return {}
+
+    def _current_model_prompt_preset_values(self) -> Dict[str, Any]:
+        values: Dict[str, Any] = {}
+        for key in PRESET_CONFIG_KEYS:
+            attr = f"_{key}"
+            if hasattr(self, attr):
+                values[key] = getattr(self, attr)
+        return _clean_preset_values(values)
+
+    @Slot(str, result="QVariantMap")
+    def applyModelPromptPreset(self, key: str):
+        preset = self._find_model_prompt_preset(key)
+        if not preset:
+            return {"ok": False, "message": "未知模型/Prompt 预设"}
+        values = dict(preset.get("values") or {})
+        provider = str(values.get("provider") or "").strip().lower()
+        if provider in {"hymt2", "sakura"}:
+            values["api_key"] = "sk-local"
+        self._apply_config_values(values)
+        return {
+            "ok": True,
+            "message": f"已应用预设: {preset.get('label', key)}",
+            "provider": values.get("provider", self._provider),
+            "model": values.get("model", self._model),
+        }
+
+    @Property(str, constant=True)
+    def modelPromptPresetsPath(self) -> str:
+        return str(_model_prompt_presets_path())
+
+    @Slot(result="QVariantMap")
+    def getCurrentModelPromptPresetSnapshot(self):
+        values = self._current_model_prompt_preset_values()
+        return {
+            "provider": values.get("provider", self._provider),
+            "model": values.get("model", self._model),
+            "category": "workflow",
+            "values": values,
+            "secretsExcluded": True,
+        }
+
+    @Slot(str, str, result="QVariantMap")
+    def saveCurrentModelPromptPreset(self, label: str, hint: str = ""):
+        label = str(label or "").strip()
+        if not label:
+            label = f"{self._provider or 'custom'} 当前配置"
+        base_key = f"user_{_slugify_preset_key(label)}"
+        items = _load_user_model_prompt_presets()
+        existing = {item.get("key") for item in items}
+        key = base_key
+        suffix = 2
+        while key in existing or key in MODEL_PROMPT_PRESET_BY_KEY:
+            key = f"{base_key}_{suffix}"
+            suffix += 1
+        preset = {
+            "key": key,
+            "label": label[:80],
+            "hint": str(hint or "由当前 API、模型、性能、Prompt、校对和残留策略生成。").strip()[:240],
+            "category": "workflow",
+            "source": "user",
+            "values": self._current_model_prompt_preset_values(),
+        }
+        items.append(preset)
+        _save_user_model_prompt_presets(items)
+        logger.info("已保存模型/Prompt 用户预设: %s", key)
+        return {"ok": True, "message": f"已保存预设: {preset['label']}", "key": key}
+
+    @Slot(str, result="QVariantMap")
+    def deleteUserModelPromptPreset(self, key: str):
+        key = str(key or "").strip()
+        if not key.startswith("user_"):
+            return {"ok": False, "message": "只能删除自定义预设，内置预设不能删除"}
+        items = _load_user_model_prompt_presets()
+        kept = [item for item in items if item.get("key") != key]
+        if len(kept) == len(items):
+            return {"ok": False, "message": "未找到要删除的自定义预设"}
+        _save_user_model_prompt_presets(kept)
+        logger.info("已删除模型/Prompt 用户预设: %s", key)
+        return {"ok": True, "message": "已删除自定义预设", "key": key}
+
+    def _write_preset_export(self, path: str, presets: List[Dict[str, Any]]) -> Dict[str, Any]:
+        raw_path = str(path or "").strip()
+        if not raw_path:
+            return {"ok": False, "message": "请选择导出路径"}
+        target = Path(raw_path)
+        if target.suffix.lower() != ".json":
+            target = target.with_suffix(".json")
+        safe_presets = []
+        for idx, item in enumerate(presets or []):
+            preset = _normalize_model_prompt_preset(item, fallback_prefix=f"export_{idx + 1}")
+            if preset:
+                safe_presets.append(preset)
+        payload = {
+            "version": 1,
+            "type": "qml_v4_model_prompt_presets",
+            "secrets_excluded": True,
+            "presets": safe_presets,
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "message": f"已导出 {len(safe_presets)} 个预设: {target}", "path": str(target)}
+
+    @Slot(str, result="QVariantMap")
+    def exportModelPromptPresets(self, path: str):
+        return self._write_preset_export(path, _load_user_model_prompt_presets())
+
+    @Slot(str, str, result="QVariantMap")
+    def exportCurrentModelPromptPreset(self, path: str, label: str = ""):
+        label = str(label or "").strip() or f"{self._provider or 'custom'} 当前配置"
+        preset = {
+            "key": f"user_{_slugify_preset_key(label)}",
+            "label": label[:80],
+            "hint": "由当前配置导出。API Key 已排除。",
+            "category": "workflow",
+            "source": "user",
+            "values": self._current_model_prompt_preset_values(),
+        }
+        return self._write_preset_export(path, [preset])
+
+    @Slot(str, result="QVariantMap")
+    def importModelPromptPresets(self, path: str):
+        source = Path(str(path or "").strip())
+        if not source.exists():
+            return {"ok": False, "message": "预设文件不存在"}
+        try:
+            data = json.loads(source.read_text(encoding="utf-8-sig"))
+            raw_items = data.get("presets") if isinstance(data, dict) else data
+            if isinstance(raw_items, dict):
+                raw_items = [raw_items]
+            if not isinstance(raw_items, list):
+                return {"ok": False, "message": "预设文件格式不正确"}
+            current = _load_user_model_prompt_presets()
+            by_key = {item.get("key"): item for item in current if item.get("key")}
+            imported = 0
+            for idx, item in enumerate(raw_items):
+                preset = _normalize_model_prompt_preset(item, fallback_prefix=f"import_{idx + 1}")
+                key = preset.get("key")
+                if not key:
+                    continue
+                if key in MODEL_PROMPT_PRESET_BY_KEY:
+                    key = f"user_{key}"
+                    preset["key"] = key
+                base_key = key
+                suffix = 2
+                while key in MODEL_PROMPT_PRESET_BY_KEY:
+                    key = f"{base_key}_{suffix}"
+                    suffix += 1
+                preset["key"] = key
+                by_key[key] = preset
+                imported += 1
+            _save_user_model_prompt_presets(list(by_key.values()))
+            logger.info("已导入模型/Prompt 用户预设: %s 个, 来源: %s", imported, source)
+            return {"ok": True, "message": f"已导入 {imported} 个预设，API Key 已自动排除", "count": imported}
+        except Exception as exc:
+            logger.warning("导入模型/Prompt 预设失败: %s", exc)
+            return {"ok": False, "message": f"导入预设失败: {exc}"}
 
     @Slot(result=str)
     def buildPromptPreview(self) -> str:

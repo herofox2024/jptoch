@@ -41,6 +41,12 @@ from experimental.qml_v4.backend.book_translation_service import (
     scan_japanese_residue_in_docs,
 )
 from experimental.qml_v4.backend.pipeline import (
+    ApplyBookTranslationsStage,
+    BatchTranslateStage,
+    BuildTextPlanStage,
+    CreateTranslatorStage,
+    FinalizeBookContentStage,
+    LoadEpubStage,
     PipelineContext,
     StyleDetectStage,
     TranslationPipeline,
@@ -72,6 +78,9 @@ class FakeEpubItem:
 
     def get_content(self):
         return self._html
+
+    def set_content(self, content):
+        self._html = content
 
 
 class FakeEpubBook:
@@ -291,6 +300,27 @@ class RealEpubFixtureTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def _minimal_config(self):
+        return {
+            "inp": "fixture.epub",
+            "out": "out.epub",
+            "api_key": "test-key",
+            "provider": "deepseek",
+            "api_url": "https://example.test/chat/completions",
+            "model": "deepseek-v4-flash",
+            "max_workers": 1,
+            "batch_size": 1,
+            "max_batch_length": 800,
+            "max_text_size_for_batch": 200,
+            "api_timeout": 120,
+            "extract_glossary": False,
+            "enable_glossary": False,
+            "enable_thinking": False,
+            "enable_proofread": False,
+            "proofread_genre": "general",
+            "proofread_tone": "neutral",
+        }
+
     def test_style_detect_stage_uses_extra_title_and_resolves_manual_style(self):
         detected = StyleDetectionResult(genre="general", tone="neutral", confidence=42, reason="fixture")
         ctx = PipelineContext(
@@ -314,6 +344,114 @@ class PipelineTests(unittest.TestCase):
         out = TranslationPipeline().add_stage(StyleDetectStage(enabled=False)).run(ctx)
         self.assertIs(out, ctx)
         self.assertIsNone(out.proofread_style)
+
+    def test_load_and_text_extract_stages_build_text_plan(self):
+        book = FakeEpubBook(
+            """<?xml version='1.0' encoding='utf-8'?>
+            <html xmlns="http://www.w3.org/1999/xhtml"><body>
+            <h1>第一章</h1><p>吾輩は猫である。</p><p>abc</p>
+            </body></html>"""
+        )
+        ctx = PipelineContext(config=self._minimal_config())
+
+        with mock.patch("epub_io.load_book", return_value=book):
+            out = (
+                TranslationPipeline()
+                .add_stage(LoadEpubStage())
+                .add_stage(BuildTextPlanStage())
+                .run(ctx)
+            )
+
+        self.assertIs(out.book, book)
+        self.assertGreaterEqual(len(out.docs), 1)
+        self.assertIn("吾輩は猫である。", out.texts)
+        self.assertEqual(out.text_plan.total_texts, len(out.texts))
+        self.assertGreater(out.text_plan.total_chars, 0)
+
+    def test_create_translator_stage_uses_resolved_style_and_config(self):
+        captured = {}
+
+        class FakeTranslator:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        ctx = PipelineContext(
+            config=self._minimal_config(),
+            proofread_style=StyleDetectionResult(
+                genre="mystery",
+                tone="light",
+                confidence=100,
+                reason="manual",
+            ),
+            extra={"translator_factory": FakeTranslator},
+        )
+
+        out = TranslationPipeline().add_stage(CreateTranslatorStage()).run(ctx)
+
+        self.assertIsInstance(out.translator, FakeTranslator)
+        self.assertEqual(captured["provider"], "deepseek")
+        self.assertEqual(captured["proofread_genre"], "mystery")
+        self.assertEqual(captured["proofread_tone"], "light")
+        self.assertEqual(captured["enable_prompt_examples"], True)
+
+    def test_batch_translate_stage_stores_results_and_ordered_results(self):
+        class FakeTranslator:
+            def __init__(self):
+                self.last_ordered_results = []
+
+            def translate_batch(self, texts, **kwargs):
+                self.last_ordered_results = [f"译文:{text}" for text in texts]
+                kwargs["progress_callback"](len(texts), len(texts))
+                kwargs["item_callback"](texts[0], self.last_ordered_results[0])
+                return dict(zip(texts, self.last_ordered_results))
+
+        progress = []
+        items = []
+        ctx = PipelineContext(
+            config=self._minimal_config(),
+            translator=FakeTranslator(),
+            texts=["吾輩は猫である。"],
+            progress_callback=lambda completed, total: progress.append((completed, total)),
+            item_callback=lambda src, dst: items.append((src, dst)),
+        )
+
+        out = TranslationPipeline().add_stage(BatchTranslateStage()).run(ctx)
+
+        self.assertEqual(out.results["吾輩は猫である。"], "译文:吾輩は猫である。")
+        self.assertEqual(out.ordered_results, ["译文:吾輩は猫である。"])
+        self.assertEqual(progress, [(1, 1)])
+        self.assertEqual(items, [("吾輩は猫である。", "译文:吾輩は猫である。")])
+
+    def test_apply_and_finalize_book_stages_update_epub_content(self):
+        book = FakeEpubBook(
+            """<?xml version='1.0' encoding='utf-8'?>
+            <html xmlns="http://www.w3.org/1999/xhtml"><body>
+            <h1>第一章</h1><p>吾輩は猫である。</p>
+            </body></html>"""
+        )
+        with mock.patch("epub_io.load_book", return_value=book):
+            ctx = (
+                TranslationPipeline()
+                .add_stage(LoadEpubStage())
+                .add_stage(BuildTextPlanStage())
+                .run(PipelineContext(config=self._minimal_config()))
+            )
+        ctx.results = {"吾輩は猫である。": "我是猫。"}
+        ctx.ordered_results = ["我是猫。"]
+        ctx.extra["clean_title"] = lambda value: value
+        ctx.extra["looks_like_refusal"] = lambda _value: False
+
+        out = (
+            TranslationPipeline()
+            .add_stage(ApplyBookTranslationsStage())
+            .add_stage(FinalizeBookContentStage())
+            .run(ctx)
+        )
+
+        html = book.item.get_content().decode("utf-8")
+        self.assertIn("我是猫。", html)
+        self.assertEqual(out.residue_scan.blocking_total, 0)
+        self.assertIsInstance(out.toc_translations, dict)
 
 
 class TranslatorTests(unittest.TestCase):
@@ -354,7 +492,7 @@ class TranslatorTests(unittest.TestCase):
 
         cleaned = _clean_translated_toc_title(candidate)
 
-        self.assertEqual(cleaned, "尼俄泊 恒川光太郎")
+        self.assertEqual(cleaned, "尼俄泊")
         self.assertNotIn("希腊神话", cleaned)
         self.assertNotIn("永远流动", cleaned)
         self.assertNotIn("前文", cleaned)
@@ -1141,6 +1279,27 @@ class TranslatorTests(unittest.TestCase):
         repaired = tq.repair_save_time_japanese_residue("", text)
         self.assertEqual(repaired, "“去哪里呢？”")
 
+    def test_residue_classifier_splits_risk_levels(self):
+        cases = [
+            ("彼女は笑った。そして走った。", "high", True),
+            ("她还是说でも要去。", "medium", True),
+            ("今年的《生きて明日なく》非常出色，她拥有很多粉丝。", "low", True),
+            ("这句话里有一处小さ假名。", "weak", False),
+            ("她笑了。", "none", False),
+        ]
+        for text, risk, blocking in cases:
+            with self.subTest(text=text):
+                result = tq.classify_japanese_residue(text)
+                self.assertEqual(result["risk"], risk)
+                self.assertEqual(result["blocking"], blocking)
+
+    def test_save_time_repairs_inline_furigana_in_long_sentence(self):
+        text = "后来我们经过熟田津 にぎたづ 爱媛一带，又在旅途中听老人说起那座港口的旧名。"
+        repaired = tq.repair_save_time_japanese_residue("", text)
+        self.assertIn("熟田津 爱媛", repaired)
+        self.assertNotIn("にぎたづ", repaired)
+        self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(repaired))
+
     def test_save_time_repairs_japanese_san_suffix(self):
         text = "为什么把凶手的名字告诉了阿景さん，说是弁藏呢？阿鶴さん也离开了。"
         repaired = tq.repair_save_time_japanese_residue("", text)
@@ -1736,8 +1895,11 @@ class AppLogicTests(unittest.TestCase):
 
         self.assertEqual(scan.blocking_total, 1)
         self.assertEqual(scan.hard_blocking_total, 1)
+        self.assertEqual(scan.high_risk_total, 1)
+        self.assertEqual(scan.medium_risk_total, 0)
         self.assertEqual(scan.low_risk_total, 0)
         self.assertEqual(scan.weak_total, 0)
+        self.assertEqual(scan.structured_samples[0]["risk"], "high")
         self.assertIn("逃げる", scan.blocking_samples[0])
 
     def test_book_translation_service_classifies_low_risk_title_residue(self):
@@ -1750,6 +1912,18 @@ class AppLogicTests(unittest.TestCase):
         self.assertEqual(scan.hard_blocking_total, 0)
         self.assertEqual(scan.low_risk_total, 1)
         self.assertIn("生きて", scan.low_risk_samples[0])
+
+    def test_book_translation_service_classifies_medium_residue(self):
+        html = "<html><body><p>她还是说でも要去。</p></body></html>"
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+
+        scan = scan_japanese_residue_in_docs(docs)
+
+        self.assertEqual(scan.blocking_total, 1)
+        self.assertEqual(scan.hard_blocking_total, 1)
+        self.assertEqual(scan.high_risk_total, 0)
+        self.assertEqual(scan.medium_risk_total, 1)
+        self.assertEqual(scan.structured_samples[0]["risk"], "medium")
 
     def test_multi_anchor_node_replacement(self):
         html = '<p>前文 <a href="a">链接A</a> 中间 <a href="b">链接B</a> 后文</p>'
