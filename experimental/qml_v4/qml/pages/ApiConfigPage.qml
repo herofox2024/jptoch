@@ -33,6 +33,7 @@ Page {
     property var localModel: typeof LocalModelBridge !== "undefined" ? LocalModelBridge : null
     property var modelPromptPresets: []
     property string presetResult: ""
+    property string presetCategoryFilter: "all"
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     onCfgChanged: page.refreshModelPromptPresets()
@@ -357,6 +358,26 @@ Page {
                 }
 
                 Flow {
+                    Layout.fillWidth: true
+                    width: parent.width
+                    spacing: AppStyle.spacingSmall
+
+                    Repeater {
+                        model: [
+                            { key: "all", label: "全部" },
+                            { key: "workflow", label: "组合" },
+                            { key: "model", label: "模型" },
+                            { key: "prompt", label: "Prompt" }
+                        ]
+                        delegate: Button {
+                            text: modelData.label
+                            highlighted: page.presetCategoryFilter === modelData.key
+                            onClicked: page.presetCategoryFilter = modelData.key
+                        }
+                    }
+                }
+
+                Flow {
                     id: modelPresetFlow
                     Layout.fillWidth: true
                     width: parent.width
@@ -365,10 +386,11 @@ Page {
                     Repeater {
                         model: page.modelPromptPresets
                         delegate: Rectangle {
+                            visible: page.presetCategoryFilter === "all" || modelData.category === page.presetCategoryFilter
                             width: modelPresetFlow.width >= 760 ? Math.floor((modelPresetFlow.width - 2 * AppStyle.spacingSmall) / 3)
                                                                : (modelPresetFlow.width >= 500 ? Math.floor((modelPresetFlow.width - AppStyle.spacingSmall) / 2)
                                                                                                 : modelPresetFlow.width)
-                            height: presetCardColumn.implicitHeight + 18
+                            height: visible ? presetCardColumn.implicitHeight + 18 : 0
                             radius: AppPalette.radiusMedium
                             color: AppPalette.cardBg
                             border.color: AppPalette.borderColor

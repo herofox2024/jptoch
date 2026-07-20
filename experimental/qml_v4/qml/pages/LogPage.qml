@@ -17,6 +17,7 @@ Page {
     property var requestRows: []
     property var selectedRequest: null
     readonly property var requestCategoryCodes: ["all", "failed", "timeout", "security", "format", "residue", "rate_limit", "ok"]
+    readonly property bool compactRequestLayout: page.width < 1040
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     function reloadRecent(forceFollow) {
@@ -56,6 +57,11 @@ Page {
         }
         page.requestRows = page.logBridge.readRequestLogs(350, page.requestCategoryCode(), requestSearch.text || "")
         page.selectedRequest = page.requestRows.length > 0 ? page.requestRows[0] : null
+    }
+
+    function openRequestLogs() {
+        page.activeTab = 1
+        page.reloadRequestLogs()
     }
 
     function clearRequestLogs() {
@@ -325,16 +331,20 @@ Page {
                 }
             }
 
-            RowLayout {
+            GridLayout {
                 visible: page.activeTab === 1
                 anchors.fill: parent
                 anchors.margins: 14
-                spacing: AppStyle.spacingMedium
+                columns: page.compactRequestLayout ? 1 : 2
+                rowSpacing: AppStyle.spacingMedium
+                columnSpacing: AppStyle.spacingMedium
 
                 ListView {
                     id: requestList
-                    Layout.preferredWidth: Math.min(520, parent.width * 0.48)
-                    Layout.fillHeight: true
+                    Layout.fillWidth: page.compactRequestLayout
+                    Layout.preferredWidth: page.compactRequestLayout ? parent.width : Math.min(520, parent.width * 0.48)
+                    Layout.preferredHeight: page.compactRequestLayout ? Math.max(180, parent.height * 0.36) : -1
+                    Layout.fillHeight: !page.compactRequestLayout
                     clip: true
                     spacing: AppStyle.spacingSmall
                     model: page.requestRows

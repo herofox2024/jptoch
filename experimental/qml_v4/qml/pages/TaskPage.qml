@@ -45,6 +45,9 @@ Page {
     property int failedBlockProviderModeIndex: 0
 
     signal navigateToStatus()
+    signal navigateToApi()
+    signal navigateToLogs()
+    signal navigateToSettings()
 
     function openManualEdit(src, dst) {
         manualEditDialog.openWith(src, dst)
@@ -98,6 +101,18 @@ Page {
                     font.weight: Font.DemiBold
                 }
             }
+        }
+
+        WorkflowShortcutPanel {
+            busy: taskPage.busy
+            readyToStart: taskPage.readyToStart
+            modelSummary: taskPage.modelSummary()
+            failedBlockCount: taskPage.latestFailedBlocks.length
+            recentTaskCount: taskPage.taskHistory.length
+            onOpenStatus: taskPage.navigateToStatus()
+            onOpenApi: taskPage.navigateToApi()
+            onOpenLogs: taskPage.navigateToLogs()
+            onOpenSettings: taskPage.navigateToSettings()
         }
 
         GridLayout {
@@ -584,6 +599,11 @@ Page {
                                 text: "重译失败块"
                                 enabled: !taskPage.busy && taskPage.latestFailedBlocks.length > 0
                                 onClicked: taskPage.retranslateFailedBlocks()
+                            }
+
+                            Button {
+                                text: "查看请求日志"
+                                onClicked: taskPage.navigateToLogs()
                             }
                         }
 

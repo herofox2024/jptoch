@@ -80,6 +80,16 @@ ApplicationWindow {
         Qt.callLater(appWindow.activateCurrentPage)
     }
 
+    function openRequestLogsPage() {
+        appWindow.markPageLoaded(2)
+        appWindow.currentPageIndex = 2
+        Qt.callLater(function() {
+            if (logLoader.item && logLoader.item.openRequestLogs) {
+                logLoader.item.openRequestLogs()
+            }
+        })
+    }
+
     function markPageLoaded(index) {
         if (index === 0) appWindow.taskPageLoaded = true
         else if (index === 1) appWindow.monitorPageLoaded = true
@@ -378,6 +388,9 @@ ApplicationWindow {
                         cfg: appWindow.cfg
                         tbridge: appWindow.tbridge
                         onNavigateToStatus: appWindow.switchPage(1)
+                        onNavigateToLogs: appWindow.openRequestLogsPage()
+                        onNavigateToApi: appWindow.switchPage(3)
+                        onNavigateToSettings: appWindow.switchPage(5)
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
