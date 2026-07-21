@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -127,6 +129,13 @@ jobs:
           Write-Host "Installer: $($installer.FullName)"
           Write-Host "Portable:  $($portable.FullName)"
 
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          python .github\scripts\generate_release_notes.py --version "$env:APP_BUILD_VERSION" --out release_notes.md
+          Get-Content release_notes.md -Encoding UTF8
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -134,13 +143,14 @@ jobs:
           path: |
             dist/installer/*.exe
             dist/*.zip
+            release_notes.md
           if-no-files-found: error
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release_notes.md
           files: |
             dist/installer/*.exe
             dist/*.zip

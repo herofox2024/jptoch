@@ -503,8 +503,21 @@ dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
 
 - 推送 `v*` 版本标签时，自动在 Windows Runner 上打包 QML/V4.1。
 - 自动生成 onedir 便携压缩包和 Inno Setup 安装程序。
+- 自动生成发布说明：优先读取 `CHANGELOG.md` 中对应版本小节，再追加 Git 提交摘要。
 - 自动创建 GitHub Release，并把 `.exe` 安装包和 `.zip` 便携包挂到 Release 资产里。
 - 手动运行 `workflow_dispatch` 时只上传 Actions 构建产物，不自动发布 Release。
+
+发布前填写修改内容：
+
+```markdown
+## v4.1.2
+
+- 修复 xxx 问题。
+- 优化 xxx 流程。
+- 新增 xxx 功能。
+```
+
+说明：版本小节标题需要和发布标签一致，例如标签 `v4.1.2` 对应 `CHANGELOG.md` 里的 `## v4.1.2`。如果没有填写对应小节，Release 会显示“未填写人工发布说明”，但仍会附加提交摘要。
 
 发布新版本示例：
 
