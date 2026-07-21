@@ -1012,8 +1012,13 @@ class _RetranslateFailedBlocksWorker(QObject):
                 failed = len(getattr(exc, "failed_texts", []) or []) + len(getattr(exc, "residue_texts", []) or [])
                 logger.warning("失败块重译部分完成: %s", exc)
 
+            safe_translations: Dict[str, str] = {}
             for src, dst in translations.items():
-                translator.save_manual_translation(src, dst)
+                if translator._is_incomplete_translation(src, dst):
+                    continue
+                safe_translations[src] = dst
+                translator.save_manual_translation(src, dst, trusted=False)
+            translations = safe_translations
 
             success = len(translations)
             failed = max(failed, len(sources) - success)
@@ -1812,6 +1817,25 @@ class TranslateBridge(QObject):
             else:
                 translator = JaZhTranslator(api_key="manual", enable_glossary=False)
                 translator.save_manual_translation(src, dst)
+            try:
+                record = self._task_history.latest()
+                task_id = str(record.get("task_id", "") if isinstance(record, dict) else "")
+                if task_id:
+                    update = self._task_history.mark_blocks_success(task_id, {src: dst})
+                    remaining = int(update.get("remaining_blocks") or 0)
+                    self._task_history.upsert(
+                        task_id,
+                        {
+                            "status": "paused" if remaining else "partial",
+                            "failure_summary": {
+                                **dict((update.get("record") or {}).get("failure_summary") or {}),
+                                "block_count": remaining,
+                            },
+                        },
+                    )
+                    self.translationTaskHistoryChanged.emit()
+            except Exception:
+                logger.debug("人工译文同步任务失败块状态失败", exc_info=True)
             self.manualTranslationSaved.emit(dst)
             self.statusChanged.emit("人工修改已保存，下次翻译/恢复续译时优先使用")
             ToastBridge.success("人工修改已保存")

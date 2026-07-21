@@ -94,6 +94,33 @@ class LogBridge(QObject):
         except Exception as exc:
             return f"读取日志失败: {exc}"
 
+    @Slot(result=dict)
+    def clearCurrentLog(self):
+        path = _current_log_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            cleared_file_handler = False
+            for handler in logging.getLogger().handlers:
+                if not isinstance(handler, logging.FileHandler):
+                    continue
+                if Path(getattr(handler, "baseFilename", "")).resolve() != path.resolve():
+                    continue
+                handler.acquire()
+                try:
+                    if handler.stream:
+                        handler.stream.seek(0)
+                        handler.stream.truncate(0)
+                        handler.stream.flush()
+                        cleared_file_handler = True
+                finally:
+                    handler.release()
+            if not cleared_file_handler:
+                path.write_text("", encoding="utf-8")
+            self.currentLogPathChanged.emit()
+            return {"ok": True, "message": "当前运行日志已清空"}
+        except Exception as exc:
+            return {"ok": False, "message": f"清空运行日志失败: {exc}"}
+
     @Slot(result=bool)
     def openLogDirectory(self) -> bool:
         return QDesktopServices.openUrl(QUrl.fromLocalFile(str(_logs_dir())))

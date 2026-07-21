@@ -296,6 +296,126 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
+            Layout.preferredHeight: apiManagerSummaryRow.implicitHeight + 32
+            radius: AppPalette.radiusLarge
+            color: AppPalette.surfaceRaised
+            border.color: AppPalette.borderColor
+
+            RowLayout {
+                id: apiManagerSummaryRow
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: AppStyle.spacingMedium
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 96
+                    radius: AppPalette.radiusMedium
+                    color: AppPalette.cardBg
+                    border.color: AppPalette.lineColor
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: AppStyle.spacingMedium
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingTight
+
+                            Label {
+                                text: "模型 / Prompt 预设"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSubHeader
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.modelPromptPresets && page.modelPromptPresets.length > 0
+                                      ? "当前可用预设 " + page.modelPromptPresets.length + " 个；应用、导入、导出在弹窗中完成。"
+                                      : "暂无可用预设；可保存当前配置为自定义预设。"
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontCaption
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Button {
+                            text: "管理"
+                            onClicked: modelPresetDialog.open()
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 96
+                    radius: AppPalette.radiusMedium
+                    color: page.localModel && page.localModel.running ? AppStyle.statusSuccessBg : AppPalette.cardBg
+                    border.color: page.localModel && page.localModel.running ? AppPalette.successColor : AppPalette.lineColor
+                    visible: page.localModel !== null
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: AppStyle.spacingMedium
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingTight
+
+                            Label {
+                                text: "Hy-MT2 本地模型"
+                                color: page.localModel && page.localModel.running ? AppPalette.successColor : AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSubHeader
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.localModel
+                                      ? ((page.localModel.running ? "本地服务运行中；" : "本地服务未运行；") + (page.localModel.backendMode === "server" ? "llama-server 外部模式" : "Python CPU 模式"))
+                                      : "本地模型模块未加载。"
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontCaption
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Button {
+                            text: "管理"
+                            onClicked: localModelDialog.open()
+                        }
+                    }
+                }
+            }
+        }
+
+        }
+    }
+
+    Dialog {
+        id: modelPresetDialog
+        title: "模型 / Prompt 预设"
+        modal: true
+        width: Math.max(760, Math.min(1080, page.width - 48))
+        height: Math.max(480, Math.min(720, page.height - 72))
+        x: Math.round((page.width - width) / 2)
+        y: Math.round((page.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: page.refreshModelPromptPresets()
+
+        ScrollView {
+            width: modelPresetDialog.width - 48
+            height: modelPresetDialog.height - 96
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: Math.max(0, modelPresetDialog.width - 72)
+                spacing: AppStyle.spacingMedium
+        Rectangle {
+            Layout.fillWidth: true
             Layout.preferredHeight: modelPresetColumn.implicitHeight + 32
             Layout.minimumHeight: modelPresetColumn.implicitHeight + 32
             radius: AppPalette.radiusLarge
@@ -460,7 +580,30 @@ Page {
                 }
             }
         }
+            }
+        }
+    }
 
+    Dialog {
+        id: localModelDialog
+        title: "Hy-MT2 本地模型"
+        modal: true
+        width: Math.max(780, Math.min(1100, page.width - 48))
+        height: Math.max(520, Math.min(760, page.height - 72))
+        x: Math.round((page.width - width) / 2)
+        y: Math.round((page.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        ScrollView {
+            width: localModelDialog.width - 48
+            height: localModelDialog.height - 96
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: Math.max(0, localModelDialog.width - 72)
+                spacing: AppStyle.spacingMedium
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: localModelColumn.implicitHeight + 36
@@ -778,10 +921,9 @@ Page {
                 }
             }
         }
-
+            }
         }
     }
-
     Dialog {
         id: savePresetDialog
         title: "保存当前模型 / Prompt 预设"

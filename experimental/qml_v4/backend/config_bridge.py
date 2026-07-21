@@ -368,7 +368,7 @@ DEFAULT_NOTICE_PAGE_TEXT = (
     "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
     "请支持并购买正版书籍。"
 )
-_RESIDUE_QUOTE_CHARS = "「」『』“”\"'（）()【】[]"
+_RESIDUE_QUOTE_CHARS = "「」『』“”\"'（）()【】[]〈〉《》"
 
 
 def _data_dir() -> Path:
@@ -527,6 +527,12 @@ def _invalidate_translator_residue_allowlist_cache() -> None:
         JaZhTranslator._japanese_residue_allowlist_cache = None
         JaZhTranslator._japanese_residue_allowlist_mtime = None
         JaZhTranslator._japanese_residue_allowlist_checked_at = 0.0
+    except Exception:
+        pass
+    try:
+        import translation_quality as tq
+
+        tq.invalidate_japanese_residue_allowlist_cache()
     except Exception:
         pass
 

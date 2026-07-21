@@ -1024,6 +1024,53 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(res[src], "\u5979\u5fae\u5fae\u4e00\u7b11\u3002")
         self.assertEqual(t.cache[t._cache_key(src)], "\u5979\u5fae\u5fae\u4e00\u7b11\u3002")
 
+    def test_trusted_manual_cache_can_keep_user_confirmed_kana(self):
+        t = DummyTranslator()
+        src = "暗号のかなをこの表に照らし合わせる。"
+        dst = "将暗号中的假名对照这张表，五十音为あいうえお、かきくけこ。"
+        self.assertTrue(JaZhTranslator._is_incomplete_translation(src, dst))
+        t.allow_text_cache_reuse = False
+        t._manual_cache_loaded = True
+        t._manual_cache = {
+            t._manual_cache_key(src): {
+                "source": src,
+                "translation": dst,
+                "trusted": True,
+                "updated_at": 1,
+            }
+        }
+        t._translate_chunk = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("should not call api"))  # type: ignore
+
+        res = t.translate_batch([src], batch_size=1)
+
+        self.assertEqual(res[src], dst)
+        self.assertEqual(t.cache[t._cache_key(src)], dst)
+
+    def test_untrusted_manual_cache_with_residue_is_retranslated(self):
+        t = DummyTranslator()
+        src = "暗号のかなをこの表に照らし合わせる。"
+        stale = "将暗号中的假名对照这张表，五十音为あいうえお、かきくけこ。"
+        fixed = "将暗号中的假名对照这张表，例如保留字母 A 和 K。"
+        self.assertTrue(JaZhTranslator._is_incomplete_translation(src, stale))
+        t.allow_text_cache_reuse = False
+        t.max_workers = 1
+        t.batch_size = 1
+        t._manual_cache_loaded = True
+        t._manual_cache = {
+            t._manual_cache_key(src): {
+                "source": src,
+                "translation": stale,
+                "trusted": False,
+                "updated_at": 1,
+            }
+        }
+        t._translate_chunk = lambda *args, **kwargs: fixed  # type: ignore
+
+        res = t.translate_batch([src], batch_size=1)
+
+        self.assertEqual(res[src], fixed)
+        self.assertEqual(t.cache[t._cache_key(src)], fixed)
+
     def test_cache_key_is_model_scoped(self):
         t = DummyTranslator()
         calls = {"n": 0}
@@ -1359,6 +1406,32 @@ class TranslatorTests(unittest.TestCase):
             for text in samples:
                 with self.subTest(text=text):
                     self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(text))
+        tq.configure_data_dir(get_data_dir)
+
+    def test_allowlisted_angle_quoted_fragment_matches_other_quote_styles(self):
+        with temp_test_dir() as d:
+            path = Path(d) / "japanese_residue_allowlist.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "quoted": ["〈ちゆりつぷ〉", "〈すりせん〉"],
+                        "exact": [],
+                        "quoted_regex": [],
+                        "regex": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            tq.configure_data_dir(lambda: Path(d))
+            samples = [
+                "纸上歪歪扭扭地排列着“ちゆりつぷ”、“すりせん”之类的文字。",
+                "纸上歪歪扭扭地排列着〈ちゆりつぷ〉、〈すりせん〉之类的文字。",
+            ]
+            for text in samples:
+                with self.subTest(text=text):
+                    self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(text))
+        tq.configure_data_dir(get_data_dir)
 
     def test_pre_translate_strips_japanese_quotes(self):
         t = DummyTranslator()

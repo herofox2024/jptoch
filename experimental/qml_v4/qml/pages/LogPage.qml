@@ -70,6 +70,15 @@ Page {
         page.reloadRequestLogs()
     }
 
+    function clearRecentLog() {
+        if (!page.logBridge || !page.logBridge.clearCurrentLog) {
+            logText.text = ""
+            return
+        }
+        var result = page.logBridge.clearCurrentLog()
+        logText.text = result && result.ok ? "" : (result && result.message ? result.message : "清空运行日志失败")
+    }
+
     function formatRequest(row) {
         if (!row) return "请选择一条请求日志"
         return "时间: " + (row.ts || "-")
@@ -87,6 +96,11 @@ Page {
             + "\n\n原文/请求摘要:\n" + (row.source_summary || "-")
             + "\n\n响应摘要:\n" + (row.response_summary || "-")
             + "\n\n错误:\n" + (row.error || "-")
+    }
+
+    function openRequestDetail(row) {
+        if (row) page.selectedRequest = row
+        requestDetailDialog.open()
     }
 
     Component.onCompleted: {
@@ -223,7 +237,7 @@ Page {
                     spacing: AppStyle.spacingMedium
 
                     Button { text: "刷新"; onClicked: page.reloadRecent(true) }
-                    Button { text: "清空显示"; onClicked: logText.text = "" }
+                    Button { text: "清空日志"; onClicked: page.clearRecentLog() }
                     Button { text: "打开日志目录"; onClicked: if (page.logBridge) page.logBridge.openLogDirectory() }
 
                     Item { Layout.fillWidth: true }
@@ -359,6 +373,7 @@ Page {
                         MouseArea {
                             anchors.fill: parent
                             onClicked: page.selectedRequest = modelData
+                            onDoubleClicked: page.openRequestDetail(modelData)
                         }
 
                         ColumnLayout {
@@ -410,24 +425,161 @@ Page {
                     }
                 }
 
-                TextArea {
+                Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    readOnly: true
-                    selectByMouse: true
-                    wrapMode: TextEdit.Wrap
-                    textFormat: TextEdit.PlainText
-                    text: page.formatRequest(page.selectedRequest)
-                    color: AppPalette.textColor
-                    selectedTextColor: "white"
-                    selectionColor: AppPalette.accentColor
-                    font.family: "Consolas"
-                    font.pixelSize: AppStyle.fontSmall
-                    background: Rectangle {
-                        color: AppPalette.fieldBg
-                        radius: AppPalette.radiusMedium
-                        border.color: AppPalette.lineColor
+                    radius: AppPalette.radiusMedium
+                    color: AppPalette.fieldBg
+                    border.color: AppPalette.lineColor
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: AppStyle.spacingMedium
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.selectedRequest
+                                  ? "[" + (page.selectedRequest.category || "-") + "] " + (page.selectedRequest.context || "-")
+                                  : "请选择一条请求日志"
+                            color: AppPalette.textColor
+                            font.pixelSize: AppStyle.fontBodyLarge
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: page.compactRequestLayout ? 2 : 4
+                            rowSpacing: AppStyle.spacingSmall
+                            columnSpacing: AppStyle.spacingMedium
+
+                            Label { text: "Provider"; color: AppPalette.mutedText; font.pixelSize: AppStyle.fontTiny }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.selectedRequest ? ((page.selectedRequest.provider || "-") + " / " + (page.selectedRequest.model || "-")) : "-"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSmall
+                                elide: Text.ElideRight
+                            }
+
+                            Label { text: "HTTP"; color: AppPalette.mutedText; font.pixelSize: AppStyle.fontTiny }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.selectedRequest ? (page.selectedRequest.status_code === undefined || page.selectedRequest.status_code === null ? "-" : page.selectedRequest.status_code) : "-"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSmall
+                            }
+
+                            Label { text: "耗时"; color: AppPalette.mutedText; font.pixelSize: AppStyle.fontTiny }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.selectedRequest ? ((page.selectedRequest.elapsed_ms || 0) + " ms") : "-"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSmall
+                            }
+
+                            Label { text: "Token"; color: AppPalette.mutedText; font.pixelSize: AppStyle.fontTiny }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.selectedRequest ? (page.selectedRequest.token_total || 0) : "-"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSmall
+                            }
+                        }
+
+                        ScrollView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                            Label {
+                                width: parent.width
+                                text: page.selectedRequest
+                                      ? ("原文/请求摘要:\n" + (page.selectedRequest.source_summary || "-")
+                                         + "\n\n响应摘要:\n" + (page.selectedRequest.response_summary || "-")
+                                         + "\n\n错误:\n" + (page.selectedRequest.error || "-"))
+                                      : "暂无详情"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSmall
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingSmall
+
+                            Button {
+                                text: "查看完整详情"
+                                highlighted: true
+                                enabled: !!page.selectedRequest
+                                onClicked: page.openRequestDetail(page.selectedRequest)
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: requestDetailDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(420, Math.min(page.width - 48, 980))
+        height: Math.max(460, Math.min(page.height - 72, 780))
+        title: page.selectedRequest ? ("请求日志详情 [" + (page.selectedRequest.category || "-") + "]") : "请求日志详情"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ColumnLayout {
+            width: requestDetailDialog.width - 48
+            height: requestDetailDialog.height - 96
+            spacing: AppStyle.spacingMedium
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: AppStyle.spacingSmall
+
+                Label {
+                    Layout.fillWidth: true
+                    text: page.selectedRequest
+                          ? ((page.selectedRequest.ts || "-") + "  ·  "
+                             + (page.selectedRequest.provider || "-") + " / " + (page.selectedRequest.model || "-"))
+                          : "未选择请求日志"
+                    color: AppPalette.textColor
+                    font.pixelSize: AppStyle.fontBody
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    text: "关闭"
+                    onClicked: requestDetailDialog.close()
+                }
+            }
+
+            TextArea {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                textFormat: TextEdit.PlainText
+                text: page.formatRequest(page.selectedRequest)
+                color: AppPalette.textColor
+                selectedTextColor: "white"
+                selectionColor: AppPalette.accentColor
+                font.family: "Consolas"
+                font.pixelSize: AppStyle.fontSmall
+                background: Rectangle {
+                    color: AppPalette.fieldBg
+                    radius: AppPalette.radiusMedium
+                    border.color: AppPalette.lineColor
                 }
             }
         }

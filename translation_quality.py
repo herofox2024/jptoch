@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 
 JAPANESE_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
-JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]]")
-JAPANESE_SHORT_QUOTED_TEXT_RE = re.compile(r"^[「『“\"'（(【\[]\s*([^\r\n]{1,6}?)\s*[」』”\"'）)】\]]$")
+JAPANESE_QUOTE_CHARS = "「」『』“”\"'（）()【】[]〈〉《》"
+JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[〈《]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]〉》]")
+JAPANESE_SHORT_QUOTED_TEXT_RE = re.compile(r"^[「『“\"'（(【\[〈《]\s*([^\r\n]{1,6}?)\s*[」』”\"'）)】\]〉》]$")
 JAPANESE_SINGLE_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\uff66-\uff9f]$")
 JAPANESE_O_NAME_PREFIX_RE = re.compile(r"お[\u3400-\u9fff々]{1,3}(?![\u3400-\u9fff々])")
 JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
@@ -128,6 +129,14 @@ def configure_data_dir(provider: Callable[[], Path]) -> None:
     _known_terms_checked_at = 0.0
 
 
+def invalidate_japanese_residue_allowlist_cache() -> None:
+    """Force reload of the user-editable Japanese residue allowlist."""
+    global _allowlist_cache, _allowlist_mtime, _allowlist_checked_at
+    _allowlist_cache = None
+    _allowlist_mtime = None
+    _allowlist_checked_at = 0.0
+
+
 def japanese_residue_allowlist_path() -> str:
     if _data_dir_provider is None:
         return str(Path.home() / ".epub_translator" / JAPANESE_RESIDUE_ALLOWLIST_FILE)
@@ -224,6 +233,10 @@ def _as_str_list(value: Any) -> List[str]:
     return list(dict.fromkeys(result))
 
 
+def _normalize_allowlist_literal(value: Any) -> str:
+    return str(value or "").strip().strip(JAPANESE_QUOTE_CHARS).strip()
+
+
 def load_japanese_residue_allowlist() -> Dict[str, Any]:
     """Load user-configurable residue allowlist with lightweight mtime caching."""
     global _allowlist_cache, _allowlist_mtime, _allowlist_checked_at
@@ -250,7 +263,11 @@ def load_japanese_residue_allowlist() -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("allowlist root must be a JSON object")
 
-        cache["quoted"] = set(_as_str_list(payload.get("quoted")))
+        cache["quoted"] = {
+            normalized
+            for normalized in (_normalize_allowlist_literal(item) for item in _as_str_list(payload.get("quoted")))
+            if normalized
+        }
         cache["exact"] = _as_str_list(payload.get("exact"))
         for pattern in _as_str_list(payload.get("quoted_regex")):
             try:

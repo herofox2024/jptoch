@@ -2544,11 +2544,20 @@ class JaZhTranslator:
             return entry
         return None
 
+    def _is_trusted_manual_cache(self, text: str) -> bool:
+        self._load_manual_cache()
+        entry = self._manual_cache.get(self._manual_cache_key(text))
+        if isinstance(entry, str):
+            return True
+        if isinstance(entry, dict):
+            return bool(entry.get("trusted", True))
+        return False
+
     def _flush_manual_cache(self):
         manual_cache_path = str(get_data_dir() / self.MANUAL_CACHE_FILE_NAME)
         self._atomic_write_json(manual_cache_path, self._manual_cache)
 
-    def save_manual_translation(self, src: str, dst: str) -> None:
+    def save_manual_translation(self, src: str, dst: str, trusted: bool = True) -> None:
         """保存人工译文并立即更新内存缓存。"""
         src = (src or "").strip()
         dst = (dst or "").strip()
@@ -2558,6 +2567,7 @@ class JaZhTranslator:
         self._manual_cache[self._manual_cache_key(src)] = {
             "source": src,
             "translation": dst,
+            "trusted": bool(trusted),
             "updated_at": int(time.time()),
         }
         self._flush_manual_cache()
@@ -4413,7 +4423,10 @@ JSON 顶层字段：
                 manual_cached = self._lookup_manual_cache(text)
                 if manual_cached is not None:
                     manual_cached = self._postprocess_translation(text, manual_cached)
-                if manual_cached is not None and not self._is_incomplete_translation(text, manual_cached):
+                if manual_cached is not None and (
+                    self._is_trusted_manual_cache(text)
+                    or not self._is_incomplete_translation(text, manual_cached)
+                ):
                     remember_completed(idx, text, manual_cached)
                     self.cache[cache_key] = manual_cached
                     completed += 1

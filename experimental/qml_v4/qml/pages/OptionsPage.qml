@@ -523,10 +523,35 @@ Page {
                     }
                 }
 
-                NoticePageSettings {
-                    cfg: page.cfg
-                    onBatchAddRequested: function(files, noticeText) {
-                        page.batchAddNoticePages(files, noticeText)
+                GroupBox {
+                    title: "版权提示页"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: AppStyle.spacingMedium
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: cfg && cfg.enableNoticePage
+                                  ? "已启用：输出 EPUB 开头会自动插入版权提示页；批量添加到已有 EPUB 也在弹窗中完成。"
+                                  : "未启用：可在弹窗中编辑版权提示文字，并批量添加到已有 EPUB。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: AppStyle.fontSmall
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Button {
+                                text: "管理版权提示页"
+                                highlighted: true
+                                onClicked: noticePageDialog.open()
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
                     }
                 }
             }
@@ -849,7 +874,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: "用于处理模型已经翻译出中文解释、但仍残留片假名原词的情况。例如“チロリ的酒”会在保存前自动修复为“烫酒壶里的酒”。这类词应加入修复词表，不要加入日文残留白名单。"
+                            text: "当前修复词表 " + knownKatakanaTermsModel.count + " 条，用于片假名原词到中文译名的自动修复。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
                             font.pixelSize: AppStyle.fontSmall
@@ -857,138 +882,11 @@ Page {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: AppStyle.spacingSmall
-
-                            Label {
-                                text: "文件"
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontSmall
-                                font.weight: Font.DemiBold
-                            }
-
-                            TextField {
-                                Layout.fillWidth: true
-                                text: page.knownKatakanaTermsPath
-                                readOnly: true
-                                selectByMouse: true
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontCaption
-                            }
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: page.width > 820 ? 5 : 2
-                            rowSpacing: 8
-                            columnSpacing: 12
-
-                            Label { text: "片假名原词" }
-                            TextField {
-                                id: katakanaSourceInput
-                                Layout.fillWidth: true
-                                placeholderText: "例如 チロリ"
-                                selectByMouse: true
-                                onAccepted: page.addKnownKatakanaTermItem()
-                            }
-
-                            Label { text: "中文译名" }
-                            TextField {
-                                id: katakanaTargetInput
-                                Layout.fillWidth: true
-                                placeholderText: "例如 烫酒壶"
-                                selectByMouse: true
-                                onAccepted: page.addKnownKatakanaTermItem()
-                            }
-
                             Button {
-                                text: "保存修复词"
+                                text: "管理修复词表"
                                 highlighted: true
-                                Layout.fillWidth: page.width <= 820
-                                onClicked: page.addKnownKatakanaTermItem()
+                                onClicked: knownKatakanaTermsDialog.open()
                             }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(96, Math.min(220, knownKatakanaTermsModel.count * 40 + 18))
-                            radius: AppPalette.radiusMedium
-                            color: AppPalette.cardAlt
-                            border.color: AppPalette.lineColor
-                            clip: true
-
-                            ListView {
-                                id: knownKatakanaTermsList
-                                anchors.fill: parent
-                                anchors.margins: 8
-                                model: knownKatakanaTermsModel
-                                spacing: AppStyle.spacingInline
-                                clip: true
-
-                                delegate: Rectangle {
-                                    width: knownKatakanaTermsList.width
-                                    height: 34
-                                    radius: 10
-                                    color: AppPalette.surfaceRaised
-                                    border.color: AppPalette.lineColor
-
-                                    RowLayout {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 10
-                                        anchors.rightMargin: 6
-                                        spacing: AppStyle.spacingSmall
-
-                                        Label {
-                                            Layout.preferredWidth: 140
-                                            text: source
-                                            color: AppPalette.textColor
-                                            font.pixelSize: AppStyle.fontBody
-                                            elide: Text.ElideRight
-                                        }
-
-                                        Label {
-                                            text: "→"
-                                            color: AppPalette.mutedText
-                                            font.pixelSize: AppStyle.fontSmall
-                                        }
-
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: target + (builtin ? "（内置）" : "")
-                                            color: AppPalette.textColor
-                                            font.pixelSize: AppStyle.fontBody
-                                            elide: Text.ElideRight
-                                        }
-
-                                        Button {
-                                            text: builtin ? "内置" : "删除"
-                                            flat: true
-                                            enabled: !builtin
-                                            onClicked: page.removeKnownKatakanaTermItem(source)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Label {
-                                anchors.centerIn: parent
-                                visible: knownKatakanaTermsModel.count === 0
-                                text: "暂无修复词"
-                                color: AppPalette.mutedText
-                                font.pixelSize: AppStyle.fontSmall
-                            }
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: page.knownKatakanaTermsStatus
-                            visible: page.knownKatakanaTermsStatus !== ""
-                            color: page.knownKatakanaTermsStatus.indexOf("失败") >= 0
-                                   || page.knownKatakanaTermsStatus.indexOf("请输入") >= 0
-                                   || page.knownKatakanaTermsStatus.indexOf("需要") >= 0
-                                   || page.knownKatakanaTermsStatus.indexOf("不能") >= 0
-                                   ? AppPalette.errorColor : AppPalette.successColor
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: AppStyle.fontSmall
                         }
                     }
                 }
@@ -1003,7 +901,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: "仅在确认片段确实需要保留日文时使用。这里添加的是“引号内片段白名单”，例如译文中的 “レディス” 会放行，但正文其他位置的日文仍会继续被拦截。"
+                            text: "当前白名单 " + residueAllowlistModel.count + " 条，仅在确认片段确实需要保留日文时使用。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
                             font.pixelSize: AppStyle.fontSmall
@@ -1011,107 +909,11 @@ Page {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: AppStyle.spacingSmall
-
-                            Label {
-                                text: "文件"
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontSmall
-                                font.weight: Font.DemiBold
-                            }
-
-                            TextField {
-                                Layout.fillWidth: true
-                                text: page.residueAllowlistPath
-                                readOnly: true
-                                selectByMouse: true
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontCaption
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: AppStyle.spacingSmall
-
-                            TextField {
-                                id: residueAllowInput
-                                Layout.fillWidth: true
-                                placeholderText: "输入保存前提示里的片段，例如 レディス"
-                                selectByMouse: true
-                                onAccepted: page.addJapaneseResidueAllowItem()
-                            }
-
                             Button {
-                                text: "加入白名单"
+                                text: "管理白名单"
                                 highlighted: true
-                                onClicked: page.addJapaneseResidueAllowItem()
+                                onClicked: residueAllowlistDialog.open()
                             }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(86, Math.min(190, residueAllowlistModel.count * 38 + 18))
-                            radius: AppPalette.radiusMedium
-                            color: AppPalette.cardAlt
-                            border.color: AppPalette.lineColor
-                            clip: true
-
-                            ListView {
-                                id: residueAllowList
-                                anchors.fill: parent
-                                anchors.margins: 8
-                                model: residueAllowlistModel
-                                spacing: AppStyle.spacingInline
-                                clip: true
-
-                                delegate: Rectangle {
-                                    width: residueAllowList.width
-                                    height: 32
-                                    radius: 10
-                                    color: AppPalette.surfaceRaised
-                                    border.color: AppPalette.lineColor
-
-                                    RowLayout {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 10
-                                        anchors.rightMargin: 6
-                                        spacing: AppStyle.spacingSmall
-
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: fragment
-                                            color: AppPalette.textColor
-                                            font.pixelSize: AppStyle.fontBody
-                                            elide: Text.ElideRight
-                                        }
-
-                                        Button {
-                                            text: "删除"
-                                            flat: true
-                                            onClicked: page.removeJapaneseResidueAllowItem(fragment)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Label {
-                                anchors.centerIn: parent
-                                visible: residueAllowlistModel.count === 0
-                                text: "暂无白名单片段"
-                                color: AppPalette.mutedText
-                                font.pixelSize: AppStyle.fontSmall
-                            }
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: page.residueAllowlistStatus
-                            visible: page.residueAllowlistStatus !== ""
-                            color: page.residueAllowlistStatus.indexOf("失败") >= 0 || page.residueAllowlistStatus.indexOf("请输入") >= 0
-                                   ? AppPalette.errorColor : AppPalette.successColor
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: AppStyle.fontSmall
                         }
                     }
                 }
@@ -1245,6 +1047,357 @@ Page {
                             wrapMode: Text.WordWrap
                             font.pixelSize: AppStyle.fontSmall
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: noticePageDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(360, Math.min(page.width - 48, 920))
+        height: Math.max(420, Math.min(page.height - 72, 760))
+        title: "版权提示页管理"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ScrollView {
+            width: noticePageDialog.width
+            height: noticePageDialog.height
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            NoticePageSettings {
+                width: Math.max(0, noticePageDialog.width - 32)
+                cfg: page.cfg
+                onBatchAddRequested: function(files, noticeText) {
+                    page.batchAddNoticePages(files, noticeText)
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: knownKatakanaTermsDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(360, Math.min(page.width - 48, 920))
+        height: Math.max(460, Math.min(page.height - 72, 780))
+        title: "片假名术语修复词表"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ScrollView {
+            width: knownKatakanaTermsDialog.width
+            height: knownKatakanaTermsDialog.height
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: Math.max(0, knownKatakanaTermsDialog.width - 32)
+                spacing: AppStyle.spacingLarge
+
+                Label {
+                    Layout.fillWidth: true
+                    text: "用于处理模型已经翻译出中文解释、但仍残留片假名原词的情况。例如“チロリ的酒”会在保存前自动修复为“烫酒壶里的酒”。这类词应加入修复词表，不要加入日文残留白名单。"
+                    color: AppPalette.mutedText
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontSmall
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Label {
+                        text: "文件"
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontSmall
+                        font.weight: Font.DemiBold
+                    }
+
+                    TextField {
+                        Layout.fillWidth: true
+                        text: page.knownKatakanaTermsPath
+                        readOnly: true
+                        selectByMouse: true
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontCaption
+                    }
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: page.width > 820 ? 5 : 2
+                    rowSpacing: 8
+                    columnSpacing: 12
+
+                    Label { text: "片假名原词" }
+                    TextField {
+                        id: katakanaSourceInput
+                        Layout.fillWidth: true
+                        placeholderText: "例如 チロリ"
+                        selectByMouse: true
+                        onAccepted: page.addKnownKatakanaTermItem()
+                    }
+
+                    Label { text: "中文译名" }
+                    TextField {
+                        id: katakanaTargetInput
+                        Layout.fillWidth: true
+                        placeholderText: "例如 烫酒壶"
+                        selectByMouse: true
+                        onAccepted: page.addKnownKatakanaTermItem()
+                    }
+
+                    Button {
+                        text: "保存修复词"
+                        highlighted: true
+                        Layout.fillWidth: page.width <= 820
+                        onClicked: page.addKnownKatakanaTermItem()
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.max(96, Math.min(220, knownKatakanaTermsModel.count * 40 + 18))
+                    radius: AppPalette.radiusMedium
+                    color: AppPalette.cardAlt
+                    border.color: AppPalette.lineColor
+                    clip: true
+
+                    ListView {
+                        id: knownKatakanaTermsList
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        model: knownKatakanaTermsModel
+                        spacing: AppStyle.spacingInline
+                        clip: true
+
+                        delegate: Rectangle {
+                            width: knownKatakanaTermsList.width
+                            height: 34
+                            radius: 10
+                            color: AppPalette.surfaceRaised
+                            border.color: AppPalette.lineColor
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 6
+                                spacing: AppStyle.spacingSmall
+
+                                Label {
+                                    Layout.preferredWidth: 140
+                                    text: source
+                                    color: AppPalette.textColor
+                                    font.pixelSize: AppStyle.fontBody
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: "→"
+                                    color: AppPalette.mutedText
+                                    font.pixelSize: AppStyle.fontSmall
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: target + (builtin ? "（内置）" : "")
+                                    color: AppPalette.textColor
+                                    font.pixelSize: AppStyle.fontBody
+                                    elide: Text.ElideRight
+                                }
+
+                                Button {
+                                    text: builtin ? "内置" : "删除"
+                                    flat: true
+                                    enabled: !builtin
+                                    onClicked: page.removeKnownKatakanaTermItem(source)
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        anchors.centerIn: parent
+                        visible: knownKatakanaTermsModel.count === 0
+                        text: "暂无修复词"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontSmall
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: page.knownKatakanaTermsStatus
+                    visible: page.knownKatakanaTermsStatus !== ""
+                    color: page.knownKatakanaTermsStatus.indexOf("失败") >= 0
+                           || page.knownKatakanaTermsStatus.indexOf("请输入") >= 0
+                           || page.knownKatakanaTermsStatus.indexOf("需要") >= 0
+                           || page.knownKatakanaTermsStatus.indexOf("不能") >= 0
+                           ? AppPalette.errorColor : AppPalette.successColor
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontSmall
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Item { Layout.fillWidth: true }
+
+                    Button {
+                        text: "关闭"
+                        onClicked: knownKatakanaTermsDialog.close()
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: residueAllowlistDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(360, Math.min(page.width - 48, 920))
+        height: Math.max(420, Math.min(page.height - 72, 720))
+        title: "日文残留白名单"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ScrollView {
+            width: residueAllowlistDialog.width
+            height: residueAllowlistDialog.height
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: Math.max(0, residueAllowlistDialog.width - 32)
+                spacing: AppStyle.spacingLarge
+
+                Label {
+                    Layout.fillWidth: true
+                    text: "仅在确认片段确实需要保留日文时使用。这里添加的是“引号内片段白名单”，例如译文中的 “レディス” 会放行，但正文其他位置的日文仍会继续被拦截。"
+                    color: AppPalette.mutedText
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontSmall
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Label {
+                        text: "文件"
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontSmall
+                        font.weight: Font.DemiBold
+                    }
+
+                    TextField {
+                        Layout.fillWidth: true
+                        text: page.residueAllowlistPath
+                        readOnly: true
+                        selectByMouse: true
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontCaption
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    TextField {
+                        id: residueAllowInput
+                        Layout.fillWidth: true
+                        placeholderText: "输入保存前提示里的片段，例如 レディス"
+                        selectByMouse: true
+                        onAccepted: page.addJapaneseResidueAllowItem()
+                    }
+
+                    Button {
+                        text: "加入白名单"
+                        highlighted: true
+                        onClicked: page.addJapaneseResidueAllowItem()
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.max(86, Math.min(190, residueAllowlistModel.count * 38 + 18))
+                    radius: AppPalette.radiusMedium
+                    color: AppPalette.cardAlt
+                    border.color: AppPalette.lineColor
+                    clip: true
+
+                    ListView {
+                        id: residueAllowList
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        model: residueAllowlistModel
+                        spacing: AppStyle.spacingInline
+                        clip: true
+
+                        delegate: Rectangle {
+                            width: residueAllowList.width
+                            height: 32
+                            radius: 10
+                            color: AppPalette.surfaceRaised
+                            border.color: AppPalette.lineColor
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 6
+                                spacing: AppStyle.spacingSmall
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: fragment
+                                    color: AppPalette.textColor
+                                    font.pixelSize: AppStyle.fontBody
+                                    elide: Text.ElideRight
+                                }
+
+                                Button {
+                                    text: "删除"
+                                    flat: true
+                                    onClicked: page.removeJapaneseResidueAllowItem(fragment)
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        anchors.centerIn: parent
+                        visible: residueAllowlistModel.count === 0
+                        text: "暂无白名单片段"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontSmall
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: page.residueAllowlistStatus
+                    visible: page.residueAllowlistStatus !== ""
+                    color: page.residueAllowlistStatus.indexOf("失败") >= 0 || page.residueAllowlistStatus.indexOf("请输入") >= 0
+                           ? AppPalette.errorColor : AppPalette.successColor
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontSmall
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Item { Layout.fillWidth: true }
+
+                    Button {
+                        text: "关闭"
+                        onClicked: residueAllowlistDialog.close()
                     }
                 }
             }

@@ -417,70 +417,229 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: (taskPage.taskHistory.length > 0 ? (taskPage.width > 900 ? 188 : 236) : 112)
-                                    + (taskPage.latestFailedBlocks.length > 0 ? (taskPage.width > 900 ? 168 : 232) : 0)
+            Layout.preferredHeight: taskHistorySummaryRow.implicitHeight + 32
             radius: AppPalette.radiusLarge
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
             clip: true
 
-            ColumnLayout {
+            RowLayout {
+                id: taskHistorySummaryRow
                 anchors.fill: parent
                 anchors.margins: 16
+                spacing: AppStyle.spacingMedium
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 92
+                    radius: AppPalette.radiusMedium
+                    color: AppPalette.cardBg
+                    border.color: AppPalette.lineColor
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: AppStyle.spacingMedium
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingTight
+
+                            Label {
+                                text: "最近任务"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSubHeader
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: taskPage.taskHistory.length > 0
+                                      ? "已有 " + taskPage.taskHistory.length + " 条历史记录；可在弹窗中载入或继续。"
+                                      : "暂无任务历史。开始翻译后会记录可恢复任务。"
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontCaption
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Button {
+                            text: "打开"
+                            onClicked: taskHistoryDialog.open()
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 92
+                    radius: AppPalette.radiusMedium
+                    color: taskPage.latestFailedBlocks.length > 0 ? AppStyle.statusWarningBg : AppPalette.cardBg
+                    border.color: taskPage.latestFailedBlocks.length > 0 ? AppPalette.amberColor : AppPalette.lineColor
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: AppStyle.spacingMedium
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingTight
+
+                            Label {
+                                text: "失败块处理"
+                                color: taskPage.latestFailedBlocks.length > 0 ? AppPalette.amberColor : AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSubHeader
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: taskPage.latestFailedBlocks.length > 0
+                                      ? "发现 " + taskPage.latestFailedBlocks.length + " 条失败/残留块，可集中处理。"
+                                      : "当前没有失败块或保存前残留记录。"
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontCaption
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Button {
+                            text: "处理"
+                            highlighted: taskPage.latestFailedBlocks.length > 0
+                            onClicked: failedBlocksDialog.open()
+                        }
+                    }
+                }
+            }
+        }
+
+        Label {
+            Layout.fillWidth: true
+            text: "数据目录: " + (AppDir || "")
+            color: AppPalette.mutedText
+            font.pixelSize: AppStyle.fontCaption
+            elide: Text.ElideMiddle
+        }
+
+        Item { Layout.fillHeight: true }
+    }
+    }
+
+    FileDialog {
+        id: inputDialog
+        title: "选择 EPUB 文件"
+        nameFilters: ["EPUB 文件 (*.epub)"]
+        fileMode: FileDialog.OpenFile
+        onAccepted: {
+            if (selectedFile) {
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
+                taskPage.setInputPath(p)
+            }
+        }
+    }
+
+    FileDialog {
+        id: outputDialog
+        title: "保存翻译后的 EPUB"
+        nameFilters: ["EPUB 文件 (*.epub)"]
+        fileMode: FileDialog.SaveFile
+        onAccepted: {
+            if (selectedFile) {
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
+                if (!p.toLowerCase().endsWith(".epub")) p += ".epub"
+                if (cfg) cfg.out = p
+            }
+        }
+    }
+
+    ClearCacheDialog {
+        id: clearCacheDialog
+        cfg: taskPage.cfg
+        tbridge: taskPage.tbridge
+        anchors.centerIn: parent
+    }
+    ManualEditDialog {
+        id: manualEditDialog
+        tbridge: taskPage.tbridge
+        anchors.centerIn: parent
+    }
+
+    Dialog {
+        id: taskHistoryDialog
+        title: "最近任务"
+        modal: true
+        width: Math.max(720, Math.min(980, taskPage.width - 48))
+        height: Math.max(420, Math.min(640, taskPage.height - 72))
+        x: Math.round((taskPage.width - width) / 2)
+        y: Math.round((taskPage.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        ColumnLayout {
+            width: taskHistoryDialog.width - 48
+            spacing: AppStyle.spacingSmall
+
+            Label {
+                Layout.fillWidth: true
+                text: "记录最近翻译任务的状态、进度和输入输出路径；API Key 不会写入历史。"
+                color: AppPalette.mutedText
+                font.pixelSize: AppStyle.fontSmall
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
                 spacing: AppStyle.spacingSmall
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingMedium
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: AppStyle.spacingNone
-                        Label {
-                            text: "最近任务"
-                            color: AppPalette.textColor
-                            font.pixelSize: AppStyle.fontSubHeader
-                            font.weight: Font.DemiBold
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: "记录最近翻译任务的状态、进度和输入输出路径；API Key 不会写入历史。"
-                            color: AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontCaption
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    Button {
-                        text: "继续上次"
-                        enabled: !taskPage.busy && taskPage.latestUnfinishedTask && taskPage.latestUnfinishedTask.task_id
-                        onClicked: taskPage.resumeLatestTask()
-                    }
-                    Button {
-                        text: "刷新"
-                        onClicked: taskPage.refreshTaskHistory()
-                    }
-                    Button {
-                        text: "清空"
-                        enabled: taskPage.taskHistory.length > 0 && !taskPage.busy
-                        onClicked: taskPage.clearTaskHistory()
-                    }
+                Button {
+                    text: "刷新"
+                    onClicked: taskPage.refreshTaskHistory()
                 }
 
-                Label {
-                    Layout.fillWidth: true
-                    visible: taskPage.taskHistory.length === 0
-                    text: "暂无任务历史。开始一次翻译后，这里会显示可追踪记录。"
-                    color: AppPalette.mutedText
-                    font.pixelSize: AppStyle.fontSmall
-                    wrapMode: Text.WordWrap
+                Button {
+                    text: "清空"
+                    enabled: taskPage.taskHistory.length > 0 && !taskPage.busy
+                    onClicked: taskPage.clearTaskHistory()
                 }
 
-                Repeater {
+                Button {
+                    text: "继续上次"
+                    enabled: !taskPage.busy && !!(taskPage.latestUnfinishedTask && taskPage.latestUnfinishedTask.task_id)
+                    highlighted: enabled
+                    onClicked: taskPage.resumeLatestTask()
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "关闭"
+                    onClicked: taskHistoryDialog.close()
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: taskPage.taskHistory.length === 0
+                text: "暂无任务历史。开始一次翻译后，这里会显示可追踪记录。"
+                color: AppPalette.mutedText
+                font.pixelSize: AppStyle.fontSmall
+                wrapMode: Text.WordWrap
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                ListView {
+                    width: parent.width
+                    height: Math.max(0, contentHeight)
+                    spacing: AppStyle.spacingSmall
                     model: taskPage.taskHistory
+
                     delegate: Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: taskPage.width > 900 ? 38 : 54
+                        width: ListView.view.width
+                        height: taskPage.width > 900 ? 42 : 58
                         radius: AppPalette.radiusMedium
                         color: AppPalette.fieldBg
                         border.color: AppPalette.lineColor
@@ -550,158 +709,127 @@ Page {
                         }
                     }
                 }
+            }
+        }
+    }
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: taskPage.width > 900 ? 150 : 214
-                    visible: taskPage.latestFailedBlocks.length > 0
-                    radius: AppPalette.radiusMedium
-                    color: AppPalette.fieldBg
-                    border.color: AppPalette.amberColor
-                    clip: true
+    Dialog {
+        id: failedBlocksDialog
+        title: "失败块 / 日文残留"
+        modal: true
+        width: Math.max(760, Math.min(1040, taskPage.width - 48))
+        height: Math.max(460, Math.min(700, taskPage.height - 72))
+        x: Math.round((taskPage.width - width) / 2)
+        y: Math.round((taskPage.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: AppStyle.spacingTight
+        ColumnLayout {
+            width: failedBlocksDialog.width - 48
+            spacing: AppStyle.spacingSmall
+
+            Label {
+                Layout.fillWidth: true
+                text: "可自动重译未译/残留块；保存前残留样例仍建议人工定位或继续整本续译。"
+                color: AppPalette.mutedText
+                font.pixelSize: AppStyle.fontSmall
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: AppStyle.spacingSmall
+
+                ComboBox {
+                    Layout.preferredWidth: 116
+                    model: ["当前模型", "校对模型"]
+                    currentIndex: taskPage.failedBlockProviderModeIndex
+                    onActivated: taskPage.failedBlockProviderModeIndex = currentIndex
+                }
+
+                Button {
+                    text: "重译失败块"
+                    enabled: !taskPage.busy && taskPage.latestFailedBlocks.length > 0
+                    highlighted: enabled
+                    onClicked: taskPage.retranslateFailedBlocks()
+                }
+
+                Button {
+                    text: "查看请求日志"
+                    onClicked: taskPage.navigateToLogs()
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "关闭"
+                    onClicked: failedBlocksDialog.close()
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: taskPage.latestFailedBlocks.length === 0
+                text: "当前没有失败块或保存前残留记录。"
+                color: AppPalette.mutedText
+                font.pixelSize: AppStyle.fontSmall
+                wrapMode: Text.WordWrap
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                ListView {
+                    width: parent.width
+                    height: Math.max(0, contentHeight)
+                    spacing: AppStyle.spacingSmall
+                    model: taskPage.latestFailedBlocks
+
+                    delegate: Rectangle {
+                        width: ListView.view.width
+                        height: taskPage.width > 900 ? 34 : 48
+                        radius: AppPalette.radiusSmall
+                        color: AppPalette.surfaceRaised
+                        border.color: AppPalette.lineColor
 
                         RowLayout {
-                            Layout.fillWidth: true
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 6
                             spacing: AppStyle.spacingSmall
 
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: AppStyle.spacingNone
-
-                                Label {
-                                    text: "失败块 / 日文残留"
-                                    color: AppPalette.amberColor
-                                    font.pixelSize: AppStyle.fontCaption
-                                    font.weight: Font.DemiBold
-                                }
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: "可自动重译未译/残留块；保存前残留样例仍建议人工定位或继续整本续译。"
-                                    color: AppPalette.mutedText
-                                    font.pixelSize: AppStyle.fontTiny
-                                    elide: Text.ElideRight
-                                }
+                            Label {
+                                Layout.preferredWidth: 76
+                                text: taskPage.failedBlockKindLabel(modelData.kind)
+                                color: modelData.kind === "save_residue" ? AppPalette.errorColor : AppPalette.amberColor
+                                font.pixelSize: AppStyle.fontTiny
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
                             }
 
-                            ComboBox {
-                                Layout.preferredWidth: 116
-                                model: ["当前模型", "校对模型"]
-                                currentIndex: taskPage.failedBlockProviderModeIndex
-                                onActivated: taskPage.failedBlockProviderModeIndex = currentIndex
+                            Label {
+                                Layout.fillWidth: true
+                                text: taskPage.failedBlockText(modelData)
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontTiny
+                                elide: Text.ElideRight
                             }
 
                             Button {
-                                text: "重译失败块"
-                                enabled: !taskPage.busy && taskPage.latestFailedBlocks.length > 0
-                                onClicked: taskPage.retranslateFailedBlocks()
-                            }
-
-                            Button {
-                                text: "查看请求日志"
-                                onClicked: taskPage.navigateToLogs()
-                            }
-                        }
-
-                        Repeater {
-                            model: taskPage.latestFailedBlocks
-                            delegate: Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: taskPage.width > 900 ? 25 : 42
-                                radius: AppPalette.radiusSmall
-                                color: AppPalette.surfaceRaised
-                                border.color: AppPalette.lineColor
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 8
-                                    anchors.rightMargin: 6
-                                    spacing: AppStyle.spacingSmall
-
-                                    Label {
-                                        Layout.preferredWidth: 76
-                                        text: taskPage.failedBlockKindLabel(modelData.kind)
-                                        color: modelData.kind === "save_residue" ? AppPalette.errorColor : AppPalette.amberColor
-                                        font.pixelSize: AppStyle.fontTiny
-                                        font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
-                                    }
-
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: taskPage.failedBlockText(modelData)
-                                        color: AppPalette.textColor
-                                        font.pixelSize: AppStyle.fontTiny
-                                        elide: Text.ElideRight
-                                    }
-
-                                    Button {
-                                        text: modelData.kind === "save_residue" ? "定位" : "人工修正"
-                                        enabled: !taskPage.busy
-                                        onClicked: taskPage.openManualEdit(modelData.text || "", modelData.translation || "")
-                                    }
-                                }
+                                text: modelData.kind === "save_residue" ? "定位" : "人工修正"
+                                enabled: !taskPage.busy
+                                onClicked: taskPage.openManualEdit(modelData.text || "", modelData.translation || "")
                             }
                         }
                     }
                 }
             }
         }
-
-        Label {
-            Layout.fillWidth: true
-            text: "数据目录: " + (AppDir || "")
-            color: AppPalette.mutedText
-            font.pixelSize: AppStyle.fontCaption
-            elide: Text.ElideMiddle
-        }
-
-        Item { Layout.fillHeight: true }
-    }
     }
 
-    FileDialog {
-        id: inputDialog
-        title: "选择 EPUB 文件"
-        nameFilters: ["EPUB 文件 (*.epub)"]
-        fileMode: FileDialog.OpenFile
-        onAccepted: {
-            if (selectedFile) {
-                var p = FilePathUtils.normalizeFileUrl(selectedFile)
-                taskPage.setInputPath(p)
-            }
-        }
-    }
-
-    FileDialog {
-        id: outputDialog
-        title: "保存翻译后的 EPUB"
-        nameFilters: ["EPUB 文件 (*.epub)"]
-        fileMode: FileDialog.SaveFile
-        onAccepted: {
-            if (selectedFile) {
-                var p = FilePathUtils.normalizeFileUrl(selectedFile)
-                if (!p.toLowerCase().endsWith(".epub")) p += ".epub"
-                if (cfg) cfg.out = p
-            }
-        }
-    }
-
-    ClearCacheDialog {
-        id: clearCacheDialog
-        cfg: taskPage.cfg
-        tbridge: taskPage.tbridge
-        anchors.centerIn: parent
-    }
-    ManualEditDialog {
-        id: manualEditDialog
-        tbridge: taskPage.tbridge
-        anchors.centerIn: parent
-    }
     Timer {
         id: estimateTimer
         interval: 300
@@ -782,7 +910,7 @@ Page {
             taskPage.latestUnfinishedTask = ({})
             return
         }
-        var rows = taskPage.tbridge.getTranslationTaskHistory(3)
+        var rows = taskPage.tbridge.getTranslationTaskHistory(12)
         taskPage.taskHistory = rows || []
         if (taskPage.tbridge.getLatestUnfinishedTranslationTask) {
             taskPage.latestUnfinishedTask = taskPage.tbridge.getLatestUnfinishedTranslationTask() || ({})
@@ -790,7 +918,7 @@ Page {
             taskPage.latestUnfinishedTask = ({})
         }
         if (taskPage.tbridge.getLatestFailedTranslationBlocks) {
-            taskPage.latestFailedBlocks = taskPage.tbridge.getLatestFailedTranslationBlocks(3) || []
+            taskPage.latestFailedBlocks = taskPage.tbridge.getLatestFailedTranslationBlocks(50) || []
         } else {
             taskPage.latestFailedBlocks = []
         }

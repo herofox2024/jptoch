@@ -50,6 +50,7 @@ Page {
     property string qualityReportWarnings: ""
     property string qualityReportSuggestions: ""
     property string qualityReportGeneratedAt: ""
+    property string diagnosticsText: ""
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     property real startTs: 0
@@ -206,6 +207,7 @@ Page {
         page.proofreadStyleReason = ""
         page.proofreadStyleConfidence = 0
         page.proofreadStyleMode = ""
+        page.diagnosticsText = ""
         rtSrc.text = ""
         rtDst.text = ""
         page.clearProofreadDetails()
@@ -317,7 +319,7 @@ Page {
         }
 
         function onErrorDetail(msg) {
-            diagText.text += msg + "\n"
+            page.diagnosticsText += msg + "\n"
         }
 
         function onFailed(msg) {
@@ -695,6 +697,20 @@ Page {
                             body: page.qualityReportSuggestions
                             tone: "accent"
                         }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingMedium
+
+                            Button {
+                                text: "查看完整报告"
+                                highlighted: true
+                                enabled: page.qualityReportAvailable
+                                onClicked: qualityReportDialog.open()
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
                     }
                 }
             }
@@ -968,21 +984,35 @@ Page {
                     anchors.fill: parent
                     anchors.margins: 16
                     spacing: AppStyle.spacingMedium
-                    TextArea {
-                        id: diagText
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        readOnly: true
-                        placeholderText: "暂无错误"
-                        font.pixelSize: AppStyle.fontSmall
+
+                    Label {
+                        text: "错误诊断"
                         color: AppPalette.textColor
-                        background: Rectangle {
-                            radius: AppPalette.radiusMedium
-                            color: AppPalette.fieldBg
-                            border.color: AppPalette.lineColor
-                        }
+                        font.pixelSize: AppStyle.fontSection
+                        font.weight: Font.DemiBold
                     }
-                    Button { text: "导出诊断包"; onClicked: diagExportDialog.open() }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: page.diagnosticsText ? ("已记录 " + page.diagnosticsText.split(/\n+/).filter(function(line) { return line && line.trim(); }).length + " 条错误诊断。") : "暂无错误"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontSmall
+                        wrapMode: Text.WordWrap
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: AppStyle.spacingMedium
+
+                        Button {
+                            text: "查看完整错误"
+                            highlighted: true
+                            enabled: page.diagnosticsText !== ""
+                            onClicked: diagnosticsDialog.open()
+                        }
+
+                        Button { text: "导出诊断包"; onClicked: diagExportDialog.open() }
+                    }
                 }
             }
         }
@@ -993,6 +1023,119 @@ Page {
         host: page
         anchors.centerIn: parent
     }
+
+    Dialog {
+        id: qualityReportDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(420, Math.min(page.width - 48, 980))
+        height: Math.max(460, Math.min(page.height - 72, 760))
+        title: "质量自检详情"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ScrollView {
+            width: qualityReportDialog.width
+            height: qualityReportDialog.height
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: Math.max(0, qualityReportDialog.width - 32)
+                spacing: AppStyle.spacingLarge
+
+                Label {
+                    Layout.fillWidth: true
+                    text: page.qualityReportSummary
+                    color: AppPalette.textColor
+                    font.pixelSize: AppStyle.fontBodyLarge
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: page.qualityReportGeneratedAt ? ("生成时间：" + page.qualityReportGeneratedAt) : "等待翻译完成后生成"
+                    color: AppPalette.mutedText
+                    font.pixelSize: AppStyle.fontSmall
+                    wrapMode: Text.WordWrap
+                }
+
+                ReportField {
+                    title: "关键指标"
+                    body: page.qualityReportMetrics
+                    tone: "normal"
+                }
+                ReportField {
+                    title: "提醒"
+                    body: page.qualityReportWarnings
+                    tone: page.qualityReportStatus === "通过" ? "normal" : "accent"
+                }
+                ReportField {
+                    title: "建议"
+                    body: page.qualityReportSuggestions
+                    tone: "accent"
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    Button { text: "关闭"; onClicked: qualityReportDialog.close() }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: diagnosticsDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(420, Math.min(page.width - 48, 980))
+        height: Math.max(460, Math.min(page.height - 72, 760))
+        title: "错误诊断详情"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ColumnLayout {
+            width: diagnosticsDialog.width - 48
+            height: diagnosticsDialog.height - 96
+            spacing: AppStyle.spacingMedium
+
+            Label {
+                Layout.fillWidth: true
+                text: "仅显示运行中的错误详情，不影响导出诊断包。"
+                color: AppPalette.mutedText
+                font.pixelSize: AppStyle.fontSmall
+                wrapMode: Text.WordWrap
+            }
+
+            TextArea {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                textFormat: TextEdit.PlainText
+                text: page.diagnosticsText || "暂无错误"
+                color: AppPalette.textColor
+                selectedTextColor: "white"
+                selectionColor: AppPalette.accentColor
+                font.family: "Consolas"
+                font.pixelSize: AppStyle.fontSmall
+                background: Rectangle {
+                    color: AppPalette.fieldBg
+                    radius: AppPalette.radiusMedium
+                    border.color: AppPalette.lineColor
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { text: "关闭"; onClicked: diagnosticsDialog.close() }
+            }
+        }
+    }
+
     FileDialog {
         id: diagExportDialog
         title: "导出诊断包"
