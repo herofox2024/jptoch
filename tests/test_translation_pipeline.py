@@ -23,6 +23,7 @@ from epub_io import (
     iter_text_nodes,
     load_book,
     save_book,
+    set_book_title_metadata,
 )
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
@@ -475,6 +476,26 @@ class TranslatorTests(unittest.TestCase):
         )
         self.assertNotIn("或依意译", cleaned)
         self.assertNotIn("没更多信息", cleaned)
+
+    def test_translated_filename_rejects_untranslated_japanese_candidate(self):
+        qml_root = Path(__file__).resolve().parents[1] / "experimental" / "qml_v4"
+        if str(qml_root) not in sys.path:
+            sys.path.insert(0, str(qml_root))
+        from backend.translate_bridge import _clean_translated_filename_candidate
+
+        self.assertEqual(_clean_translated_filename_candidate("究極の純爱小説を、君に"), "")
+        self.assertEqual(_clean_translated_filename_candidate("献给你的终极纯爱小说"), "献给你的终极纯爱小说")
+
+    def test_set_book_title_metadata_replaces_existing_title(self):
+        book = epub.EpubBook()
+        book.set_title("究極の純愛小説を、君に (徳間文庫)")
+        book.set_title("旧标题")
+
+        self.assertTrue(set_book_title_metadata(book, "献给你的终极纯爱小说"))
+
+        titles = book.get_metadata("DC", "title")
+        self.assertEqual(titles, [("献给你的终极纯爱小说", None)])
+        self.assertEqual(book.title, "献给你的终极纯爱小说")
 
     def test_translated_toc_title_removes_mythology_explanation_notes(self):
         qml_root = Path(__file__).resolve().parents[1] / "experimental" / "qml_v4"

@@ -240,6 +240,10 @@ def _clean_translated_filename_candidate(candidate):
     cleaned = _strip_filename_explanations(candidate)
     if not cleaned:
         return ""
+    # A filename candidate that still contains kana is not a translated Chinese
+    # title. Do not silently rename the output to a mostly-Japanese title.
+    if tq.has_japanese_residue(cleaned):
+        return ""
     if any(marker in cleaned for marker in _FILENAME_EXPLANATION_MARKERS):
         return ""
     return _sanitize_filename(cleaned)
@@ -473,7 +477,7 @@ class _TranslateWorker(QObject):
         start_ts = time.time()
         try:
             from translator import JaZhTranslator, TranslationIncompleteError
-            from epub_io import save_book
+            from epub_io import save_book, set_book_title_metadata
             from backend.pipeline import (
                 ApplyBookTranslationsStage,
                 BatchTranslateStage,
@@ -751,21 +755,9 @@ class _TranslateWorker(QObject):
                     " | ".join(weak_residue_samples),
                 )
 
-            ctx = TranslationPipeline().add_stage(FinalizeBookContentStage()).run(ctx)
-
+            safe_output_title = ""
             try:
-                logger.info("开始保存 EPUB: %s", cfg["out"])
-                save_book(cfg["out"], book, chinese_mode=(cfg["direction"] == "zh"))
-            except Exception:
-                logger.exception("EPUB 保存失败: %s", cfg["out"])
-                raise
-            final_out = cfg["out"]
-
-            # Smart output filename: translate the EPUB filename
-            try:
-                source_path = __import__("pathlib", fromlist=["Path"]).Path(cfg["out"])
-                source_base = __import__("pathlib", fromlist=["Path"]).Path(cfg["inp"]).stem
-                import os as _os
+                source_base = Path(cfg["inp"]).stem
                 candidates = []
                 source_title = _source_title_for_filename(source_base)
                 if source_title and source_title in results and results[source_title]:
@@ -786,18 +778,38 @@ class _TranslateWorker(QObject):
                         break
                 for candidate in candidates:
                     safe = _clean_translated_filename_candidate(candidate)
-                    if not safe:
-                        continue
-                    target = source_path.with_name(safe + ".epub")
-                    if _os.path.normcase(_os.path.abspath(str(target))) == _os.path.normcase(_os.path.abspath(str(source_path))):
-                        final_out = str(source_path)
+                    if safe:
+                        safe_output_title = safe
                         break
-                    candidate_path = str(_unique_epub_path(target))
-                    __import__("pathlib", fromlist=["Path"]).Path(cfg["out"]).rename(candidate_path)
-                    final_out = candidate_path
-                    break
             except Exception:
-                pass
+                safe_output_title = ""
+
+            if safe_output_title and cfg.get("direction") == "zh":
+                set_book_title_metadata(book, safe_output_title)
+
+            ctx = TranslationPipeline().add_stage(FinalizeBookContentStage()).run(ctx)
+
+            try:
+                logger.info("开始保存 EPUB: %s", cfg["out"])
+                save_book(cfg["out"], book, chinese_mode=(cfg["direction"] == "zh"))
+            except Exception:
+                logger.exception("EPUB 保存失败: %s", cfg["out"])
+                raise
+            final_out = cfg["out"]
+
+            # Smart output filename: use the same safe title written to EPUB metadata.
+            if safe_output_title:
+                try:
+                    source_path = Path(cfg["out"])
+                    target = source_path.with_name(safe_output_title + ".epub")
+                    if os.path.normcase(os.path.abspath(str(target))) == os.path.normcase(os.path.abspath(str(source_path))):
+                        final_out = str(source_path)
+                    else:
+                        candidate_path = str(_unique_epub_path(target))
+                        Path(cfg["out"]).rename(candidate_path)
+                        final_out = candidate_path
+                except Exception:
+                    pass
 
             on_progress(total_texts, total_texts)
             translator.flush_cache()

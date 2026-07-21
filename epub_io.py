@@ -672,6 +672,28 @@ def _apply_reading_direction_to_book(book: epub.EpubBook, chinese_mode: bool) ->
     metadata_list.setdefault("meta", []).append((None, {"name": "primary-writing-mode", "content": writing_mode}))
 
 
+def set_book_title_metadata(book: epub.EpubBook, title: str) -> bool:
+    """Replace EPUB dc:title metadata with a single validated title."""
+    clean_title = str(title or "").strip()
+    if not clean_title:
+        return False
+
+    dc_namespace = "http://purl.org/dc/elements/1.1/"
+    metadata_list = book.metadata.setdefault(dc_namespace, {})
+    existing_titles = metadata_list.get("title", [])
+    attrs = None
+    if existing_titles:
+        first = existing_titles[0]
+        if len(first) >= 2 and isinstance(first[1], dict):
+            attrs = dict(first[1])
+    metadata_list["title"] = [(clean_title, attrs)]
+    try:
+        book.title = clean_title
+    except Exception:
+        pass
+    return True
+
+
 def _translation_notice_html(notice_text: str) -> str:
     text = (notice_text or DEFAULT_TRANSLATION_NOTICE_TEXT).strip() or DEFAULT_TRANSLATION_NOTICE_TEXT
     paragraphs = [
