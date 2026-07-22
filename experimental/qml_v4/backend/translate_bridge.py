@@ -389,6 +389,169 @@ def _estimate_translation_duration(total_chars, total_texts, cfg):
     return max(batch_seconds, char_seconds) + overhead_seconds
 
 
+def _preextract_glossary_profiles(
+    cfg,
+    proofread_style,
+    texts,
+    cancel_event,
+    status_callback=None,
+    progress_callback=None,
+    *,
+    force: bool = False,
+    target_scopes: Optional[List[Any]] = None,
+):
+    from glossary_profiles import upsert_profile
+    from translator import JaZhTranslator, get_data_dir
+
+    def _emit_status(message: str) -> None:
+        if status_callback:
+            try:
+                status_callback(message)
+            except Exception:
+                pass
+
+    if not force and not bool(cfg.get("pre_extract_glossary", False)):
+        return {"ok": True, "message": "未启用术语提取", "profile_ids": [], "profiles": [], "text_count": 0, "char_count": 0}
+
+    source_book = Path(str(cfg.get("inp") or "")).stem.strip()
+    if not source_book:
+        source_book = "book"
+
+    targets = []
+    genre_name = str(getattr(proofread_style, "genre_label", "") or getattr(proofread_style, "genre", "") or "").strip()
+    series_name = str(cfg.get("series_glossary_name") or "").strip()
+    if target_scopes is not None:
+        for item in target_scopes:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                scope, name = item[0], item[1]
+            elif isinstance(item, dict):
+                scope, name = item.get("scope"), item.get("name")
+            else:
+                continue
+            scope = str(scope or "").strip().lower()
+            name = str(name or "").strip()
+            if scope in {"genre", "series", "book"} and name:
+                targets.append((scope, name))
+    else:
+        if bool(cfg.get("use_genre_glossary", False)):
+            if genre_name:
+                targets.append(("genre", genre_name))
+            else:
+                _emit_status("术语提取：已启用题材术语，但未识别到题材名称")
+        if bool(cfg.get("use_series_glossary", False)):
+            if series_name:
+                targets.append(("series", series_name))
+            else:
+                _emit_status("术语提取：已启用系列术语，但未填写系列名")
+        if bool(cfg.get("use_book_glossary", False)) or not targets:
+            targets.append(("book", source_book))
+
+    targets = list(dict.fromkeys(targets))
+    if not texts:
+        return {
+            "ok": True,
+            "message": "未找到可用于术语提取的文本",
+            "profile_ids": [],
+            "profiles": [],
+            "text_count": 0,
+            "char_count": 0,
+        }
+
+    provider = str(cfg.get("provider") or "deepseek").strip().lower()
+    api_url = str(cfg.get("api_url") or "").strip() or None
+    model = str(cfg.get("model") or "").strip() or None
+    api_key = str(cfg.get("api_key") or "").strip()
+    if provider in {"hymt2", "sakura"} and not api_key:
+        api_key = "sk-local"
+
+    extractor = None
+    try:
+        extractor = JaZhTranslator(
+            api_key=api_key,
+            provider=provider,
+            api_url=api_url,
+            model=model,
+            max_workers=max(1, min(int(cfg.get("max_workers") or 1), 4)),
+            batch_size=max(1, min(int(cfg.get("batch_size") or 1), 4)),
+            max_batch_length=max(100, min(int(cfg.get("max_batch_length") or 800), 1000)),
+            max_text_size_for_batch=max(60, min(int(cfg.get("max_text_size_for_batch") or 200), 250)),
+            api_timeout=max(120, int(cfg.get("api_timeout") or 120)),
+            cancel_event=cancel_event,
+            extract_glossary=False,
+            enable_glossary=False,
+            enable_thinking=bool(cfg.get("enable_thinking", False)),
+            enable_proofread=False,
+            proofread_genre=str(cfg.get("proofread_genre") or "general"),
+            proofread_tone=str(cfg.get("proofread_tone") or "neutral"),
+            prompt_extra_instruction=str(cfg.get("prompt_extra_instruction") or ""),
+            enable_prompt_examples=bool(cfg.get("enable_prompt_examples", True)),
+            hymt2_generation_mode=str(cfg.get("hymt2_generation_mode") or "stable"),
+            hymt2_prompt_mode=str(cfg.get("hymt2_prompt_mode") or "official"),
+            hymt2_runtime_mode=str(cfg.get("hymt2_runtime_mode") or "cpu"),
+            allow_text_cache_reuse=False,
+        )
+
+        def _progress(batch_index, total_batches):
+            if progress_callback:
+                try:
+                    progress_callback(batch_index, total_batches)
+                except Exception:
+                    pass
+            _emit_status(f"正在提取术语 {batch_index}/{total_batches} ...")
+
+        extracted = extractor.extract_glossary_candidates(
+            list(texts),
+            batch_size=max(1, min(int(cfg.get("batch_size") or 1), 4)),
+            progress_callback=_progress,
+        )
+    finally:
+        try:
+            if extractor is not None:
+                extractor.request_cancel(close_session=True)
+        except Exception:
+            pass
+
+    profile_ids = []
+    profiles = []
+    terms = extracted.get("glossary") if isinstance(extracted, dict) else {}
+    candidate_count = int(extracted.get("text_count") or 0) if isinstance(extracted, dict) else 0
+    char_count = int(extracted.get("char_count") or 0) if isinstance(extracted, dict) else 0
+    has_terms = bool(
+        isinstance(terms, dict)
+        and any(isinstance(entries, list) and entries for entries in terms.values())
+    )
+    if has_terms:
+        data_dir = get_data_dir()
+        for scope, name in targets:
+            profile = upsert_profile(
+                data_dir,
+                name=name,
+                scope=scope,
+                terms=terms,
+                description=f"模型提取自 {source_book}",
+                source_book=source_book,
+            )
+            if profile and profile.get("id"):
+                profile_ids.append(str(profile["id"]))
+                profiles.append(profile)
+
+    profile_ids = list(dict.fromkeys(profile_ids))
+    if profile_ids:
+        message = f"术语提取完成: {len(profile_ids)} 个 profile，候选文本 {candidate_count} 条"
+    else:
+        message = "术语提取完成，但没有生成可保存的术语候选"
+    _emit_status(message)
+    return {
+        "ok": True,
+        "message": message,
+        "profile_ids": profile_ids,
+        "profiles": profiles,
+        "text_count": candidate_count,
+        "char_count": char_count,
+        "term_count": sum(len(entries) for entries in terms.values()) if isinstance(terms, dict) else 0,
+    }
+
+
 def _build_quality_self_check_report(translator, cfg, proofread_style, total_texts, total_chars, elapsed, weak_residue_total, final_out):
     stats = translator.get_stats() if translator else {}
     api_total = int(stats.get("api_requests_total", 0))
@@ -505,7 +668,6 @@ class _TranslateWorker(QObject):
                 .add_stage(LoadEpubStage())
                 .add_stage(BuildTextPlanStage())
                 .add_stage(StyleDetectStage(enabled=True))
-                .add_stage(CreateTranslatorStage())
                 .run(ctx)
             )
 
@@ -527,6 +689,8 @@ class _TranslateWorker(QObject):
                 )
                 cfg["proofread_genre"] = proofread_style.genre
                 cfg["proofread_tone"] = proofread_style.tone
+
+            ctx = CreateTranslatorStage().process(ctx)
 
             translator = ctx.translator
             self._translator = translator
@@ -1050,6 +1214,185 @@ class _RetranslateFailedBlocksWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class _GlossaryBookExtractionWorker(QObject):
+    finished = Signal("QVariantMap")
+    failed = Signal(str)
+    statusChanged = Signal(str)
+    errorDetail = Signal(str)
+    progressChanged = Signal(int, int)
+
+    def __init__(self, config: Dict[str, Any], cancel_event):
+        super().__init__()
+        self._config = dict(config or {})
+        self._cancel_event = cancel_event
+
+    def run(self):
+        try:
+            from backend.pipeline import (
+                BuildTextPlanStage,
+                LoadEpubStage,
+                PipelineContext,
+                StyleDetectStage,
+                TranslationPipeline,
+            )
+
+            cfg = self._config
+            input_path = str(cfg.get("inp") or "").strip()
+            source_book = Path(input_path).stem.strip() or "book"
+            profile_name = str(cfg.get("book_glossary_name") or source_book).strip() or source_book
+
+            self.statusChanged.emit("正在加载 EPUB 并准备提取本书术语...")
+            self.progressChanged.emit(0, 1)
+            ctx = PipelineContext(
+                config=cfg,
+                cancel_event=self._cancel_event,
+                extra={"title": os.path.basename(input_path)},
+            )
+            ctx = (
+                TranslationPipeline()
+                .add_stage(LoadEpubStage())
+                .add_stage(BuildTextPlanStage())
+                .add_stage(StyleDetectStage(enabled=True))
+                .run(ctx)
+            )
+
+            if self._cancel_event.is_set():
+                self.failed.emit("术语提取已取消")
+                return
+
+            expected_batches = max(1, math.ceil(len(ctx.texts or []) / max(1, min(int(cfg.get("batch_size") or 1), 4))))
+            self.progressChanged.emit(0, expected_batches)
+            result = _preextract_glossary_profiles(
+                cfg,
+                ctx.proofread_style,
+                ctx.texts,
+                self._cancel_event,
+                status_callback=self.statusChanged.emit,
+                progress_callback=self.progressChanged.emit,
+                force=True,
+                target_scopes=[("book", profile_name)],
+            )
+            payload = dict(result or {})
+            payload["ok"] = bool(payload.get("profile_ids"))
+            payload["scope"] = "book"
+            payload["name"] = profile_name
+            if payload.get("ok"):
+                payload["message"] = (
+                    f"本书术语提取完成: {profile_name}，"
+                    f"术语 {int(payload.get('term_count') or 0)} 条"
+                )
+            else:
+                payload["message"] = str(payload.get("message") or "本书术语提取完成，但没有生成可保存的术语候选")
+            self.progressChanged.emit(1, 1)
+            self.finished.emit(payload)
+        except Exception as exc:
+            logger.exception("本书术语提取异常")
+            self.errorDetail.emit(traceback.format_exc())
+            self.failed.emit(str(exc))
+
+
+class _GlossaryPostApplyWorker(QObject):
+    finished = Signal("QVariantMap")
+    failed = Signal(str)
+    statusChanged = Signal(str)
+    progressChanged = Signal(int, int)
+    errorDetail = Signal(str)
+
+    def __init__(self, config: Dict[str, Any], source_paths: Any, cancel_event):
+        super().__init__()
+        self._config = dict(config or {})
+        if isinstance(source_paths, (str, bytes)):
+            source_paths = [source_paths]
+        self._source_paths = [str(item or "") for item in (source_paths or [])]
+        self._cancel_event = cancel_event
+
+    def run(self):
+        try:
+            from backend.glossary_post_apply import apply_glossary_to_epub, resolve_effective_glossary
+
+            if self._cancel_event.is_set():
+                self.failed.emit("术语后处理已取消")
+                return
+
+            source_paths = []
+            for item in self._source_paths:
+                path = str(item or "").strip()
+                if path and os.path.exists(path):
+                    source_paths.append(path)
+            source_paths = list(dict.fromkeys(source_paths))
+            if not source_paths:
+                self.failed.emit("请选择已经存在的已翻译 EPUB 文件")
+                return
+
+            self.statusChanged.emit("正在解析当前术语范围...")
+            self.progressChanged.emit(0, 1)
+            glossary, meta = resolve_effective_glossary(self._config)
+            if self._cancel_event.is_set():
+                self.failed.emit("术语后处理已取消")
+                return
+
+            succeeded = []
+            failed = []
+            total_files = max(1, len(source_paths))
+            progress_units = total_files * 1000
+            for file_index, source_path in enumerate(source_paths):
+                if self._cancel_event.is_set():
+                    self.failed.emit("术语后处理已取消")
+                    return
+                self.statusChanged.emit(f"正在统一术语: {Path(source_path).name} ({file_index + 1}/{total_files})")
+
+                def _file_progress(done, total, base=file_index):
+                    total = max(1, int(total or 1))
+                    done = max(0, min(int(done or 0), total))
+                    completed_units = base * 1000 + int(done * 1000 / total)
+                    self.progressChanged.emit(completed_units, progress_units)
+
+                try:
+                    result = apply_glossary_to_epub(
+                        source_path,
+                        glossary,
+                        progress_callback=_file_progress,
+                    )
+                    result = dict(result or {})
+                    if result.get("ok"):
+                        succeeded.append(result)
+                    else:
+                        failed.append(
+                            {
+                                "input_path": source_path,
+                                "message": str(result.get("message") or "没有执行替换"),
+                            }
+                        )
+                except Exception as exc:
+                    logger.exception("术语后处理失败: %s", source_path)
+                    failed.append({"input_path": source_path, "message": str(exc)})
+                self.progressChanged.emit((file_index + 1) * 1000, progress_units)
+
+            payload = {
+                "ok": bool(succeeded),
+                "glossary_meta": meta,
+                "succeeded": len(succeeded),
+                "failed": len(failed),
+                "results": succeeded,
+                "failed_items": failed,
+                "output_paths": [item.get("output_path", "") for item in succeeded if item.get("output_path")],
+                "input_count": len(source_paths),
+            }
+            if len(source_paths) == 1 and succeeded:
+                payload.update(succeeded[0])
+            elif succeeded:
+                payload["message"] = f"术语统一完成: 成功 {len(succeeded)}/{len(source_paths)} 本，失败 {len(failed)} 本"
+            else:
+                first_error = failed[0]["message"] if failed else "没有生成输出 EPUB"
+                payload["message"] = f"术语统一失败: {first_error}"
+            self.progressChanged.emit(1, 1)
+            self.finished.emit(payload)
+        except Exception as exc:
+            logger.exception("术语后处理异常")
+            self.errorDetail.emit(traceback.format_exc())
+            self.failed.emit(str(exc))
+
+
 class _TestWorker(QObject):
     result = Signal(str)
 
@@ -1116,13 +1459,20 @@ class TranslateBridge(QObject):
     manualTranslationSaved = Signal(str)
     translationTaskHistoryChanged = Signal()
     failedBlocksRetranslated = Signal("QVariantMap")
+    glossaryBookExtractionFinished = Signal("QVariantMap")
+    glossaryBookExtractionFailed = Signal(str)
+    glossaryBookExtractionProgressChanged = Signal(int, int)
+    glossaryPostApplyFinished = Signal("QVariantMap")
+    glossaryPostApplyFailed = Signal(str)
 
     _progressValueChanged = Signal()
+    _glossaryProgressValueChanged = Signal()
     _busyChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._progress_value = 0.0
+        self._glossary_progress_value = 0.0
         self._busy = False
         self._cancel_event = threading.Event()
         self._translator = None
@@ -1201,6 +1551,28 @@ class TranslateBridge(QObject):
             self.translationTaskHistoryChanged.emit()
         except Exception as exc:
             logger.warning("保存翻译文本块任务记录失败: %s", exc)
+
+    def _record_translation_task_preextract(self, preextract_result):
+        if not self._current_task_id:
+            return
+        payload = dict(preextract_result or {})
+        if not payload:
+            return
+        try:
+            self._update_translation_task_history(
+                {
+                    "glossary_preextract": {
+                        "ok": bool(payload.get("ok", True)),
+                        "message": str(payload.get("message") or ""),
+                        "profile_ids": list(payload.get("profile_ids") or []),
+                        "text_count": int(payload.get("text_count") or 0),
+                        "char_count": int(payload.get("char_count") or 0),
+                        "term_count": int(payload.get("term_count") or 0),
+                    }
+                }
+            )
+        except Exception as exc:
+            logger.debug("保存术语提取记录失败: %s", exc, exc_info=True)
 
     def _record_translation_item_success(self, src, dst):
         if not self._current_task_id:
@@ -1345,6 +1717,17 @@ class TranslateBridge(QObject):
             self._progress_value = val
             self._progressValueChanged.emit()
 
+    @Property(float, notify=_glossaryProgressValueChanged)
+    def glossaryProgressValue(self) -> float:
+        return self._glossary_progress_value
+
+    @glossaryProgressValue.setter
+    def glossaryProgressValue(self, val: float):
+        val = max(0.0, min(1.0, float(val or 0.0)))
+        if abs(val - self._glossary_progress_value) > 0.001:
+            self._glossary_progress_value = val
+            self._glossaryProgressValueChanged.emit()
+
     @Property(bool, notify=_busyChanged)
     def busy(self) -> bool:
         return self._busy
@@ -1359,7 +1742,16 @@ class TranslateBridge(QObject):
         return {
             "inp": cfg.inp, "out": cfg.out, "api_key": cfg.apiKey,
             "provider": cfg.provider, "api_url": cfg.apiUrl, "model": cfg.model,
-            "extract_glossary": cfg.extractGlossary, "enable_glossary": cfg.enableGlossary,
+            "extract_glossary": False, "enable_glossary": cfg.enableGlossary,
+            "enable_layered_glossary": getattr(cfg, "enableLayeredGlossary", False),
+            "use_global_glossary": getattr(cfg, "useGlobalGlossary", True),
+            "use_genre_glossary": getattr(cfg, "useGenreGlossary", False),
+            "use_series_glossary": getattr(cfg, "useSeriesGlossary", False),
+            "use_book_glossary": getattr(cfg, "useBookGlossary", False),
+            "pre_extract_glossary": False,
+            "series_glossary_name": getattr(cfg, "seriesGlossaryName", ""),
+            "book_glossary_name": getattr(cfg, "bookGlossaryName", ""),
+            "glossary_profile_ids": list(getattr(cfg, "selectedGlossaryProfileIds", []) or []),
             "max_workers": cfg.maxWorkers, "batch_size": cfg.batchSize,
             "max_batch_length": cfg.maxBatchLength, "max_text_size_for_batch": cfg.maxTextSizeForBatch,
             "api_timeout": cfg.apiTimeout, "direction": cfg.direction,
@@ -1445,6 +1837,157 @@ class TranslateBridge(QObject):
             ],
             [worker.finished, worker.failed],
         )
+
+    @Slot("QVariant")
+    def extractCurrentBookGlossary(self, cfg):
+        if self.busy:
+            self.failed.emit("当前有任务运行中，不能提取本书术语")
+            ToastBridge.warning("请等待当前任务完成后再提取术语")
+            return
+        config = self._make_config(cfg)
+        if not config["inp"] or not os.path.exists(config["inp"]):
+            self.failed.emit("请选择有效的输入 EPUB")
+            ToastBridge.warning("请先选择要提取术语的 EPUB 文件")
+            return
+        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
+            self.failed.emit("术语提取 provider 需要 API Key")
+            ToastBridge.warning("请先在 API 页面配置 API Key")
+            return
+        if not config["api_url"] or not config["model"]:
+            self.failed.emit("术语提取缺少 Base URL 或模型名")
+            ToastBridge.warning("请填写 API 地址和模型名称")
+            return
+
+        self._cancel_event.clear()
+        self.busy = True
+        self.glossaryProgressValue = 0.0
+        self.statusChanged.emit("正在独立提取本书术语...")
+        ToastBridge.info("正在提取本书术语")
+        worker = _GlossaryBookExtractionWorker(config, self._cancel_event)
+        self._start_worker(
+            worker,
+            [
+                (worker.statusChanged, self.statusChanged),
+                (worker.progressChanged, self._on_glossary_progress),
+                (worker.errorDetail, self.errorDetail),
+                (worker.finished, self._on_book_glossary_extracted),
+                (worker.failed, self._on_book_glossary_extract_failed),
+            ],
+            [worker.finished, worker.failed],
+        )
+
+    def _on_glossary_progress(self, completed, total):
+        total = max(1, int(total or 1))
+        completed = max(0, min(int(completed or 0), total))
+        self.glossaryBookExtractionProgressChanged.emit(completed, total)
+        self.glossaryProgressValue = float(completed) / float(total)
+
+    def _on_book_glossary_extracted(self, result):
+        self.busy = False
+        self.glossaryProgressValue = 1.0
+        payload = dict(result or {})
+        message = str(payload.get("message") or "本书术语提取完成")
+        self.glossaryBookExtractionFinished.emit(payload)
+        self.statusChanged.emit(message)
+        if payload.get("ok"):
+            ToastBridge.success(message)
+        else:
+            ToastBridge.warning(message)
+
+    def _on_book_glossary_extract_failed(self, error):
+        self.busy = False
+        self.glossaryProgressValue = 0.0
+        text = str(error or "本书术语提取失败")
+        self.statusChanged.emit(text)
+        self.glossaryBookExtractionFailed.emit(text)
+        self.failed.emit(text)
+        ToastBridge.error("本书术语提取失败")
+
+    @Slot("QVariant")
+    def applyGlossaryToTranslatedBook(self, cfg):
+        config = self._make_config(cfg)
+        self._start_glossary_post_apply(config, [str(config.get("out") or "").strip()])
+
+    @Slot("QVariant", "QVariant")
+    def applyGlossaryToTranslatedBooks(self, cfg, paths):
+        config = self._make_config(cfg)
+        self._start_glossary_post_apply(config, self._normalize_epub_paths(paths))
+
+    def _normalize_epub_paths(self, paths):
+        if hasattr(paths, "toVariant"):
+            try:
+                paths = paths.toVariant()
+            except Exception:
+                paths = []
+        if isinstance(paths, (str, bytes)):
+            paths = [paths]
+        if paths is None:
+            paths = []
+        result = []
+        for item in paths:
+            path = str(item or "").strip()
+            if path.lower().startswith("file:///"):
+                path = path[8:]
+            elif path.lower().startswith("file://"):
+                path = path[7:]
+            path = path.replace("/", os.sep)
+            if path and path.lower().endswith(".epub") and os.path.exists(path):
+                result.append(path)
+        return list(dict.fromkeys(result))
+
+    def _start_glossary_post_apply(self, config, source_paths):
+        if self.busy:
+            self.failed.emit("当前有任务运行中，不能执行术语后处理")
+            ToastBridge.warning("请等待当前任务完成后再应用术语")
+            return
+        if not config.get("enable_glossary", True):
+            self.failed.emit("术语表未启用，不能应用术语")
+            ToastBridge.warning("请先启用术语表")
+            return
+        source_paths = self._normalize_epub_paths(source_paths)
+        if not source_paths:
+            self.failed.emit("请选择已经存在的翻译后 EPUB 输出文件")
+            ToastBridge.warning("请先确认输出 EPUB 已存在，再应用术语")
+            return
+
+        self._cancel_event.clear()
+        self.busy = True
+        self.glossaryProgressValue = 0.0
+        self.statusChanged.emit("正在执行术语后处理...")
+        ToastBridge.info("正在应用术语到已翻译 EPUB")
+        worker = _GlossaryPostApplyWorker(config, source_paths, self._cancel_event)
+        self._start_worker(
+            worker,
+            [
+                (worker.statusChanged, self.statusChanged),
+                (worker.progressChanged, self._on_glossary_progress),
+                (worker.errorDetail, self.errorDetail),
+                (worker.finished, self._on_glossary_post_apply_finished),
+                (worker.failed, self._on_glossary_post_apply_failed),
+            ],
+            [worker.finished, worker.failed],
+        )
+
+    def _on_glossary_post_apply_finished(self, result):
+        self.busy = False
+        self.glossaryProgressValue = 1.0
+        payload = dict(result or {})
+        message = str(payload.get("message") or "术语后处理完成")
+        self.glossaryPostApplyFinished.emit(payload)
+        self.statusChanged.emit(message)
+        if payload.get("ok"):
+            ToastBridge.success(message)
+        else:
+            ToastBridge.warning(message)
+
+    def _on_glossary_post_apply_failed(self, error):
+        self.busy = False
+        self.glossaryProgressValue = 0.0
+        text = str(error or "术语后处理失败")
+        self.statusChanged.emit(text)
+        self.glossaryPostApplyFailed.emit(text)
+        self.failed.emit(text)
+        ToastBridge.error("术语后处理失败")
 
     def _on_progress(self, completed, total, total_chars):
         self.progressChanged.emit(completed, total, total_chars)
@@ -1912,6 +2455,14 @@ class TranslateBridge(QObject):
             "allow_text_cache_reuse": "allowTextCacheReuse",
             "prompt_extra_instruction": "promptExtraInstruction",
             "enable_prompt_examples": "enablePromptExamples",
+            "enable_layered_glossary": "enableLayeredGlossary",
+            "use_global_glossary": "useGlobalGlossary",
+            "use_genre_glossary": "useGenreGlossary",
+            "use_series_glossary": "useSeriesGlossary",
+            "use_book_glossary": "useBookGlossary",
+            "series_glossary_name": "seriesGlossaryName",
+            "book_glossary_name": "bookGlossaryName",
+            "glossary_profile_ids": "selectedGlossaryProfileIds",
             "hymt2_generation_mode": "hymt2GenerationMode",
             "hymt2_prompt_mode": "hymt2PromptMode",
             "hymt2_runtime_mode": "hymt2RuntimeMode",

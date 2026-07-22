@@ -10,9 +10,113 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _book_glossary_name(ctx: "PipelineContext") -> str:
+    value = str(ctx.config.get("book_glossary_name") or "").strip()
+    if value:
+        return value
+    title = str(ctx.extra.get("title") or "").strip()
+    if title:
+        return Path(title).stem if title.lower().endswith(".epub") else title
+    source = str(ctx.config.get("inp") or "").strip()
+    return Path(source).stem if source else ""
+
+
+def _genre_glossary_name(ctx: "PipelineContext") -> str:
+    style = ctx.proofread_style or ctx.detected_style
+    if not style:
+        return ""
+    return str(getattr(style, "genre_label", "") or getattr(style, "genre", "") or "").strip()
+
+
+def _resolve_glossary_profile_ids(ctx: "PipelineContext") -> Tuple[List[str], List[Dict[str, Any]]]:
+    if not bool(ctx.config.get("enable_glossary", True)):
+        return [], []
+    configured_ids = ctx.extra.get("glossary_profile_ids") or ctx.config.get("glossary_profile_ids") or []
+    if not bool(ctx.config.get("enable_layered_glossary", False)) and not configured_ids:
+        return [], []
+
+    from glossary_profiles import load_profile, resolve_profile_ids
+    from translator import get_data_dir
+
+    data_dir = get_data_dir()
+    if isinstance(configured_ids, (list, tuple)) and configured_ids:
+        profiles = []
+        ids = []
+        seen = set()
+        for profile_id in configured_ids:
+            profile_id = str(profile_id or "").strip()
+            if not profile_id or profile_id in seen:
+                continue
+            seen.add(profile_id)
+            profile = load_profile(data_dir, profile_id)
+            if profile:
+                ids.append(str(profile.get("id") or profile_id))
+                profiles.append(profile)
+        return ids, profiles
+
+    ids, profiles = resolve_profile_ids(
+        data_dir,
+        use_genre=bool(ctx.config.get("use_genre_glossary", False)),
+        use_series=bool(ctx.config.get("use_series_glossary", False)),
+        use_book=bool(ctx.config.get("use_book_glossary", False)),
+        genre_name=_genre_glossary_name(ctx),
+        series_name=str(ctx.config.get("series_glossary_name") or "").strip(),
+        book_name=_book_glossary_name(ctx),
+    )
+    return ids, profiles
+
+
+def _build_glossary_override(ctx: "PipelineContext") -> Tuple[Optional[Dict[str, Any]], str]:
+    if not bool(ctx.config.get("enable_glossary", True)):
+        return None, ""
+    configured_ids = ctx.extra.get("glossary_profile_ids") or ctx.config.get("glossary_profile_ids") or []
+    if not bool(ctx.config.get("enable_layered_glossary", False)) and not configured_ids:
+        ctx.extra["glossary_profile_ids"] = []
+        ctx.extra["glossary_profiles"] = []
+        ctx.extra["glossary_merge_stats"] = {}
+        ctx.extra["glossary_fingerprint"] = ""
+        return None, ""
+
+    use_global = bool(ctx.config.get("use_global_glossary", True))
+    profile_ids, profiles = _resolve_glossary_profile_ids(ctx)
+    if use_global and not profile_ids:
+        return None, ""
+
+    from glossary_profiles import glossary_fingerprint, merge_selected_profiles
+    from translation_cache import load_json_file
+    from translator import get_data_dir
+
+    data_dir = get_data_dir()
+    base_glossary = {}
+    if use_global:
+        base_glossary = load_json_file(data_dir / "glossary.json", {})
+
+    merged, selected_profiles, merge_stats = merge_selected_profiles(
+        data_dir,
+        profile_ids,
+        base_glossary=base_glossary,
+    )
+    has_terms = any(isinstance(entries, list) and bool(entries) for entries in (merged or {}).values())
+    fingerprint = glossary_fingerprint(merged)[:16] if has_terms else ""
+
+    ctx.extra["glossary_profile_ids"] = profile_ids
+    ctx.extra["glossary_profiles"] = selected_profiles or profiles
+    ctx.extra["glossary_merge_stats"] = merge_stats
+    ctx.extra["glossary_fingerprint"] = fingerprint
+
+    logger.info(
+        "[translator_init] glossary profiles=%s, use_global=%s, fingerprint=%s",
+        len(profile_ids),
+        use_global,
+        fingerprint or "-",
+    )
+    return merged, fingerprint
 
 
 @dataclass
@@ -178,6 +282,7 @@ class CreateTranslatorStage(PipelineStage):
             ctx.proofread_style = style
 
         factory = ctx.extra.get("translator_factory") or JaZhTranslator
+        glossary_override, glossary_fp = _build_glossary_override(ctx)
         ctx.translator = factory(
             api_key=cfg["api_key"],
             provider=cfg["provider"],
@@ -205,6 +310,8 @@ class CreateTranslatorStage(PipelineStage):
             hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
             hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
             hymt2_runtime_mode=cfg.get("hymt2_runtime_mode", "cpu"),
+            glossary_override=glossary_override,
+            glossary_fingerprint=glossary_fp,
         )
         logger.info(
             "[translator_init] provider=%s, model=%s, workers=%s, batch=%s",

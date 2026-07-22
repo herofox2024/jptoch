@@ -124,9 +124,10 @@ class GlossaryModel(QAbstractListModel):
     @staticmethod
     def _source_label(source: str) -> str:
         source = str(source or "").strip()
-        if source == "auto":
-            return "自动提取"
-        if source == "manual":
+        source_l = source.lower()
+        if source_l in {"auto", "preextract"}:
+            return "模型提取"
+        if source_l == "manual":
             return "手动添加"
         if source:
             return f"来源：{source}"
@@ -190,7 +191,7 @@ class GlossaryModel(QAbstractListModel):
         source = ""
         for part in parts:
             lower_part = part.lower()
-            if part == "自动提取":
+            if part in {"自动提取", "模型提取"}:
                 source = "auto"
             elif part == "手动添加":
                 source = "manual"
@@ -294,7 +295,7 @@ class GlossaryModel(QAbstractListModel):
         for row in self._all_rows:
             source = str(row.get("source", "") or "").strip().lower()
             note = str(row.get("note", "") or "")
-            if source == "auto" or "自动提取" in note:
+            if source in {"auto", "preextract"} or "自动提取" in note or "模型提取" in note:
                 auto_count += 1
             elif source == "manual" or "手动添加" in note:
                 manual_count += 1

@@ -20,10 +20,16 @@ def text_cache_key(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
-def model_cache_key(provider: str, model: str, text: str) -> str:
+def model_cache_key(
+    provider: str,
+    model: str,
+    text: str,
+    glossary_fingerprint: str = "",
+) -> str:
     provider_model = f"{provider}:{model}".lower()
     digest = text_cache_key(text)
-    return f"v2:{provider_model}:{digest}"
+    suffix = f":g{glossary_fingerprint}" if glossary_fingerprint else ""
+    return f"v2:{provider_model}{suffix}:{digest}"
 
 
 def context_cache_key(
@@ -33,6 +39,7 @@ def context_cache_key(
     prev_text: Optional[str],
     next_text: Optional[str],
     preview_len: int,
+    glossary_fingerprint: str = "",
 ) -> str:
     text_value = (text or "").strip()
     provider_model = f"{provider}:{model}".lower()
@@ -42,7 +49,8 @@ def context_cache_key(
     context_digest = hashlib.sha256(
         f"{prev_preview}\n<<<TEXT>>>\n{text_value}\n<<<NEXT>>>\n{next_preview}".encode("utf-8")
     ).hexdigest()
-    return f"v3ctx:{provider_model}:{context_digest}:{text_digest}"
+    suffix = f":g{glossary_fingerprint}" if glossary_fingerprint else ""
+    return f"v3ctx:{provider_model}{suffix}:{context_digest}:{text_digest}"
 
 
 def parse_model_cache_key(key: str) -> Tuple[str, Optional[str], Optional[str]]:

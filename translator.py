@@ -747,6 +747,7 @@ class JaZhTranslator:
         max_tokens: Optional[int] = None,
         frequency_penalty: Optional[float] = None,
         glossary_path: Optional[str] = None,
+        glossary_override: Optional[Dict[str, Any]] = None,
         cache_path: Optional[str] = None,
         max_workers: int = 5,
         batch_size: int = 4,
@@ -772,6 +773,7 @@ class JaZhTranslator:
         hymt2_generation_mode: str = "stable",
         hymt2_prompt_mode: str = "official",
         hymt2_runtime_mode: str = "cpu",
+        glossary_fingerprint: str = "",
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -861,10 +863,22 @@ class JaZhTranslator:
 
         data_dir = get_data_dir()
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
+        self.glossary_fingerprint = re.sub(r"[^0-9a-f]", "", str(glossary_fingerprint or "").lower())[:16]
         self.cache_path = cache_path or str(data_dir / "cache.json")
         self.enable_glossary = bool(enable_glossary)
 
-        self.glossary = self._load_json(self.glossary_path, {}) if self.enable_glossary else {}
+        override_glossary = None
+        if glossary_override is not None:
+            override_glossary, _ = gs_normalize_glossary_payload(glossary_override or {})
+            has_terms = any(bool(override_glossary.get(category)) for category in DEFAULT_GLOSSARY_CATEGORIES)
+            if has_terms and not self.glossary_fingerprint:
+                compact = json.dumps(override_glossary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                self.glossary_fingerprint = hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
+
+        if self.enable_glossary:
+            self.glossary = override_glossary if override_glossary is not None else self._load_json(self.glossary_path, {})
+        else:
+            self.glossary = {}
         self.cache = self._load_json(self.cache_path, {})
         self._cross_model_text_cache_index: Dict[str, str] = {}
         self._cross_model_context_cache_index: Dict[Tuple[str, str], str] = {}
@@ -2412,7 +2426,7 @@ class JaZhTranslator:
 
     def _cache_key(self, text: str) -> str:
         """Include provider/model in primary cache keys; cross-model resume uses a digest index."""
-        return tc_model_cache_key(self.provider, self.model, text)
+        return tc_model_cache_key(self.provider, self.model, text, self.glossary_fingerprint)
 
     def _is_context_cache_text(self, text: str) -> bool:
         """Short dialogue fragments are context-sensitive and should not share one global cache entry."""
@@ -2445,6 +2459,7 @@ class JaZhTranslator:
             prev_text,
             next_text,
             self.CONTEXT_PREVIEW_LEN,
+            self.glossary_fingerprint,
         )
 
     @property
@@ -2511,6 +2526,8 @@ class JaZhTranslator:
 
     def _lookup_cross_model_cache(self, text: str, current_cache_key: str) -> Optional[str]:
         """Find a safe candidate from cache.json entries created by another provider/model."""
+        if getattr(self, "glossary_fingerprint", ""):
+            return None
         if not text or not current_cache_key:
             return None
         self._ensure_cross_model_cache_index()
@@ -2603,6 +2620,8 @@ class JaZhTranslator:
 
     def _lookup_text_cache(self, text: str, allow_unverified: bool = False) -> Optional[str]:
         """查找文本级缓存；恢复续译时可复用已通过安全校验的普通译文。"""
+        if getattr(self, "glossary_fingerprint", ""):
+            return None
         self._load_text_cache()
         key = self._text_cache_key(text)
         entry = self._text_cache.get(key)
@@ -2612,6 +2631,8 @@ class JaZhTranslator:
 
     def _save_text_cache_entry(self, text: str, translation: str, verified: bool = False):
         """保存文本级缓存条目。"""
+        if getattr(self, "glossary_fingerprint", ""):
+            return
         self._load_text_cache()
         key = self._text_cache_key(text)
         # 不覆盖已 verified 的条目
@@ -3971,6 +3992,90 @@ JSON 顶层字段：
     @staticmethod
     def _clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
         return gs_clean_new_terms(raw_terms)
+
+    def extract_glossary_candidates(
+        self,
+        texts: List[str],
+        *,
+        batch_size: Optional[int] = None,
+        max_chars: int = 60000,
+        max_texts: int = 240,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> Dict[str, Any]:
+        """Pre-extract glossary candidates before a full translation run."""
+        try:
+            from text_utils import is_translatable
+        except Exception:
+            def is_translatable(value: str) -> bool:
+                return bool(str(value or "").strip())
+
+        selected: List[str] = []
+        char_total = 0
+        for text in texts or []:
+            value = str(text or "").strip()
+            if not value or not is_translatable(value):
+                continue
+            if value in selected:
+                continue
+            if len(selected) >= max_texts:
+                break
+            if char_total + len(value) > max_chars and selected:
+                break
+            selected.append(value)
+            char_total += len(value)
+
+        if not selected:
+            return {"terms": [], "glossary": {cat: [] for cat in self.glossary_categories}, "text_count": 0, "char_count": 0}
+
+        effective_batch_size = max(1, min(int(batch_size or self.batch_size or 1), 12))
+        raw_terms: List[Dict[str, Any]] = []
+        old_extract_glossary = self.extract_glossary
+        self.extract_glossary = True
+        try:
+            total_batches = (len(selected) + effective_batch_size - 1) // effective_batch_size
+            for batch_index in range(total_batches):
+                if self.cancel_event.is_set():
+                    raise RuntimeError("术语预提取已取消")
+                start = batch_index * effective_batch_size
+                chunk = selected[start:start + effective_batch_size]
+                result = self._call_deepseek_batch_json(chunk, max_retries=2)
+                if result and isinstance(result.new_terms, list):
+                    raw_terms.extend(result.new_terms)
+                if progress_callback:
+                    progress_callback(batch_index + 1, total_batches)
+        finally:
+            self.extract_glossary = old_extract_glossary
+
+        cleaned = self._clean_new_terms(raw_terms)
+        normalized_by_category = {cat: [] for cat in self.glossary_categories}
+        seen = set()
+        for term in cleaned:
+            src = str(term.get("src", "")).strip()
+            dst = str(term.get("dst", "")).strip()
+            category = str(term.get("category", "Item")).strip() or "Item"
+            if category not in self.glossary_categories:
+                category = "Item"
+            if not src or not dst:
+                continue
+            key = src
+            if key in seen:
+                continue
+            seen.add(key)
+            entry = {"original": src, "translation": dst, "source": "preextract"}
+            info = str(term.get("info", "")).strip()
+            if info:
+                entry["info"] = info
+            policy = gs_normalize_policy(term.get("policy", ""))
+            if policy:
+                entry["policy"] = policy
+            normalized_by_category[category].append(entry)
+
+        return {
+            "terms": cleaned,
+            "glossary": normalized_by_category,
+            "text_count": len(selected),
+            "char_count": char_total,
+        }
 
 
     def _merge_new_terms_into_glossary(self, terms: List[Dict[str, Any]]) -> int:

@@ -22,7 +22,14 @@ Page {
     property bool loadedOnce: false
     property var selectedRows: []
     property string statusMessage: "暂无术语"
+    property string glossaryProfileStatus: ""
+    property var glossaryProfileScopeValues: ["all", "genre", "series", "book"]
+    property var glossaryProfileScopeLabels: ["全部", "题材", "系列", "本书"]
+    property var glossaryProfileTargetScopeValues: ["genre", "series", "book"]
+    property var glossaryProfileTargetScopeLabels: ["题材", "系列", "本书"]
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
+
+    ListModel { id: glossaryProfileModel }
 
     function clearSelection() {
         page.selectedRows = []
@@ -59,6 +66,88 @@ Page {
 
     function scheduleSearch() {
         searchDebounceTimer.restart()
+    }
+
+    function glossaryProfileScopeValue(index) {
+        return page.glossaryProfileScopeValues[index] || ""
+    }
+
+    function glossaryProfileTargetScopeValue(index) {
+        return page.glossaryProfileTargetScopeValues[index] || "book"
+    }
+
+    function glossaryProfileScopeIndex(value) {
+        var idx = page.glossaryProfileScopeValues.indexOf(value || "all")
+        return idx >= 0 ? idx : 0
+    }
+
+    function glossaryProfileTargetScopeIndex(value) {
+        var idx = page.glossaryProfileTargetScopeValues.indexOf(value || "book")
+        return idx >= 0 ? idx : 2
+    }
+
+    function glossaryProfileScopeLabel(value) {
+        var idx = page.glossaryProfileScopeValues.indexOf(value || "all")
+        return idx >= 0 ? page.glossaryProfileScopeLabels[idx] : "全部"
+    }
+
+    function formatTimestamp(ts) {
+        if (!ts) return "-"
+        var value = new Date(ts * 1000)
+        if (isNaN(value.getTime())) return "-"
+        return Qt.formatDateTime(value, "yyyy-MM-dd hh:mm")
+    }
+
+    function refreshGlossaryProfiles() {
+        if (!page.cfg || !page.cfg.listGlossaryProfiles) return
+        var scope = page.glossaryProfileScopeValue(profileFilterCombo.currentIndex)
+        var items = page.cfg.listGlossaryProfiles(scope === "all" ? "" : scope)
+        glossaryProfileModel.clear()
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i] || {}
+            glossaryProfileModel.append({
+                "profileId": item.profileId || item.id || "",
+                "name": item.name || "",
+                "scope": item.scope || "",
+                "description": item.description || "",
+                "sourceBook": item.sourceBook || "",
+                "termCount": item.termCount || 0,
+                "createdAt": item.createdAt || 0,
+                "updatedAt": item.updatedAt || 0
+            })
+        }
+        page.glossaryProfileStatus = glossaryProfileModel.count > 0
+                ? "共 " + glossaryProfileModel.count + " 个 profile"
+                : "暂无 profile"
+    }
+
+    function saveCurrentGlossaryProfile() {
+        if (!page.cfg || !page.cfg.saveCurrentGlossaryAsProfile) return
+        var name = glossaryProfileNameField.text.trim()
+        if (!name) {
+            page.glossaryProfileStatus = "请输入 profile 名称"
+            return
+        }
+        var scope = page.glossaryProfileTargetScopeValue(profileTargetCombo.currentIndex)
+        var sourceBook = glossaryProfileSourceField.text.trim()
+        var result = page.cfg.saveCurrentGlossaryAsProfile(scope, name, sourceBook)
+        page.glossaryProfileStatus = result.message || ""
+        if (result.ok) {
+            page.refreshGlossaryProfiles()
+        }
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result.ok ? ToastBridge.showSuccess(page.glossaryProfileStatus) : ToastBridge.showError(page.glossaryProfileStatus)
+        }
+    }
+
+    function deleteGlossaryProfile(profileId) {
+        if (!page.cfg || !page.cfg.deleteGlossaryProfile || !profileId) return
+        var result = page.cfg.deleteGlossaryProfile(profileId)
+        page.glossaryProfileStatus = result.message || ""
+        page.refreshGlossaryProfiles()
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            result.ok ? ToastBridge.showSuccess(page.glossaryProfileStatus) : ToastBridge.showError(page.glossaryProfileStatus)
+        }
     }
 
     function ensureLoaded() {
@@ -105,6 +194,15 @@ Page {
         }
         function onErrorOccurred(msg) {
             page.statusMessage = "错误: " + msg
+        }
+    }
+
+    Connections {
+        target: page.cfg
+        ignoreUnknownSignals: true
+
+        function onGlossaryProfilesChanged() {
+            page.refreshGlossaryProfiles()
         }
     }
 
@@ -158,7 +256,7 @@ Page {
             rowSpacing: 10
 
             StatTile { title: "总术语"; value: page.totalCount; tone: "accent" }
-            StatTile { title: "自动提取"; value: page.autoCount; tone: "amber" }
+            StatTile { title: "模型提取"; value: page.autoCount; tone: "amber" }
             StatTile { title: "手动添加"; value: page.manualCount; tone: "success" }
             StatTile { title: "未知来源"; value: page.unknownCount; tone: "neutral" }
         }
@@ -230,7 +328,7 @@ Page {
                         ComboBox {
                             id: sourceCombo
                             Layout.preferredWidth: 148
-                            model: ["全部来源", "自动提取", "手动添加", "未知来源"]
+                            model: ["全部来源", "模型提取", "手动添加", "未知来源"]
                             onCurrentTextChanged: page.scheduleSearch()
                         }
                     }
@@ -354,6 +452,19 @@ Page {
                             font.pixelSize: AppStyle.fontSmall
                             onClicked: restoreDialog.open()
                         }
+                        Button {
+                            text: "Profile 管理"
+                            width: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 104
+                            height: AppStyle.buttonHeightSmall
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: AppStyle.fontSmall
+                            onClicked: {
+                                page.refreshGlossaryProfiles()
+                                glossaryProfileDialog.open()
+                            }
+                        }
                     }
                 }
 
@@ -366,13 +477,13 @@ Page {
                         checked: cfg ? cfg.enableGlossary : true
                         onCheckedChanged: { if (cfg) cfg.enableGlossary = checked }
                     }
-                    CheckBox {
-                        text: "自动提取"
-                        checked: cfg ? cfg.extractGlossary : false
-                        enabled: cfg ? cfg.enableGlossary : false
-                        onCheckedChanged: { if (cfg) cfg.extractGlossary = checked }
+                    Label {
+                        Layout.fillWidth: true
+                        text: "术语提取已改为任务页的独立功能；这里仅管理全局术语表。"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontCaption
+                        elide: Text.ElideRight
                     }
-                    Item { Layout.fillWidth: true }
                 }
             }
         }
@@ -516,6 +627,258 @@ Page {
                                       : "可以新增术语，或通过“增量导入 JSON”导入已有术语表。"
                                 color: AppPalette.mutedText
                                 font.pixelSize: AppStyle.fontSmall
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: glossaryProfileDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(760, Math.min(page.width - 48, 1040))
+        height: Math.max(520, Math.min(page.height - 72, 820))
+        title: "术语 Profile 管理"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: page.refreshGlossaryProfiles()
+
+        contentItem: ScrollView {
+            width: glossaryProfileDialog.width
+            height: glossaryProfileDialog.height
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: Math.max(0, glossaryProfileDialog.width - 32)
+                spacing: AppStyle.spacingLarge
+
+                Label {
+                    Layout.fillWidth: true
+                    text: "把不同题材、系列或单本书的术语保存为独立 profile。任务页可独立提取当前书术语；翻译时是否使用 profile 由任务页的分层术语开关决定。"
+                    color: AppPalette.mutedText
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontSmall
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Label {
+                        text: "存放目录"
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontSmall
+                        font.weight: Font.DemiBold
+                    }
+                    TextField {
+                        Layout.fillWidth: true
+                        text: page.cfg ? page.cfg.glossaryProfilesPath : ""
+                        readOnly: true
+                        selectByMouse: true
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontCaption
+                    }
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: page.width > 920 ? 4 : 2
+                    rowSpacing: 8
+                    columnSpacing: 12
+
+                    Label { text: "过滤范围" }
+                    ComboBox {
+                        id: profileFilterCombo
+                        Layout.fillWidth: true
+                        model: page.glossaryProfileScopeLabels
+                        currentIndex: page.glossaryProfileScopeIndex("all")
+                        onActivated: page.refreshGlossaryProfiles()
+                    }
+
+                    Label { text: "保存范围" }
+                    ComboBox {
+                        id: profileTargetCombo
+                        Layout.fillWidth: true
+                        model: page.glossaryProfileTargetScopeLabels
+                        currentIndex: page.glossaryProfileTargetScopeIndex("book")
+                    }
+
+                    Label { text: "profile 名称" }
+                    TextField {
+                        id: glossaryProfileNameField
+                        Layout.fillWidth: true
+                        placeholderText: "例如：某系列术语 / 某题材术语 / 本书术语"
+                        selectByMouse: true
+                    }
+
+                    Label { text: "来源书名" }
+                    TextField {
+                        id: glossaryProfileSourceField
+                        Layout.fillWidth: true
+                        placeholderText: "可留空；独立提取时会自动写入"
+                        selectByMouse: true
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Button {
+                        text: "保存当前术语表"
+                        highlighted: true
+                        onClicked: page.saveCurrentGlossaryProfile()
+                    }
+
+                    Button {
+                        text: "刷新"
+                        onClicked: page.refreshGlossaryProfiles()
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Label {
+                        text: page.glossaryProfileStatus
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontSmall
+                        elide: Text.ElideRight
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 420
+                    radius: AppPalette.radiusLarge
+                    color: AppPalette.cardBg
+                    border.color: AppPalette.borderColor
+                    clip: true
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: AppStyle.spacingNone
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingNone
+                            TableHeader { w: 92; text: "范围"; first: true }
+                            TableHeader { w: 220; text: "名称" }
+                            TableHeader { w: 110; text: "术语数" }
+                            TableHeader { w: 180; text: "来源书名" }
+                            TableHeader { w: 170; text: "更新时间" }
+                            TableHeader { w: -1; text: "说明 / 操作"; last: true }
+                        }
+
+                        ListView {
+                            id: profileListView
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            spacing: AppStyle.spacingTight
+                            model: glossaryProfileModel
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                            delegate: Rectangle {
+                                width: profileListView.width
+                                height: 52
+                                color: index % 2 === 0 ? AppPalette.surfaceRaised : AppPalette.cardBg
+                                border.color: AppPalette.lineColor
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 8
+                                    spacing: AppStyle.spacingSmall
+
+                                    Label {
+                                        Layout.preferredWidth: 92
+                                        text: page.glossaryProfileScopeLabel(scope)
+                                        color: AppPalette.accentColor
+                                        font.pixelSize: AppStyle.fontCaption
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Label {
+                                        Layout.preferredWidth: 220
+                                        text: name || "-"
+                                        color: AppPalette.textColor
+                                        font.pixelSize: AppStyle.fontCaption
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Label {
+                                        Layout.preferredWidth: 110
+                                        text: (termCount || 0) + " 条"
+                                        color: AppPalette.textColor
+                                        font.pixelSize: AppStyle.fontCaption
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Label {
+                                        Layout.preferredWidth: 180
+                                        text: sourceBook || "-"
+                                        color: AppPalette.mutedText
+                                        font.pixelSize: AppStyle.fontCaption
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Label {
+                                        Layout.preferredWidth: 170
+                                        text: page.formatTimestamp(updatedAt || createdAt)
+                                        color: AppPalette.mutedText
+                                        font.pixelSize: AppStyle.fontTiny
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: description || "-"
+                                        color: AppPalette.mutedText
+                                        font.pixelSize: AppStyle.fontTiny
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Button {
+                                        text: "删除"
+                                        onClicked: page.deleteGlossaryProfile(profileId)
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: Math.min(parent.width - 48, 420)
+                                height: 112
+                                radius: AppPalette.radiusLarge
+                                visible: glossaryProfileModel.count === 0
+                                color: AppPalette.surfaceRaised
+                                border.color: AppPalette.borderColor
+
+                                ColumnLayout {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 36
+                                    spacing: AppStyle.spacingSmall
+                                    Label {
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        text: "暂无 profile"
+                                        color: AppPalette.textColor
+                                        font.pixelSize: AppStyle.fontSection
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        wrapMode: Text.WordWrap
+                                        text: "可在任务页点击“提取本书术语”，或点击“保存当前术语表”生成题材/系列/本书 profile。"
+                                        color: AppPalette.mutedText
+                                        font.pixelSize: AppStyle.fontSmall
+                                    }
+                                }
                             }
                         }
                     }

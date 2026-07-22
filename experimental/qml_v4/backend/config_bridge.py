@@ -338,6 +338,8 @@ PRESET_CONFIG_KEYS = {
     "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_url", "proofread_model",
     "prompt_extra_instruction", "enable_prompt_examples",
+    "enable_layered_glossary", "use_global_glossary", "use_genre_glossary", "use_series_glossary", "use_book_glossary",
+    "series_glossary_name", "book_glossary_name", "selected_glossary_profile_ids",
     "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
     "japanese_residue_policy",
 }
@@ -352,6 +354,8 @@ PRESET_CATEGORY_LABELS = {
 _CONFIG_KEYS = [
     "inp", "out", "api_key", "provider", "api_url", "model",
     "extract_glossary", "enable_glossary",
+    "enable_layered_glossary", "use_global_glossary", "use_genre_glossary", "use_series_glossary", "use_book_glossary",
+    "pre_extract_glossary", "series_glossary_name", "book_glossary_name", "selected_glossary_profile_ids",
     "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
     "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
@@ -483,7 +487,12 @@ def _default_residue_allowlist() -> Dict[str, List[str]]:
 
 
 def _clean_string_list(value: Any) -> List[str]:
-    if not isinstance(value, list):
+    if hasattr(value, "toVariant"):
+        try:
+            value = value.toVariant()
+        except Exception:
+            value = []
+    if not isinstance(value, (list, tuple)):
         return []
     result = []
     for item in value:
@@ -548,6 +557,15 @@ class ConfigBridge(QObject):
     _modelChanged = Signal()
     _extractGlossaryChanged = Signal()
     _enableGlossaryChanged = Signal()
+    _enableLayeredGlossaryChanged = Signal()
+    _useGlobalGlossaryChanged = Signal()
+    _useGenreGlossaryChanged = Signal()
+    _useSeriesGlossaryChanged = Signal()
+    _useBookGlossaryChanged = Signal()
+    _preExtractGlossaryChanged = Signal()
+    _seriesGlossaryNameChanged = Signal()
+    _bookGlossaryNameChanged = Signal()
+    _selectedGlossaryProfileIdsChanged = Signal()
     _maxWorkersChanged = Signal()
     _batchSizeChanged = Signal()
     _maxBatchLengthChanged = Signal()
@@ -565,6 +583,7 @@ class ConfigBridge(QObject):
     _enablePromptExamplesChanged = Signal()
     _enableNoticePageChanged = Signal()
     _noticePageTextChanged = Signal()
+    glossaryProfilesChanged = Signal()
     _hymt2GenerationModeChanged = Signal()
     _hymt2PromptModeChanged = Signal()
     _hymt2RuntimeModeChanged = Signal()
@@ -583,6 +602,15 @@ class ConfigBridge(QObject):
         self._model = DEEPSEEK_MODEL
         self._extract_glossary = False
         self._enable_glossary = True
+        self._enable_layered_glossary = False
+        self._use_global_glossary = True
+        self._use_genre_glossary = False
+        self._use_series_glossary = False
+        self._use_book_glossary = False
+        self._pre_extract_glossary = False
+        self._series_glossary_name = ""
+        self._book_glossary_name = ""
+        self._selected_glossary_profile_ids = []
         self._max_workers = 5
         self._batch_size = 4
         self._max_batch_length = 800
@@ -640,6 +668,23 @@ class ConfigBridge(QObject):
                 self._allow_text_cache_reuse = True
             if "enable_prompt_examples" not in data:
                 self._enable_prompt_examples = True
+            if "enable_layered_glossary" not in data:
+                self._enable_layered_glossary = False
+            self._extract_glossary = False
+            self._pre_extract_glossary = False
+            if "use_global_glossary" not in data:
+                self._use_global_glossary = True
+            if "use_genre_glossary" not in data:
+                self._use_genre_glossary = False
+            if "use_series_glossary" not in data:
+                self._use_series_glossary = False
+            if "use_book_glossary" not in data:
+                self._use_book_glossary = False
+            if "series_glossary_name" not in data:
+                self._series_glossary_name = ""
+            if "book_glossary_name" not in data:
+                self._book_glossary_name = ""
+            self._selected_glossary_profile_ids = _clean_string_list(getattr(self, "_selected_glossary_profile_ids", []))
             if "enable_notice_page" not in data:
                 self._enable_notice_page = False
             if not str(getattr(self, "_notice_page_text", "") or "").strip():
@@ -716,6 +761,15 @@ class ConfigBridge(QObject):
             "proofread_model": self._proofreadModelChanged,
             "prompt_extra_instruction": self._promptExtraInstructionChanged,
             "enable_prompt_examples": self._enablePromptExamplesChanged,
+            "enable_layered_glossary": self._enableLayeredGlossaryChanged,
+            "use_global_glossary": self._useGlobalGlossaryChanged,
+            "use_genre_glossary": self._useGenreGlossaryChanged,
+            "use_series_glossary": self._useSeriesGlossaryChanged,
+            "use_book_glossary": self._useBookGlossaryChanged,
+            "pre_extract_glossary": self._preExtractGlossaryChanged,
+            "series_glossary_name": self._seriesGlossaryNameChanged,
+            "book_glossary_name": self._bookGlossaryNameChanged,
+            "selected_glossary_profile_ids": self._selectedGlossaryProfileIdsChanged,
             "hymt2_generation_mode": self._hymt2GenerationModeChanged,
             "hymt2_prompt_mode": self._hymt2PromptModeChanged,
             "hymt2_runtime_mode": self._hymt2RuntimeModeChanged,
@@ -723,6 +777,8 @@ class ConfigBridge(QObject):
         }
         changed = False
         for key, value in dict(values or {}).items():
+            if key == "selected_glossary_profile_ids":
+                value = _clean_string_list(value)
             attr = f"_{key}"
             if not hasattr(self, attr):
                 continue
@@ -917,6 +973,90 @@ class ConfigBridge(QObject):
         except Exception as exc:
             logger.warning("导入模型/Prompt 预设失败: %s", exc)
             return {"ok": False, "message": f"导入预设失败: {exc}"}
+
+    @Property(str, constant=True)
+    def glossaryProfilesPath(self) -> str:
+        from glossary_profiles import glossary_profiles_dir
+
+        return str(glossary_profiles_dir(_data_dir()))
+
+    @Slot(result="QVariantList")
+    @Slot(str, result="QVariantList")
+    def listGlossaryProfiles(self, scope: str = ""):
+        try:
+            from glossary_profiles import list_profiles
+
+            scope_filter = str(scope or "").strip().lower()
+            profiles = list_profiles(_data_dir())
+            if scope_filter:
+                profiles = [item for item in profiles if item.get("scope") == scope_filter]
+            return [
+                {
+                    "id": item.get("id", ""),
+                    "profileId": item.get("id", ""),
+                    "name": item.get("name", ""),
+                    "scope": item.get("scope", ""),
+                    "description": item.get("description", ""),
+                    "sourceBook": item.get("source_book", ""),
+                    "termCount": int(item.get("term_count") or 0),
+                    "createdAt": int(item.get("created_at") or 0),
+                    "updatedAt": int(item.get("updated_at") or 0),
+                }
+                for item in profiles
+            ]
+        except Exception as exc:
+            logger.warning("读取术语 profile 失败: %s", exc)
+            return []
+
+    @Slot()
+    def notifyGlossaryProfilesChanged(self):
+        self.glossaryProfilesChanged.emit()
+
+    @Slot(str, result="QVariantMap")
+    def deleteGlossaryProfile(self, profile_id: str):
+        try:
+            from glossary_profiles import delete_profile
+
+            ok = delete_profile(_data_dir(), profile_id)
+            if ok:
+                self.glossaryProfilesChanged.emit()
+            return {"ok": bool(ok), "message": "已删除术语 profile" if ok else "未找到术语 profile"}
+        except Exception as exc:
+            logger.warning("删除术语 profile 失败: %s", exc)
+            return {"ok": False, "message": f"删除失败: {exc}"}
+
+    @Slot(str, str, str, result="QVariantMap")
+    def saveCurrentGlossaryAsProfile(self, scope: str, name: str, source_book: str = ""):
+        try:
+            from glossary_profiles import upsert_profile
+            from glossary_store import normalize_glossary_payload
+            from translation_cache import load_json_file
+
+            glossary, _ = normalize_glossary_payload(load_json_file(_data_dir() / "glossary.json", {}))
+            has_terms = any(
+                isinstance(entries, list) and bool(entries)
+                for entries in (glossary or {}).values()
+            )
+            if not has_terms:
+                return {"ok": False, "message": "当前全局术语表为空，无法保存 profile"}
+            profile = upsert_profile(
+                _data_dir(),
+                name=str(name or "").strip(),
+                scope=str(scope or "book").strip().lower(),
+                terms=glossary,
+                description="由当前全局术语表生成",
+                source_book=str(source_book or "").strip(),
+            )
+            self.glossaryProfilesChanged.emit()
+            return {
+                "ok": True,
+                "message": f"已保存术语 profile: {profile.get('name', '')}",
+                "id": profile.get("id", ""),
+                "termCount": int(profile.get("term_count") or 0),
+            }
+        except Exception as exc:
+            logger.warning("保存术语 profile 失败: %s", exc)
+            return {"ok": False, "message": f"保存失败: {exc}"}
 
     @Slot(result=str)
     def buildPromptPreview(self) -> str:
@@ -1113,6 +1253,80 @@ class ConfigBridge(QObject):
     def enableGlossary(self, val: bool):
         if val != self._enable_glossary:
             self._enable_glossary = val; self._emit_changed(self._enableGlossaryChanged)
+
+    @Property(bool, notify=_enableLayeredGlossaryChanged)
+    def enableLayeredGlossary(self) -> bool: return self._enable_layered_glossary
+    @enableLayeredGlossary.setter
+    def enableLayeredGlossary(self, val: bool):
+        val = bool(val)
+        if val != self._enable_layered_glossary:
+            self._enable_layered_glossary = val; self._emit_changed(self._enableLayeredGlossaryChanged)
+
+    @Property(bool, notify=_useGlobalGlossaryChanged)
+    def useGlobalGlossary(self) -> bool: return self._use_global_glossary
+    @useGlobalGlossary.setter
+    def useGlobalGlossary(self, val: bool):
+        val = bool(val)
+        if val != self._use_global_glossary:
+            self._use_global_glossary = val; self._emit_changed(self._useGlobalGlossaryChanged)
+
+    @Property(bool, notify=_useGenreGlossaryChanged)
+    def useGenreGlossary(self) -> bool: return self._use_genre_glossary
+    @useGenreGlossary.setter
+    def useGenreGlossary(self, val: bool):
+        val = bool(val)
+        if val != self._use_genre_glossary:
+            self._use_genre_glossary = val; self._emit_changed(self._useGenreGlossaryChanged)
+
+    @Property(bool, notify=_useSeriesGlossaryChanged)
+    def useSeriesGlossary(self) -> bool: return self._use_series_glossary
+    @useSeriesGlossary.setter
+    def useSeriesGlossary(self, val: bool):
+        val = bool(val)
+        if val != self._use_series_glossary:
+            self._use_series_glossary = val; self._emit_changed(self._useSeriesGlossaryChanged)
+
+    @Property(bool, notify=_useBookGlossaryChanged)
+    def useBookGlossary(self) -> bool: return self._use_book_glossary
+    @useBookGlossary.setter
+    def useBookGlossary(self, val: bool):
+        val = bool(val)
+        if val != self._use_book_glossary:
+            self._use_book_glossary = val; self._emit_changed(self._useBookGlossaryChanged)
+
+    @Property(bool, notify=_preExtractGlossaryChanged)
+    def preExtractGlossary(self) -> bool: return self._pre_extract_glossary
+    @preExtractGlossary.setter
+    def preExtractGlossary(self, val: bool):
+        val = bool(val)
+        if val != self._pre_extract_glossary:
+            self._pre_extract_glossary = val; self._emit_changed(self._preExtractGlossaryChanged)
+
+    @Property(str, notify=_seriesGlossaryNameChanged)
+    def seriesGlossaryName(self) -> str: return self._series_glossary_name
+    @seriesGlossaryName.setter
+    def seriesGlossaryName(self, val: str):
+        val = str(val or "")
+        if val != self._series_glossary_name:
+            self._series_glossary_name = val; self._emit_changed(self._seriesGlossaryNameChanged)
+
+    @Property(str, notify=_bookGlossaryNameChanged)
+    def bookGlossaryName(self) -> str: return self._book_glossary_name
+    @bookGlossaryName.setter
+    def bookGlossaryName(self, val: str):
+        val = str(val or "")
+        if val != self._book_glossary_name:
+            self._book_glossary_name = val; self._emit_changed(self._bookGlossaryNameChanged)
+
+    @Property("QVariantList", notify=_selectedGlossaryProfileIdsChanged)
+    def selectedGlossaryProfileIds(self):
+        return list(self._selected_glossary_profile_ids or [])
+    @selectedGlossaryProfileIds.setter
+    def selectedGlossaryProfileIds(self, val):
+        cleaned = _clean_string_list(val)
+        if cleaned != self._selected_glossary_profile_ids:
+            self._selected_glossary_profile_ids = cleaned
+            self._emit_changed(self._selectedGlossaryProfileIdsChanged)
 
     @Property(int, notify=_maxWorkersChanged)
     def maxWorkers(self) -> int: return self._max_workers

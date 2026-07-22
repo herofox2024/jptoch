@@ -33,6 +33,13 @@ from provider_registry import normalize_api_url, provider_default_model, provide
 from provider_client import apply_payload_options, is_content_moderation_http_error
 from quality_rules import is_suspicious_translation_pair
 from translation_cache import atomic_write_json, load_json_file
+from glossary_profiles import (
+    find_profile,
+    glossary_fingerprint,
+    merge_selected_profiles,
+    resolve_profile_ids,
+    upsert_profile,
+)
 from experimental.qml_v4.backend.diagnostics import build_redacted_config_snapshot
 from experimental.qml_v4.backend.book_translation_service import (
     apply_translations_to_book,
@@ -41,6 +48,13 @@ from experimental.qml_v4.backend.book_translation_service import (
     repair_known_katakana_terms_in_docs,
     scan_japanese_residue_in_docs,
 )
+from experimental.qml_v4.backend.glossary_post_apply import (
+    apply_glossary_to_epub,
+    apply_terms_to_text,
+    flatten_replacement_terms,
+    resolve_effective_glossary,
+)
+from experimental.qml_v4.backend.task_history import sanitize_config
 from experimental.qml_v4.backend.pipeline import (
     ApplyBookTranslationsStage,
     BatchTranslateStage,
@@ -51,6 +65,7 @@ from experimental.qml_v4.backend.pipeline import (
     PipelineContext,
     StyleDetectStage,
     TranslationPipeline,
+    _build_glossary_override,
 )
 from style_detector import StyleDetectionResult
 
@@ -99,6 +114,7 @@ class DummyTranslator(JaZhTranslator):
         self.api_key = "x"
         self.enable_glossary = True
         self.extract_glossary = False
+        self.glossary_fingerprint = ""
         self.enable_thinking = False
         self.enable_proofread = False
         self.proofread_genre = "general"
@@ -238,6 +254,92 @@ class ExtractedModuleTests(unittest.TestCase):
             self.assertEqual(load_json_file(path, {}), {"hello": "world"})
             self.assertEqual(load_json_file(Path(tmp) / "missing.json", {"fallback": True}), {"fallback": True})
 
+    def test_task_history_sanitize_config_preserves_glossary_profile_ids(self):
+        sanitized = sanitize_config(
+            {
+                "api_key": "secret",
+                "glossary_profile_ids": ["book-a", 12, "", None, "book-a"],
+                "max_workers": 4,
+                "nested": [{"unsafe": True}],
+            }
+        )
+
+        self.assertEqual(sanitized["api_key"], "")
+        self.assertEqual(sanitized["glossary_profile_ids"], ["book-a", "12", "book-a"])
+        self.assertEqual(sanitized["max_workers"], 4)
+        self.assertNotIn("nested", sanitized)
+
+    def test_glossary_profile_upsert_and_merge(self):
+        with temp_test_dir() as tmp:
+            data_dir = Path(tmp)
+            profile = upsert_profile(
+                data_dir,
+                name="历史推理",
+                scope="genre",
+                terms={"Item": [{"original": "时钟", "translation": "时钟"}]},
+                description="fixture",
+                source_book="fixture-book",
+            )
+            self.assertTrue(profile["id"])
+            found = find_profile(data_dir, scope="genre", name="历史推理")
+            self.assertEqual(found["id"], profile["id"])
+            ids, profiles = resolve_profile_ids(data_dir, use_genre=True, genre_name="历史推理")
+            self.assertEqual(ids, [profile["id"]])
+            self.assertEqual(len(profiles), 1)
+            merged, selected, stats = merge_selected_profiles(
+                data_dir,
+                ids,
+                base_glossary={"Item": [{"original": "基准", "translation": "基准"}]},
+            )
+            self.assertGreaterEqual(stats["added"], 1)
+            self.assertTrue(any(entry["original"] == "时钟" for entry in merged["Item"]))
+            self.assertEqual(len(selected), 1)
+            self.assertTrue(glossary_fingerprint(merged))
+
+    def test_glossary_profile_priority_prefers_book_scope(self):
+        with temp_test_dir() as tmp:
+            data_dir = Path(tmp)
+            genre = upsert_profile(
+                data_dir,
+                name="历史推理",
+                scope="genre",
+                terms={"Item": [{"original": "X", "translation": "题材译名"}]},
+            )
+            series = upsert_profile(
+                data_dir,
+                name="系列A",
+                scope="series",
+                terms={"Item": [{"original": "X", "translation": "系列译名"}]},
+            )
+            book = upsert_profile(
+                data_dir,
+                name="单本A",
+                scope="book",
+                terms={"Item": [{"original": "X", "translation": "本书译名"}]},
+            )
+
+            merged, selected, stats = merge_selected_profiles(
+                data_dir,
+                [genre["id"], series["id"], book["id"]],
+                base_glossary={"Item": [{"original": "X", "translation": "全局译名"}]},
+            )
+
+            self.assertEqual(merged["Item"][0]["translation"], "本书译名")
+            self.assertEqual([item["scope"] for item in selected], ["book", "series", "genre"])
+            self.assertGreaterEqual(stats["conflicts"], 1)
+
+    def test_translator_accepts_glossary_override_snapshot(self):
+        with temp_test_dir() as d:
+            t = JaZhTranslator(
+                api_key="test-key",
+                provider="deepseek",
+                glossary_override={"Item": [{"original": "星门", "translation": "星门"}]},
+                glossary_path=os.path.join(d, "glossary.json"),
+                cache_path=os.path.join(d, "cache.json"),
+            )
+            self.assertIn("Item", t.glossary)
+            self.assertTrue(t.glossary_fingerprint)
+
 
 class RealEpubFixtureTests(unittest.TestCase):
     FIXTURE = Path(__file__).resolve().parent / "fixtures" / "real_japanese_fixture.epub"
@@ -299,6 +401,58 @@ class RealEpubFixtureTests(unittest.TestCase):
         self.assertIn("\u7b2c\u4e00\u7ae0 \u732b\u7684\u63a8\u7406", extract_toc_titles(reloaded))
         self.assertFalse(JaZhTranslator.has_blocking_japanese_residue(visible_text))
 
+    def test_apply_glossary_to_epub_writes_fixed_copy_and_report(self):
+        book = epub.EpubBook()
+        book.set_identifier("glossary-post-apply-test")
+        book.set_title("星門の本")
+        book.set_language("zh")
+        chapter = epub.EpubHtml(uid="chap1", file_name="Text/chapter.xhtml", title="星門")
+        chapter.set_content("<html><body><p>久堂は星門へ向かった。</p></body></html>".encode("utf-8"))
+        book.add_item(chapter)
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = [chapter]
+        book.toc = [epub.Link("Text/chapter.xhtml", "星門", "chap1")]
+
+        glossary = {
+            "Person": [{"original": "久堂", "translation": "久堂警部"}],
+            "Location": [{"original": "星門", "translation": "星门"}],
+            "Item": [{"original": "猫", "translation": "猫咪"}],
+        }
+        progress = []
+
+        with temp_test_dir() as tmp:
+            data_dir = Path(tmp) / "data"
+            source_path = Path(tmp) / "translated.epub"
+            save_book(str(source_path), book, chinese_mode=True)
+            with mock.patch("translator.get_data_dir", return_value=data_dir):
+                result = apply_glossary_to_epub(
+                    str(source_path),
+                    glossary,
+                    progress_callback=lambda done, total: progress.append((done, total)),
+                )
+            fixed_path = Path(result["output_path"])
+            fixed_exists = fixed_path.exists()
+            report_exists = Path(result["report_path"]).exists()
+            reloaded = load_book(str(fixed_path), try_repair=False)
+
+        fixed_text = "\n".join(
+            extract_visible_text(tag)
+            for _, _, tags in list(iter_text_nodes(reloaded))
+            for tag in tags
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(result["replacement_total"], 4)
+        self.assertTrue(fixed_path.name.endswith("_glossary_fixed.epub"))
+        self.assertTrue(fixed_exists)
+        self.assertTrue(report_exists)
+        self.assertTrue(progress)
+        self.assertEqual(progress[-1][0], progress[-1][1])
+        self.assertIn("久堂警部は星门へ向かった。", fixed_text)
+        self.assertIn("星门", extract_toc_titles(reloaded))
+        self.assertEqual(reloaded.get_metadata("DC", "title")[0][0], "星门の本")
+
 
 class PipelineTests(unittest.TestCase):
     def _minimal_config(self):
@@ -316,6 +470,7 @@ class PipelineTests(unittest.TestCase):
             "api_timeout": 120,
             "extract_glossary": False,
             "enable_glossary": False,
+            "enable_layered_glossary": False,
             "enable_thinking": False,
             "enable_proofread": False,
             "proofread_genre": "general",
@@ -394,6 +549,193 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(captured["proofread_genre"], "mystery")
         self.assertEqual(captured["proofread_tone"], "light")
         self.assertEqual(captured["enable_prompt_examples"], True)
+
+    def test_layered_glossary_disabled_keeps_default_global_glossary_loading(self):
+        cfg = self._minimal_config()
+        cfg.update(
+            {
+                "enable_glossary": True,
+                "enable_layered_glossary": False,
+                "use_global_glossary": False,
+                "use_book_glossary": True,
+            }
+        )
+        ctx = PipelineContext(config=cfg, extra={"title": "Book.epub"})
+
+        override, fingerprint = _build_glossary_override(ctx)
+
+        self.assertIsNone(override)
+        self.assertEqual(fingerprint, "")
+        self.assertEqual(ctx.extra["glossary_profile_ids"], [])
+
+    def test_layered_glossary_enabled_builds_profile_override(self):
+        with temp_test_dir() as tmp:
+            data_dir = Path(tmp)
+            upsert_profile(
+                data_dir,
+                name="Book",
+                scope="book",
+                terms={"Item": [{"original": "星门", "translation": "星门"}]},
+                source_book="Book",
+            )
+            cfg = self._minimal_config()
+            cfg.update(
+                {
+                    "enable_glossary": True,
+                    "enable_layered_glossary": True,
+                    "use_global_glossary": False,
+                    "use_book_glossary": True,
+                }
+            )
+            ctx = PipelineContext(config=cfg, extra={"title": "Book.epub"})
+
+            with mock.patch("translator.get_data_dir", return_value=data_dir):
+                override, fingerprint = _build_glossary_override(ctx)
+
+        self.assertEqual(override["Item"][0]["translation"], "星门")
+        self.assertTrue(fingerprint)
+        self.assertEqual(len(ctx.extra["glossary_profile_ids"]), 1)
+
+    def test_explicit_glossary_profile_ids_work_without_layered_switch(self):
+        with temp_test_dir() as tmp:
+            data_dir = Path(tmp)
+            profile = upsert_profile(
+                data_dir,
+                name="已提取本书",
+                scope="book",
+                terms={"Person": [{"original": "久堂", "translation": "久堂警部"}]},
+                source_book="Book",
+            )
+            cfg = self._minimal_config()
+            cfg.update(
+                {
+                    "enable_glossary": True,
+                    "enable_layered_glossary": False,
+                    "use_global_glossary": False,
+                    "glossary_profile_ids": [profile["id"]],
+                }
+            )
+            ctx = PipelineContext(config=cfg, extra={"title": "DifferentName.epub"})
+
+            with mock.patch("translator.get_data_dir", return_value=data_dir):
+                override, fingerprint = _build_glossary_override(ctx)
+
+        self.assertEqual(override["Person"][0]["translation"], "久堂警部")
+        self.assertTrue(fingerprint)
+        self.assertEqual(ctx.extra["glossary_profile_ids"], [profile["id"]])
+
+    def test_layered_glossary_uses_explicit_book_profile_name(self):
+        with temp_test_dir() as tmp:
+            data_dir = Path(tmp)
+            upsert_profile(
+                data_dir,
+                name="系列第一卷",
+                scope="book",
+                terms={"Person": [{"original": "久堂", "translation": "久堂警部"}]},
+                source_book="fixture",
+            )
+            cfg = self._minimal_config()
+            cfg.update(
+                {
+                    "enable_glossary": True,
+                    "enable_layered_glossary": True,
+                    "use_global_glossary": False,
+                    "use_book_glossary": True,
+                    "book_glossary_name": "系列第一卷",
+                }
+            )
+            ctx = PipelineContext(config=cfg, extra={"title": "DifferentName.epub"})
+
+            with mock.patch("translator.get_data_dir", return_value=data_dir):
+                override, fingerprint = _build_glossary_override(ctx)
+
+        self.assertEqual(override["Person"][0]["translation"], "久堂警部")
+        self.assertTrue(fingerprint)
+        self.assertEqual(len(ctx.extra["glossary_profile_ids"]), 1)
+
+    def test_glossary_post_apply_uses_explicit_profiles_without_layered_switch(self):
+        with temp_test_dir() as tmp:
+            data_dir = Path(tmp)
+            profile = upsert_profile(
+                data_dir,
+                name="后处理 profile",
+                scope="book",
+                terms={"Location": [{"original": "星門", "translation": "星门"}]},
+                source_book="Book",
+            )
+            cfg = self._minimal_config()
+            cfg.update(
+                {
+                    "enable_glossary": True,
+                    "enable_layered_glossary": False,
+                    "use_global_glossary": False,
+                    "glossary_profile_ids": [profile["id"]],
+                }
+            )
+
+            with mock.patch("translator.get_data_dir", return_value=data_dir):
+                glossary, meta = resolve_effective_glossary(cfg)
+
+        self.assertEqual(glossary["Location"][0]["translation"], "星门")
+        self.assertEqual(meta["profile_ids"], [profile["id"]])
+
+    def test_glossary_post_apply_terms_are_conservative(self):
+        glossary = {
+            "Person": [{"original": "久堂", "translation": "久堂警部"}],
+            "Location": [{"original": "星門", "translation": "星门"}],
+            "Item": [
+                {"original": "猫", "translation": "猫咪"},
+                {"original": "能面島", "translation": "能面岛", "policy": "preserve"},
+            ],
+        }
+
+        terms = flatten_replacement_terms(glossary)
+        updated, changes = apply_terms_to_text("久堂は星門へ向かった。猫は能面島に残った。", terms)
+
+        self.assertEqual(updated, "久堂警部は星门へ向かった。猫は能面島に残った。")
+        self.assertEqual({item["original"] for item in terms}, {"久堂", "星門"})
+        self.assertEqual(sum(int(item["count"]) for item in changes), 2)
+
+    def test_translate_bridge_make_config_disables_legacy_auto_extract(self):
+        qml_root = Path(__file__).resolve().parents[1] / "experimental" / "qml_v4"
+        if str(qml_root) not in sys.path:
+            sys.path.insert(0, str(qml_root))
+        from backend.translate_bridge import TranslateBridge
+
+        class FakeCfg:
+            inp = "in.epub"
+            out = "out.epub"
+            apiKey = "test-key"
+            provider = "deepseek"
+            apiUrl = "https://example.test/chat/completions"
+            model = "deepseek-v4-flash"
+            extractGlossary = True
+            enableGlossary = True
+            enableLayeredGlossary = True
+            useGlobalGlossary = True
+            useGenreGlossary = True
+            useSeriesGlossary = False
+            useBookGlossary = True
+            preExtractGlossary = True
+            seriesGlossaryName = ""
+            bookGlossaryName = "系列第一卷"
+            maxWorkers = 1
+            batchSize = 1
+            maxBatchLength = 800
+            maxTextSizeForBatch = 200
+            apiTimeout = 120
+            direction = "zh"
+            enableThinking = False
+            enableProofread = False
+            proofreadGenre = "general"
+            proofreadTone = "neutral"
+
+        config = TranslateBridge()._make_config(FakeCfg())
+
+        self.assertFalse(config["extract_glossary"])
+        self.assertFalse(config["pre_extract_glossary"])
+        self.assertTrue(config["enable_layered_glossary"])
+        self.assertEqual(config["book_glossary_name"], "系列第一卷")
 
     def test_batch_translate_stage_stores_results_and_ordered_results(self):
         class FakeTranslator:
@@ -1298,13 +1640,18 @@ class TranslatorTests(unittest.TestCase):
         self.assertTrue(JaZhTranslator._is_incomplete_translation("source", text))
 
     def test_reading_puzzle_rule_does_not_hide_japanese_grammar_residue(self):
-        text = (
-            "没有设置时钟的，是や行的'い'和'え'，"
-            "それからわ行の'う'。"
-        )
-        self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(text))
-        fragments = JaZhTranslator.japanese_residue_fragments(text)
-        self.assertTrue(any("それから" in fragment for fragment in fragments))
+        with temp_test_dir() as d:
+            tq.configure_data_dir(lambda: Path(d))
+            try:
+                text = (
+                    "没有设置时钟的，是や行的'い'和'え'，"
+                    "それからわ行の'う'。"
+                )
+                self.assertTrue(JaZhTranslator.has_blocking_japanese_residue(text))
+                fragments = JaZhTranslator.japanese_residue_fragments(text)
+                self.assertTrue(any("それから" in fragment for fragment in fragments))
+            finally:
+                tq.configure_data_dir(get_data_dir)
 
     def test_save_time_repairs_known_residue_from_hymt2_cache(self):
         text = "从佐渡平安回来的人被称为“ドサ帰り”，在流浪者中被视为最高荣誉的勋章。"
@@ -1378,18 +1725,23 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(repaired, "“去哪里呢？”")
 
     def test_residue_classifier_splits_risk_levels(self):
-        cases = [
-            ("彼女は笑った。そして走った。", "high", True),
-            ("她还是说でも要去。", "medium", True),
-            ("今年的《生きて明日なく》非常出色，她拥有很多粉丝。", "low", True),
-            ("这句话里有一处小さ假名。", "weak", False),
-            ("她笑了。", "none", False),
-        ]
-        for text, risk, blocking in cases:
-            with self.subTest(text=text):
-                result = tq.classify_japanese_residue(text)
-                self.assertEqual(result["risk"], risk)
-                self.assertEqual(result["blocking"], blocking)
+        with temp_test_dir() as d:
+            tq.configure_data_dir(lambda: Path(d))
+            try:
+                cases = [
+                    ("彼女は笑った。そして走った。", "high", True),
+                    ("她还是说でも要去。", "medium", True),
+                    ("今年的《生きて明日なく》非常出色，她拥有很多粉丝。", "low", True),
+                    ("这句话里有一处小さ假名。", "weak", False),
+                    ("她笑了。", "none", False),
+                ]
+                for text, risk, blocking in cases:
+                    with self.subTest(text=text):
+                        result = tq.classify_japanese_residue(text)
+                        self.assertEqual(result["risk"], risk)
+                        self.assertEqual(result["blocking"], blocking)
+            finally:
+                tq.configure_data_dir(get_data_dir)
 
     def test_save_time_repairs_inline_furigana_in_long_sentence(self):
         text = "后来我们经过熟田津 にぎたづ 爱媛一带，又在旅途中听老人说起那座港口的旧名。"

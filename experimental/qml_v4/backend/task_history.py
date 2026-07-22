@@ -60,6 +60,14 @@ def sanitize_config(config: Mapping[str, Any]) -> Dict[str, Any]:
             continue
         if isinstance(value, (str, int, float, bool)) or value is None:
             result[key] = value
+        elif isinstance(value, (list, tuple)):
+            cleaned = [
+                str(item)
+                for item in value
+                if isinstance(item, (str, int, float)) and str(item).strip()
+            ]
+            if cleaned:
+                result[key] = cleaned
     return result
 
 
