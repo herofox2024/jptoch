@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 logger = logging.getLogger(__name__)
 
 from backend.toast_bridge import ToastBridge
+from glossary_store import normalize_aliases
 
 GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
 
@@ -40,6 +41,7 @@ ROLE_TRANSLATION = Qt.UserRole + 3
 ROLE_NOTE = Qt.UserRole + 4
 ROLE_SOURCE_INDEX = Qt.UserRole + 5
 ROLE_POLICY = Qt.UserRole + 6
+ROLE_ALIASES = Qt.UserRole + 7
 
 
 class GlossaryModel(QAbstractListModel):
@@ -65,6 +67,7 @@ class GlossaryModel(QAbstractListModel):
             ROLE_NOTE: b"note",
             ROLE_SOURCE_INDEX: b"sourceIndex",
             ROLE_POLICY: b"policy",
+            ROLE_ALIASES: b"aliases",
         }
 
     def data(self, index, role=Qt.DisplayRole):
@@ -83,6 +86,8 @@ class GlossaryModel(QAbstractListModel):
             return self._filtered[index.row()][0]
         if role == ROLE_POLICY:
             return self._policy_label(row.get("policy", ""))
+        if role == ROLE_ALIASES:
+            return row.get("aliases", "")
         if role == Qt.DisplayRole:
             return row.get("original", "")
         return None
@@ -107,6 +112,8 @@ class GlossaryModel(QAbstractListModel):
             row["note"] = self._make_note(info, source)
         elif role == ROLE_POLICY:
             row["policy"] = self._policy_value(str(value))
+        elif role == ROLE_ALIASES:
+            row["aliases"] = self._aliases_text(value)
         else:
             return False
         self._all_rows[src_idx] = row
@@ -164,6 +171,10 @@ class GlossaryModel(QAbstractListModel):
         parts.append(cls._source_label(source))
         return "；".join(parts)
 
+    @staticmethod
+    def _aliases_text(value) -> str:
+        return "、".join(normalize_aliases(value))
+
     @classmethod
     def _make_row(
         cls,
@@ -173,6 +184,7 @@ class GlossaryModel(QAbstractListModel):
         info: str = "",
         source: str = "",
         policy: str = "",
+        aliases=None,
     ) -> Dict[str, str]:
         return {
             "category": str(category or "Item").strip() or "Item",
@@ -181,6 +193,7 @@ class GlossaryModel(QAbstractListModel):
             "info": str(info or "").strip(),
             "source": str(source or "").strip(),
             "policy": cls._policy_value(policy),
+            "aliases": cls._aliases_text(aliases),
             "note": cls._make_note(info, source),
         }
 
@@ -228,6 +241,9 @@ class GlossaryModel(QAbstractListModel):
         policy = cls._policy_value(row.get("policy", ""))
         if policy:
             entry["policy"] = policy
+        aliases = cls._aliases_text(row.get("aliases", ""))
+        if aliases:
+            entry["aliases"] = normalize_aliases(aliases)
         return category, entry
 
     def load_from_disk(self):
@@ -253,8 +269,9 @@ class GlossaryModel(QAbstractListModel):
                 info = str(entry.get("info", "")).strip()
                 source = str(entry.get("source", "")).strip()
                 policy = str(entry.get("policy", entry.get("enforcement", ""))).strip()
+                aliases = entry.get("aliases", [])
                 if original and translation:
-                    rows.append(self._make_row(category, original, translation, info, source, policy))
+                    rows.append(self._make_row(category, original, translation, info, source, policy, aliases))
         self._all_rows = rows
         self._dirty = False
         self._apply_filter()
@@ -413,7 +430,7 @@ class GlossaryModel(QAbstractListModel):
                 continue
             searchable = " ".join(
                 str(row.get(key, ""))
-                for key in ("category", "original", "translation", "note", "info", "source", "policy")
+                for key in ("category", "original", "translation", "aliases", "note", "info", "source", "policy")
             )
             searchable = f"{searchable} {self._policy_label(row.get('policy', ''))}".lower()
             if self._query and self._query not in searchable:

@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from glossary_store import (
     DEFAULT_GLOSSARY_CATEGORIES,
+    glossary_prompt_payload,
     merge_glossaries,
     normalize_glossary_payload,
 )
@@ -258,6 +259,6 @@ def resolve_profile_ids(
 
 
 def glossary_fingerprint(glossary: Dict[str, Any]) -> str:
-    normalized, _ = normalize_glossary_payload(glossary or {})
+    normalized = glossary_prompt_payload(glossary or {})
     compact = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(compact.encode("utf-8")).hexdigest()

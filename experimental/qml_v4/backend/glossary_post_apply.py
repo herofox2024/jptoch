@@ -9,6 +9,7 @@ a report. It does not try to guess or rewrite inconsistent Chinese synonyms.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections import defaultdict
@@ -29,10 +30,13 @@ from epub_io import (
 from glossary_store import (
     DEFAULT_GLOSSARY_CATEGORIES,
     find_glossary_match_spans,
+    normalize_aliases,
     normalize_glossary_payload,
     normalize_policy,
 )
 from translation_cache import load_json_file
+
+logger = logging.getLogger(__name__)
 
 
 def _empty_glossary() -> Dict[str, List[Dict[str, str]]]:
@@ -107,6 +111,29 @@ def flatten_replacement_terms(glossary: Dict[str, Any]) -> List[Dict[str, str]]:
     normalized, _ = normalize_glossary_payload(glossary or {})
     terms: List[Dict[str, str]] = []
     seen = set()
+
+    def _add_match(match: str, translation: str, *, category: str, policy: str, original: str, kind: str) -> None:
+        match = str(match or "").strip()
+        translation = str(translation or "").strip()
+        if not match or not translation or match == translation:
+            return
+        if len(match) < 2:
+            return
+        key = (match, translation)
+        if key in seen:
+            return
+        seen.add(key)
+        terms.append(
+            {
+                "match": match,
+                "original": original,
+                "translation": translation,
+                "category": category,
+                "policy": policy,
+                "kind": kind,
+            }
+        )
+
     for category in DEFAULT_GLOSSARY_CATEGORIES:
         for entry in normalized.get(category, []):
             if not isinstance(entry, dict):
@@ -116,23 +143,14 @@ def flatten_replacement_terms(glossary: Dict[str, Any]) -> List[Dict[str, str]]:
             policy = normalize_policy(entry.get("policy", entry.get("enforcement", "")))
             if not original or not translation or original == translation:
                 continue
-            if len(original) < 2:
-                continue
             if policy in {"ignore", "preserve"}:
                 continue
-            key = (original, translation)
-            if key in seen:
-                continue
-            seen.add(key)
-            terms.append(
-                {
-                    "original": original,
-                    "translation": translation,
-                    "category": category,
-                    "policy": policy,
-                }
-            )
-    terms.sort(key=lambda item: (-len(item["original"]), item["original"], item["translation"]))
+            _add_match(original, translation, category=category, policy=policy, original=original, kind="source")
+            for alias in normalize_aliases(entry.get("aliases")):
+                if alias in {original, translation}:
+                    continue
+                _add_match(alias, translation, category=category, policy=policy, original=original, kind="alias")
+    terms.sort(key=lambda item: (-len(item["match"]), item["match"], item["translation"]))
     return terms
 
 
@@ -143,18 +161,20 @@ def apply_terms_to_text(text: str, terms: List[Dict[str, str]]) -> Tuple[str, Li
         return value, changes
 
     for term in terms:
-        original = term["original"]
+        match = term.get("match") or term["original"]
         translation = term["translation"]
-        spans = find_glossary_match_spans(value, original)
+        spans = find_glossary_match_spans(value, match)
         if not spans:
             continue
         for start, end in reversed(spans):
             value = value[:start] + translation + value[end:]
         changes.append(
             {
-                "original": original,
+                "match": match,
+                "original": term.get("original", match),
                 "translation": translation,
                 "category": term.get("category", "Item"),
+                "kind": term.get("kind", "source"),
                 "count": len(spans),
             }
         )
@@ -204,10 +224,11 @@ def _write_report(payload: Dict[str, Any]) -> Tuple[str, str]:
         lines.append("- none")
     else:
         for sample in samples:
+            source = sample.get("match") or sample.get("original", "")
             lines.append(
-                "- {file}: {original} -> {translation} ({count})".format(
+                "- {file}: {source} -> {translation} ({count})".format(
                     file=sample.get("file", "-"),
-                    original=sample.get("original", ""),
+                    source=source,
                     translation=sample.get("translation", ""),
                     count=sample.get("count", 0),
                 )
@@ -229,6 +250,7 @@ def apply_glossary_to_epub(
 
     terms = flatten_replacement_terms(glossary)
     if not terms:
+        logger.info("术语后处理跳过: 当前术语范围没有可用于替换的术语, input=%s", source_path)
         return {
             "ok": False,
             "message": "当前术语范围没有可用于后处理替换的术语",
@@ -276,14 +298,17 @@ def apply_glossary_to_epub(
                 for change in changes:
                     count = int(change.get("count") or 0)
                     replacement_total += count
-                    key = (file_name, change["original"], change["translation"])
+                    source_text = change.get("match") or change["original"]
+                    key = (file_name, source_text, change["translation"])
                     aggregate[key] += count
                     if len(samples) < 30:
                         samples.append(
                             {
                                 "file": file_name,
                                 "original": change["original"],
+                                "match": source_text,
                                 "translation": change["translation"],
+                                "kind": change.get("kind", "source"),
                                 "count": count,
                             }
                         )
@@ -301,14 +326,17 @@ def apply_glossary_to_epub(
             for change in changes:
                 count = int(change.get("count") or 0)
                 replacement_total += count
-                key = ("toc", change["original"], change["translation"])
+                source_text = change.get("match") or change["original"]
+                key = ("toc", source_text, change["translation"])
                 aggregate[key] += count
                 if len(samples) < 30:
                     samples.append(
                         {
                             "file": "toc",
                             "original": change["original"],
+                            "match": source_text,
                             "translation": change["translation"],
+                            "kind": change.get("kind", "source"),
                             "count": count,
                         }
                     )
@@ -327,7 +355,8 @@ def apply_glossary_to_epub(
                 for change in changes:
                     count = int(change.get("count") or 0)
                     replacement_total += count
-                    key = ("metadata:title", change["original"], change["translation"])
+                    source_text = change.get("match") or change["original"]
+                    key = ("metadata:title", source_text, change["translation"])
                     aggregate[key] += count
     except Exception:
         pass
@@ -335,9 +364,14 @@ def apply_glossary_to_epub(
     if replacement_total <= 0:
         completed_units = total_units
         _emit_progress()
+        logger.info(
+            "术语后处理未匹配: input=%s, terms=%s, changed_documents=0",
+            source_path,
+            len(terms),
+        )
         return {
             "ok": False,
-            "message": "没有在已翻译 EPUB 中匹配到需要替换的术语原文",
+            "message": "没有在已翻译 EPUB 中匹配到需要替换的术语原文或中文别名",
             "input_path": str(source_path),
             "output_path": "",
             "term_count": len(terms),
@@ -366,6 +400,20 @@ def apply_glossary_to_epub(
         ],
     }
     report_path, text_report_path = _write_report(report_payload)
+    sample_text = " | ".join(
+        f"{item.get('match') or item.get('original')}->{item.get('translation')}({item.get('count')})"
+        for item in samples[:8]
+    )
+    logger.info(
+        "术语后处理完成: input=%s, output=%s, 替换 %s 处, 变更文档 %s 个, 术语候选 %s 条, 报告=%s%s",
+        source_path,
+        out_path,
+        replacement_total,
+        changed_documents,
+        len(terms),
+        report_path,
+        f", 样例: {sample_text}" if sample_text else "",
+    )
     return {
         "ok": True,
         "message": f"术语后处理完成: 替换 {replacement_total} 处，输出 {out_path.name}",

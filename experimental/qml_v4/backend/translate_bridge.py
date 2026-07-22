@@ -1327,6 +1327,12 @@ class _GlossaryPostApplyWorker(QObject):
             self.statusChanged.emit("正在解析当前术语范围...")
             self.progressChanged.emit(0, 1)
             glossary, meta = resolve_effective_glossary(self._config)
+            logger.info(
+                "术语统一范围: source=%s, profile_count=%s, profile_ids=%s",
+                meta.get("source", "-"),
+                meta.get("profile_count", 0),
+                ",".join(meta.get("profile_ids", []) or []) or "-",
+            )
             if self._cancel_event.is_set():
                 self.failed.emit("术语后处理已取消")
                 return
@@ -1356,7 +1362,20 @@ class _GlossaryPostApplyWorker(QObject):
                     result = dict(result or {})
                     if result.get("ok"):
                         succeeded.append(result)
+                        logger.info(
+                            "术语统一单本完成: input=%s, output=%s, 替换 %s 处, 变更文档 %s 个, report=%s",
+                            result.get("input_path", source_path),
+                            result.get("output_path", ""),
+                            int(result.get("replacement_total") or 0),
+                            int(result.get("changed_documents") or 0),
+                            result.get("report_path", ""),
+                        )
                     else:
+                        logger.info(
+                            "术语统一单本未替换: input=%s, reason=%s",
+                            source_path,
+                            str(result.get("message") or "没有执行替换"),
+                        )
                         failed.append(
                             {
                                 "input_path": source_path,
@@ -1377,6 +1396,7 @@ class _GlossaryPostApplyWorker(QObject):
                 "failed_items": failed,
                 "output_paths": [item.get("output_path", "") for item in succeeded if item.get("output_path")],
                 "input_count": len(source_paths),
+                "replacement_total": sum(int(item.get("replacement_total") or 0) for item in succeeded),
             }
             if len(source_paths) == 1 and succeeded:
                 payload.update(succeeded[0])
@@ -1385,6 +1405,13 @@ class _GlossaryPostApplyWorker(QObject):
             else:
                 first_error = failed[0]["message"] if failed else "没有生成输出 EPUB"
                 payload["message"] = f"术语统一失败: {first_error}"
+            logger.info(
+                "术语统一批处理完成: 成功 %s/%s 本, 失败 %s 本, 总替换 %s 处",
+                len(succeeded),
+                len(source_paths),
+                len(failed),
+                int(payload.get("replacement_total") or 0),
+            )
             self.progressChanged.emit(1, 1)
             self.finished.emit(payload)
         except Exception as exc:

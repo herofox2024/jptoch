@@ -18,6 +18,7 @@ import translation_quality as tq
 from glossary_store import normalize_glossary_payload as gs_normalize_glossary_payload
 from glossary_store import merge_glossaries as gs_merge_glossaries
 from glossary_store import clean_new_terms as gs_clean_new_terms
+from glossary_store import glossary_prompt_payload as gs_glossary_prompt_payload
 from glossary_store import select_glossary_entries as gs_select_glossary_entries
 from glossary_store import build_glossary_text as gs_build_glossary_text
 from glossary_store import rebuild_glossary_index as gs_rebuild_glossary_index
@@ -872,7 +873,8 @@ class JaZhTranslator:
             override_glossary, _ = gs_normalize_glossary_payload(glossary_override or {})
             has_terms = any(bool(override_glossary.get(category)) for category in DEFAULT_GLOSSARY_CATEGORIES)
             if has_terms and not self.glossary_fingerprint:
-                compact = json.dumps(override_glossary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                prompt_glossary = gs_glossary_prompt_payload(override_glossary)
+                compact = json.dumps(prompt_glossary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                 self.glossary_fingerprint = hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
 
         if self.enable_glossary:

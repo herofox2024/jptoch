@@ -28,7 +28,7 @@ from epub_io import (
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError, get_data_dir
-from glossary_store import rebuild_glossary_index
+from glossary_store import glossary_prompt_payload, rebuild_glossary_index
 from provider_registry import normalize_api_url, provider_default_model, provider_default_url
 from provider_client import apply_payload_options, is_content_moderation_http_error
 from quality_rules import is_suspicious_translation_pair
@@ -295,6 +295,28 @@ class ExtractedModuleTests(unittest.TestCase):
             self.assertTrue(any(entry["original"] == "时钟" for entry in merged["Item"]))
             self.assertEqual(len(selected), 1)
             self.assertTrue(glossary_fingerprint(merged))
+
+    def test_glossary_aliases_are_saved_but_ignored_by_translation_prompt_payload(self):
+        payload = {
+            "Location": [
+                {
+                    "original": "星門",
+                    "translation": "星门",
+                    "aliases": ["星之门", "星门之门", "星门"],
+                }
+            ]
+        }
+
+        normalized, stats = JaZhTranslator.normalize_glossary_payload(payload)
+        prompt_payload = glossary_prompt_payload(normalized)
+
+        self.assertEqual(stats["accepted"], 1)
+        self.assertEqual(normalized["Location"][0]["aliases"], ["星之门", "星门之门"])
+        self.assertNotIn("aliases", prompt_payload["Location"][0])
+        self.assertEqual(
+            glossary_fingerprint(payload),
+            glossary_fingerprint({"Location": [{"original": "星門", "translation": "星门"}]}),
+        )
 
     def test_glossary_profile_priority_prefers_book_scope(self):
         with temp_test_dir() as tmp:
@@ -695,6 +717,24 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(updated, "久堂警部は星门へ向かった。猫は能面島に残った。")
         self.assertEqual({item["original"] for item in terms}, {"久堂", "星門"})
         self.assertEqual(sum(int(item["count"]) for item in changes), 2)
+
+    def test_glossary_post_apply_replaces_chinese_aliases_only_in_post_apply_terms(self):
+        glossary = {
+            "Location": [
+                {
+                    "original": "星門",
+                    "translation": "星门",
+                    "aliases": ["星之门", "星门之门"],
+                }
+            ]
+        }
+
+        terms = flatten_replacement_terms(glossary)
+        updated, changes = apply_terms_to_text("星之门在山顶，星门之门在旧译本里。星门不变。", terms)
+
+        self.assertEqual(updated, "星门在山顶，星门在旧译本里。星门不变。")
+        self.assertIn("星之门", {item["match"] for item in changes})
+        self.assertIn("星门之门", {item["match"] for item in changes})
 
     def test_translate_bridge_make_config_disables_legacy_auto_extract(self):
         qml_root = Path(__file__).resolve().parents[1] / "experimental" / "qml_v4"

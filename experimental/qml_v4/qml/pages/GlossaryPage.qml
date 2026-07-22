@@ -505,9 +505,10 @@ Page {
                     spacing: AppStyle.spacingNone
                     TableHeader { w: 56; text: "选择"; first: true }
                     TableHeader { w: 104; text: "分类" }
-                    TableHeader { w: 240; text: "原文" }
-                    TableHeader { w: 240; text: "译文" }
-                    TableHeader { w: 132; text: "应用策略" }
+                    TableHeader { w: 210; text: "原文" }
+                    TableHeader { w: 210; text: "译文" }
+                    TableHeader { w: 220; text: "中文别名" }
+                    TableHeader { w: 120; text: "应用策略" }
                     TableHeader { w: -1; text: "备注/来源"; last: true }
                 }
 
@@ -570,20 +571,26 @@ Page {
                                 onCommit: function(text) { model.category = text; page.dirty = true; page.refreshStats() }
                             }
                             CellEditor {
-                                w: 240
+                                w: 210
                                 value: original || ""
                                 editable: cfg ? cfg.enableGlossary : true
                                 onCommit: function(text) { model.original = text; page.dirty = true; page.refreshStats() }
                             }
                             CellEditor {
-                                w: 240
+                                w: 210
                                 value: translation || ""
                                 editable: cfg ? cfg.enableGlossary : true
                                 accent: true
                                 onCommit: function(text) { model.translation = text; page.dirty = true; page.refreshStats() }
                             }
+                            CellEditor {
+                                w: 220
+                                value: aliases || ""
+                                editable: cfg ? cfg.enableGlossary : true
+                                onCommit: function(text) { model.aliases = text; page.dirty = true; page.refreshStats() }
+                            }
                             PolicySelector {
-                                w: 132
+                                w: 120
                                 value: policy || "默认策略"
                                 editable: cfg ? cfg.enableGlossary : true
                                 onCommit: function(text) { model.policy = text; page.dirty = true; page.refreshStats() }

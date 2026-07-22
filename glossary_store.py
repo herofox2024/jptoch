@@ -1,8 +1,83 @@
 import json
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
+GLOSSARY_ALIAS_KEYS = ("aliases", "alias", "zh_aliases", "chinese_aliases", "中文别名", "别名", "variants")
+
+
+def normalize_aliases(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        for prefix in ("中文别名:", "中文别名：", "别名:", "别名：", "aliases:", "alias:"):
+            if text.lower().startswith(prefix.lower()):
+                text = text[len(prefix):].strip()
+                break
+        raw_items = re_split_aliases(text)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = []
+        for item in value:
+            raw_items.extend(normalize_aliases(item))
+    else:
+        raw_items = [str(value).strip()]
+
+    result: List[str] = []
+    for item in raw_items:
+        alias = str(item or "").strip()
+        if len(alias) < 2:
+            continue
+        if alias and alias not in result:
+            result.append(alias)
+    return result
+
+
+def re_split_aliases(text: str) -> List[str]:
+    return [part.strip() for part in re.split(r"[\n,，;；、|]+", str(text or "")) if part.strip()]
+
+
+def _entry_aliases(entry: Dict[str, Any]) -> List[str]:
+    if not isinstance(entry, dict):
+        return []
+    aliases: List[str] = []
+    for key in GLOSSARY_ALIAS_KEYS:
+        if key in entry:
+            for alias in normalize_aliases(entry.get(key)):
+                if alias not in aliases:
+                    aliases.append(alias)
+    return aliases
+
+
+def _merge_aliases(base: Dict[str, Any], aliases: Any, *, original: str = "", translation: str = "") -> None:
+    current = normalize_aliases(base.get("aliases"))
+    for alias in normalize_aliases(aliases):
+        if alias in {str(original or "").strip(), str(translation or "").strip()}:
+            continue
+        if alias not in current:
+            current.append(alias)
+    if current:
+        base["aliases"] = current
+
+
+def glossary_prompt_payload(glossary: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Return glossary data used by translation prompts/cache keys.
+
+    Chinese aliases are post-translation normalization metadata and must not
+    change normal translation prompts or invalidate translation cache entries.
+    """
+
+    normalized, _ = normalize_glossary_payload(glossary or {})
+    prompt_payload: Dict[str, List[Dict[str, Any]]] = {c: [] for c in DEFAULT_GLOSSARY_CATEGORIES}
+    for category in DEFAULT_GLOSSARY_CATEGORIES:
+        for entry in normalized.get(category, []):
+            if not isinstance(entry, dict):
+                continue
+            prompt_payload[category].append(
+                {key: value for key, value in entry.items() if key != "aliases"}
+            )
+    return prompt_payload
 
 
 def normalize_policy(value: Any) -> str:
@@ -41,6 +116,7 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
         info_raw: Any = "",
         source_raw: Any = "",
         policy_raw: Any = "",
+        aliases_raw: Any = None,
     ):
         src = str(src_raw).strip()
         dst = str(dst_raw).strip()
@@ -66,6 +142,9 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
             entry["source"] = source
         if policy:
             entry["policy"] = policy
+        aliases = [alias for alias in normalize_aliases(aliases_raw) if alias not in {src, dst}]
+        if aliases:
+            entry["aliases"] = aliases
         normalized[category].append(entry)
         stats["accepted"] += 1
 
@@ -87,7 +166,15 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
                 info = item.get("info", "")
                 source = item.get("source", "")
                 policy = item.get("policy", item.get("enforcement", ""))
-                _add_entry(src, dst, category=category, info_raw=info, source_raw=source, policy_raw=policy)
+                _add_entry(
+                    src,
+                    dst,
+                    category=category,
+                    info_raw=info,
+                    source_raw=source,
+                    policy_raw=policy,
+                    aliases_raw=_entry_aliases(item),
+                )
         return normalized, stats
 
     for src, value in payload.items():
@@ -96,12 +183,14 @@ def normalize_glossary_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, List[
             info = value.get("info", "")
             source = value.get("source", "")
             policy = value.get("policy", value.get("enforcement", ""))
+            aliases = _entry_aliases(value)
         else:
             dst = value
             info = ""
             source = ""
             policy = ""
-        _add_entry(src, dst, category="Item", info_raw=info, source_raw=source, policy_raw=policy)
+            aliases = []
+        _add_entry(src, dst, category="Item", info_raw=info, source_raw=source, policy_raw=policy, aliases_raw=aliases)
 
     return normalized, stats
 
@@ -112,13 +201,13 @@ def merge_glossaries(
 ) -> Tuple[Dict[str, List[Dict[str, str]]], Dict[str, int]]:
     merged = {c: list(existing.get(c, [])) for c in DEFAULT_GLOSSARY_CATEGORIES}
     stats = {"added": 0, "skipped": 0, "conflicts": 0}
-    seen: Dict[str, str] = {}
+    seen: Dict[str, Dict[str, Any]] = {}
     for cat in DEFAULT_GLOSSARY_CATEGORIES:
         for entry in merged[cat]:
             original = str(entry.get("original", "")).strip()
             translation = str(entry.get("translation", "")).strip()
             if original and original not in seen:
-                seen[original] = translation
+                seen[original] = entry
 
     for cat in DEFAULT_GLOSSARY_CATEGORIES:
         for entry in incoming.get(cat, []):
@@ -127,18 +216,20 @@ def merge_glossaries(
             if not src or not dst:
                 stats["skipped"] += 1
                 continue
-            prev = seen.get(src)
-            if prev is not None:
-                if prev != dst:
+            prev_entry = seen.get(src)
+            if prev_entry is not None:
+                if str(prev_entry.get("translation", "")).strip() != dst:
                     stats["conflicts"] += 1
+                else:
+                    _merge_aliases(prev_entry, _entry_aliases(entry), original=src, translation=dst)
                 stats["skipped"] += 1
                 continue
             new_entry = {"original": src, "translation": dst}
-            for k in ("info", "source", "policy"):
+            for k in ("info", "source", "policy", "aliases"):
                 if k in entry and entry[k]:
                     new_entry[k] = entry[k]
             merged[cat].append(new_entry)
-            seen[src] = dst
+            seen[src] = new_entry
             stats["added"] += 1
     return merged, stats
 
@@ -171,6 +262,7 @@ def clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
         info = str(item.get("info", "")).strip()
         source = str(item.get("source", "auto")).strip() or "auto"
         policy = normalize_policy(item.get("policy", ""))
+        aliases = _entry_aliases(item)
         if not src or not dst or len(src) < 2 or len(dst) < 2:
             continue
         if src in stop_words or dst in stop_words:
@@ -186,6 +278,9 @@ def clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
         cleaned_item = {"src": src, "dst": dst, "category": category, "info": info, "source": source}
         if policy:
             cleaned_item["policy"] = policy
+        aliases = [alias for alias in aliases if alias not in {src, dst}]
+        if aliases:
+            cleaned_item["aliases"] = aliases
         cleaned.append(cleaned_item)
     return cleaned
 
