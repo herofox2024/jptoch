@@ -423,7 +423,7 @@ Page {
                             onClicked: { if (page.gbridge) page.gbridge.save() }
                         }
                         Button {
-                            text: "增量导入"
+                            text: "导入 JSON"
                             width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 92
                             height: AppStyle.buttonHeightSmall
@@ -433,7 +433,17 @@ Page {
                             onClicked: importDialog.open()
                         }
                         Button {
-                            text: "导出/备份"
+                            text: "导入 CSV"
+                            width: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 92
+                            height: AppStyle.buttonHeightSmall
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: AppStyle.fontSmall
+                            onClicked: importCsvDialog.open()
+                        }
+                        Button {
+                            text: "导出 JSON"
                             width: primaryActions.actionButtonWidth
                             Layout.minimumWidth: 96
                             height: AppStyle.buttonHeightSmall
@@ -441,6 +451,16 @@ Page {
                             rightPadding: 6
                             font.pixelSize: AppStyle.fontSmall
                             onClicked: exportDialog.open()
+                        }
+                        Button {
+                            text: "导出 CSV"
+                            width: primaryActions.actionButtonWidth
+                            Layout.minimumWidth: 92
+                            height: AppStyle.buttonHeightSmall
+                            leftPadding: 6
+                            rightPadding: 6
+                            font.pixelSize: AppStyle.fontSmall
+                            onClicked: exportCsvDialog.open()
                         }
                         Button {
                             text: "恢复备份"
@@ -631,7 +651,7 @@ Page {
                                 wrapMode: Text.WordWrap
                                 text: page.totalCount > 0
                                       ? "请调整搜索关键词、分类或来源筛选。"
-                                      : "可以新增术语，或通过“增量导入 JSON”导入已有术语表。"
+                                      : "可以新增术语，或通过“导入 JSON/CSV”导入已有术语表。"
                                 color: AppPalette.mutedText
                                 font.pixelSize: AppStyle.fontSmall
                             }
@@ -908,6 +928,19 @@ Page {
     }
 
     FileDialog {
+        id: importCsvDialog
+        title: "导入术语表 CSV"
+        nameFilters: ["CSV (*.csv)"]
+        fileMode: FileDialog.OpenFile
+        onAccepted: {
+            if (selectedFile && page.gbridge) {
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
+                page.gbridge.importCsv(p)
+            }
+        }
+    }
+
+    FileDialog {
         id: exportDialog
         title: "导出术语表 JSON"
         nameFilters: ["JSON (*.json)"]
@@ -917,6 +950,20 @@ Page {
                 var p = FilePathUtils.normalizeFileUrl(selectedFile)
                 if (!p.toLowerCase().endsWith(".json")) p += ".json"
                 page.gbridge.exportJson(p)
+            }
+        }
+    }
+
+    FileDialog {
+        id: exportCsvDialog
+        title: "导出术语表 CSV"
+        nameFilters: ["CSV (*.csv)"]
+        fileMode: FileDialog.SaveFile
+        onAccepted: {
+            if (selectedFile && page.gbridge) {
+                var p = FilePathUtils.normalizeFileUrl(selectedFile)
+                if (!p.toLowerCase().endsWith(".csv")) p += ".csv"
+                page.gbridge.exportCsv(p)
             }
         }
     }

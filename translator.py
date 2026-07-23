@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
+try:
+    import json_repair
+except Exception:  # pragma: no cover - optional dependency
+    json_repair = None
 import translation_quality as tq
 from glossary_store import normalize_glossary_payload as gs_normalize_glossary_payload
 from glossary_store import merge_glossaries as gs_merge_glossaries
@@ -82,6 +86,9 @@ class BatchJsonResult:
     finish_reason: Optional[str] = None
     is_truncated: bool = False
     raw_content: str = ""
+
+
+GLOSSARY_EXTRACTION_MODES = {"novel", "lite"}
 
 
 # YAML 模块延迟加载（可选依赖）
@@ -774,6 +781,7 @@ class JaZhTranslator:
         hymt2_generation_mode: str = "stable",
         hymt2_prompt_mode: str = "official",
         hymt2_runtime_mode: str = "cpu",
+        glossary_extraction_mode: str = "novel",
         glossary_fingerprint: str = "",
     ):
         self.provider = (provider or "deepseek").strip().lower()
@@ -804,6 +812,7 @@ class JaZhTranslator:
         self.hymt2_runtime_mode = str(hymt2_runtime_mode or "cpu").strip().lower()
         if self.hymt2_runtime_mode not in {"cpu", "gpu"}:
             self.hymt2_runtime_mode = "cpu"
+        self.glossary_extraction_mode = self._normalize_glossary_extraction_mode(glossary_extraction_mode)
         hymt2_official_mode = self.provider == "hymt2" and self.hymt2_generation_mode == "official"
         default_temperature = 0.7 if hymt2_official_mode else (0.1 if self.provider in {"sakura", "hymt2"} else 0.3)
         default_top_p = 0.6 if hymt2_official_mode else (0.3 if self.provider in {"sakura", "hymt2"} else None)
@@ -1023,7 +1032,7 @@ class JaZhTranslator:
         return normalize_api_url(url)
 
     @staticmethod
-    def _extract_json_object(raw: str) -> Optional[dict]:
+    def _extract_json_object(raw: str, prefer_new_terms: bool = False) -> Optional[dict]:
         """从模型返回中提取 JSON，兼容对象、数组、代码块与前后说明文字。"""
         if not raw:
             return None
@@ -1042,9 +1051,21 @@ class JaZhTranslator:
                     return True
             return False
 
+        def looks_like_glossary_terms_list(value: Any) -> bool:
+            if not isinstance(value, list) or not value:
+                return False
+            for item in value[:3]:
+                if isinstance(item, dict) and any(
+                    key in item for key in ("src", "original", "dst", "translation", "category", "policy", "info")
+                ):
+                    return True
+            return False
+
         def coerce(value: Any, allow_list: bool = True) -> Optional[dict]:
             if isinstance(value, dict):
                 return value
+            if allow_list and prefer_new_terms and looks_like_glossary_terms_list(value):
+                return {"new_terms": value}
             if allow_list and looks_like_translation_list(value):
                 return {"translations": value, "new_terms": []}
             return None
@@ -1062,14 +1083,27 @@ class JaZhTranslator:
                 if coerced is not None:
                     return coerced
             except (json.JSONDecodeError, ValueError):
-                pass
+                if json_repair is not None:
+                    try:
+                        parsed = json_repair.loads(candidate)
+                        coerced = coerce(parsed, allow_list=True)
+                        if coerced is not None:
+                            return coerced
+                    except Exception:
+                        pass
             decoder = json.JSONDecoder()
             fallback = None
             for match in re.finditer(r"[\{\[]", candidate):
                 try:
                     parsed, _ = decoder.raw_decode(candidate[match.start():])
                 except (json.JSONDecodeError, ValueError):
-                    continue
+                    if json_repair is not None:
+                        try:
+                            parsed = json_repair.loads(candidate[match.start():])
+                        except Exception:
+                            continue
+                    else:
+                        continue
                 allow_list = True
                 if isinstance(parsed, list):
                     prefix = candidate[max(0, match.start() - 40):match.start()]
@@ -2405,6 +2439,196 @@ class JaZhTranslator:
             logger.warning(f"截断续取请求失败: {e}")
             return "", None
 
+    def _call_glossary_extraction_json(
+        self,
+        texts: List[str],
+        *,
+        max_retries: int = 2,
+        extraction_mode: Optional[str] = None,
+    ) -> BatchJsonResult:
+        """Dedicated glossary extraction request with JSON repair/continuation."""
+        if not texts:
+            return BatchJsonResult(translations=[], new_terms=[], missing_indices=[], finish_reason="stop")
+
+        numbered = [{"idx": i, "text": t} for i, t in enumerate(texts)]
+        system_prompt = self._build_glossary_extraction_system_prompt(extraction_mode=extraction_mode)
+        user_prompt = (
+            "请从以下 JSON 数组中抽取术语，仅返回 JSON 对象，不要翻译正文：\n"
+            f"{json.dumps(numbered, ensure_ascii=False)}"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.1,
+            "top_p": 0.3,
+        }
+        apply_payload_options(payload, self.provider, self.enable_thinking)
+        if self.provider == "deepseek":
+            payload["response_format"] = {"type": "json_object"}
+
+        mode = self._normalize_glossary_extraction_mode(extraction_mode or self.glossary_extraction_mode)
+
+        def _parse_terms(raw_text: str) -> Tuple[Optional[dict], List[Dict[str, Any]]]:
+            obj = self._extract_json_object(raw_text, prefer_new_terms=True)
+            raw_terms: List[Dict[str, Any]] = []
+            if isinstance(obj, dict):
+                candidates = obj.get("new_terms", [])
+                if isinstance(candidates, list):
+                    raw_terms = candidates
+                elif isinstance(obj.get("translations"), list):
+                    raw_terms = obj.get("translations") or []
+            elif isinstance(obj, list):
+                raw_terms = obj
+            return obj if isinstance(obj, dict) else None, raw_terms
+
+        for attempt in range(max_retries):
+            if self.cancel_event.is_set():
+                raise RuntimeError("翻译已取消")
+            try:
+                self._wait_dynamic_backoff()
+                self._inc_stat("api_requests_total")
+                request_started = time.time()
+                resp = self.session.post(
+                    self.api_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=self.API_TIMEOUT,
+                )
+                self._log_api_request_event(
+                    "术语抽取",
+                    request_started,
+                    "ok" if 200 <= resp.status_code < 300 else "http_error",
+                    status_code=resp.status_code,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    batch_size=len(texts),
+                    messages=messages,
+                    source_text=numbered,
+                    response_text=getattr(resp, "text", ""),
+                    category=f"glossary_extract:{mode}",
+                )
+                if resp.status_code == 429:
+                    self._inc_stat("api_requests_failed")
+                    self._record_dynamic_limit_event("术语抽取 HTTP 429", kind="rate")
+                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    if self.cancel_event.wait(wait_time):
+                        raise RuntimeError("翻译已取消")
+                    continue
+                if resp.status_code == 502:
+                    self._inc_stat("api_requests_failed")
+                    raise FastFailError("术语抽取失败: HTTP 502 Bad Gateway（已按配置直接中断）")
+                resp.raise_for_status()
+                data = resp.json()
+                self._accumulate_usage_tokens(data)
+                choices = data.get("choices", [])
+                if not choices:
+                    self._inc_stat("batch_json_parse_fail")
+                    logger.warning("术语抽取缺少 choices，响应摘要: %s", self._response_snippet(getattr(resp, "text", "")))
+                    continue
+                message = choices[0].get("message", {})
+                raw = str(message.get("content", "") or "").strip()
+                if not raw:
+                    self._inc_stat("batch_json_parse_fail")
+                    logger.warning("术语抽取缺少 content，响应摘要: %s", self._response_snippet(getattr(resp, "text", "")))
+                    continue
+
+                finish_reason = self._get_finish_reason(data)
+                is_truncated = finish_reason == "length"
+                if is_truncated:
+                    accumulated_raw = raw
+                    continuations_used = 0
+                    continuation_prompt = "请继续输出未完成的 JSON，不要从头开始。"
+                    while continuations_used < self.MAX_CONTINUATIONS and finish_reason == "length":
+                        if self.cancel_event.is_set():
+                            break
+                        additional, new_finish = self._send_continuation_request(
+                            messages=messages,
+                            accumulated_content=accumulated_raw,
+                            continuation_prompt=continuation_prompt,
+                            headers={
+                                "Authorization": f"Bearer {self.api_key}",
+                                "Content-Type": "application/json",
+                            },
+                            base_payload={
+                                "model": self.model,
+                                "temperature": payload.get("temperature", 0.1),
+                                "top_p": payload.get("top_p", 0.3),
+                            },
+                        )
+                        if not additional:
+                            break
+                        accumulated_raw += additional
+                        finish_reason = new_finish
+                        continuations_used += 1
+                        self._inc_stat("truncation_continuation")
+                        logger.info("术语抽取截断续取 %s/%s", continuations_used, self.MAX_CONTINUATIONS)
+                    raw = accumulated_raw
+
+                obj, raw_terms = _parse_terms(raw)
+                if not raw_terms:
+                    self._inc_stat("batch_json_parse_fail")
+                    logger.warning("术语抽取解析失败，响应摘要: %s", self._response_snippet(raw))
+                    continue
+                if self._normalize_glossary_extraction_mode(mode) == "lite":
+                    filtered_terms = []
+                    for item in raw_terms:
+                        if not isinstance(item, dict):
+                            continue
+                        category = str(item.get("category", "")).strip()
+                        if category and category not in {"Person", "Location"}:
+                            continue
+                        if not category:
+                            item = {**item, "category": "Person"}
+                        filtered_terms.append(item)
+                    raw_terms = filtered_terms
+                if not raw_terms:
+                    self._inc_stat("batch_json_parse_fail")
+                    logger.info("术语抽取完成但没有通过模式过滤的术语: mode=%s", mode)
+                    return BatchJsonResult(translations=[], new_terms=[], missing_indices=[], finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw)
+                self._record_api_success_event()
+                logger.info(
+                    "术语抽取批次完成: mode=%s, input=%s, terms=%s, truncated=%s",
+                    mode,
+                    len(texts),
+                    len(raw_terms),
+                    is_truncated,
+                )
+                return BatchJsonResult(
+                    translations=[],
+                    new_terms=raw_terms,
+                    missing_indices=[],
+                    finish_reason=finish_reason,
+                    is_truncated=is_truncated,
+                    raw_content=raw,
+                )
+            except FastFailError:
+                raise
+            except requests.exceptions.Timeout as e:
+                self._inc_stat("api_requests_failed")
+                logger.warning("术语抽取超时 (尝试 %s/%s): %s", attempt + 1, max_retries, e)
+                if attempt + 1 >= max_retries:
+                    return BatchJsonResult(translations=None, new_terms=[], missing_indices=list(range(len(texts))), finish_reason=None, raw_content="")
+            except requests.exceptions.HTTPError as e:
+                self._inc_stat("api_requests_failed")
+                self._log_http_error_response(e, "术语抽取")
+                if self._is_content_moderation_http_error(e):
+                    raise ContentModerationError(str(e))
+                if attempt + 1 >= max_retries:
+                    return BatchJsonResult(translations=None, new_terms=[], missing_indices=list(range(len(texts))), finish_reason=None, raw_content=getattr(getattr(e, "response", None), "text", ""))
+            except Exception as e:
+                self._inc_stat("api_requests_failed")
+                logger.warning("术语抽取请求失败 (尝试 %s/%s): %s", attempt + 1, max_retries, e)
+                if attempt + 1 >= max_retries:
+                    return BatchJsonResult(translations=None, new_terms=[], missing_indices=list(range(len(texts))), finish_reason=None, raw_content="")
+        return BatchJsonResult(translations=None, new_terms=[], missing_indices=list(range(len(texts))), finish_reason=None, raw_content="")
+
     def get_stats(self) -> Dict[str, int]:
         with self._stats_lock:
             return dict(self.stats)
@@ -3182,6 +3406,50 @@ JSON 顶层字段：
 
         system_prompt = base_prompt + "\n" + extraction_rules
         return system_prompt.rstrip() + "\n\n" + self._build_style_guidance("translation")
+
+    @staticmethod
+    def _normalize_glossary_extraction_mode(value: Any) -> str:
+        mode = str(value or "").strip().lower()
+        if mode not in GLOSSARY_EXTRACTION_MODES:
+            return "novel"
+        return mode
+
+    def _build_glossary_extraction_system_prompt(self, extraction_mode: Optional[str] = None) -> str:
+        mode = self._normalize_glossary_extraction_mode(extraction_mode or self.glossary_extraction_mode)
+        if self._extraction_prompt_data:
+            template = self._extraction_prompt_data.get("glossary_extraction_prompt", "")
+            if template:
+                prompt = resolve_template_vars(
+                    template,
+                    target_lang="简体中文",
+                    extraction_mode=mode,
+                    glossary_extraction_mode=mode,
+                )
+            else:
+                prompt = ""
+        else:
+            prompt = ""
+
+        if not prompt:
+            prompt = "你是专业的日文术语提取助手。"
+
+        if mode == "lite":
+            prompt += (
+                "\n\n提取模式：精简模式。只提取人物名和地名；"
+                "不要提取普通名词、道具、组织、技能、注音、片假名噪声或说明性文字。"
+            )
+        else:
+            prompt += (
+                "\n\n提取模式：小说模式。优先提取人物名、地名、组织名、道具名、技能名和虚构生物名，"
+                "但仍然宁缺毋滥，不要提取普通名词或解释性文字。"
+            )
+
+        prompt += (
+            "\n\n输出要求：只输出 JSON 对象，顶层字段仅允许 new_terms。"
+            "new_terms 的每个元素格式为 {\"src\":\"原词\",\"dst\":\"译词\",\"category\":\"分类\"}。"
+            "不要输出解释、前后缀说明或代码块外文字。"
+        )
+        return prompt.rstrip()
 
     def _translation_task_instruction(self) -> str:
         """Return the user-facing translation instruction for the active style."""
@@ -4002,6 +4270,7 @@ JSON 顶层字段：
         batch_size: Optional[int] = None,
         max_chars: int = 60000,
         max_texts: int = 240,
+        extraction_mode: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, Any]:
         """Pre-extract glossary candidates before a full translation run."""
@@ -4030,25 +4299,47 @@ JSON 顶层字段：
             return {"terms": [], "glossary": {cat: [] for cat in self.glossary_categories}, "text_count": 0, "char_count": 0}
 
         effective_batch_size = max(1, min(int(batch_size or self.batch_size or 1), 12))
+        mode = self._normalize_glossary_extraction_mode(extraction_mode or self.glossary_extraction_mode)
         raw_terms: List[Dict[str, Any]] = []
-        old_extract_glossary = self.extract_glossary
-        self.extract_glossary = True
-        try:
-            total_batches = (len(selected) + effective_batch_size - 1) // effective_batch_size
-            for batch_index in range(total_batches):
-                if self.cancel_event.is_set():
-                    raise RuntimeError("术语预提取已取消")
-                start = batch_index * effective_batch_size
-                chunk = selected[start:start + effective_batch_size]
-                result = self._call_deepseek_batch_json(chunk, max_retries=2)
-                if result and isinstance(result.new_terms, list):
-                    raw_terms.extend(result.new_terms)
-                if progress_callback:
-                    progress_callback(batch_index + 1, total_batches)
-        finally:
-            self.extract_glossary = old_extract_glossary
+        total_batches = (len(selected) + effective_batch_size - 1) // effective_batch_size
+        for batch_index in range(total_batches):
+            if self.cancel_event.is_set():
+                raise RuntimeError("术语预提取已取消")
+            start = batch_index * effective_batch_size
+            chunk = selected[start:start + effective_batch_size]
+            result = self._call_glossary_extraction_json(
+                chunk,
+                max_retries=2,
+                extraction_mode=mode,
+            )
+            batch_terms = list(result.new_terms or []) if result else []
+            raw_terms.extend(batch_terms)
+            logger.info(
+                "术语预提取批次: %s/%s, mode=%s, texts=%s, raw_terms=%s",
+                batch_index + 1,
+                total_batches,
+                mode,
+                len(chunk),
+                len(batch_terms),
+            )
+            if progress_callback:
+                progress_callback(batch_index + 1, total_batches)
 
         cleaned = self._clean_new_terms(raw_terms)
+        if mode == "lite":
+            cleaned = [
+                term
+                for term in cleaned
+                if str(term.get("category", "")).strip() in {"Person", "Location"}
+            ]
+        logger.info(
+            "术语预提取完成: mode=%s, text_count=%s, char_count=%s, raw_terms=%s, cleaned_terms=%s",
+            mode,
+            len(selected),
+            char_total,
+            len(raw_terms),
+            len(cleaned),
+        )
         normalized_by_category = {cat: [] for cat in self.glossary_categories}
         seen = set()
         for term in cleaned:

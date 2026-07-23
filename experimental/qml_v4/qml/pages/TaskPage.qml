@@ -48,6 +48,10 @@ Page {
     property bool glossaryExtractionActive: false
     property var glossaryProfiles: []
     property var glossaryPostApplyBooks: []
+    property var glossaryExtractionModeValues: ["novel", "lite"]
+    property var glossaryExtractionModeLabels: ["小说向（novel）", "精简（lite）"]
+
+    onCfgChanged: syncGlossaryExtractionModeCombo()
 
     signal navigateToStatus()
     signal navigateToApi()
@@ -56,6 +60,22 @@ Page {
 
     function openManualEdit(src, dst) {
         manualEditDialog.openWith(src, dst)
+    }
+
+    function glossaryExtractionModeIndex(value) {
+        var idx = taskPage.glossaryExtractionModeValues.indexOf(String(value || "novel").toLowerCase())
+        return idx >= 0 ? idx : 0
+    }
+
+    function glossaryExtractionModeValue(index) {
+        return taskPage.glossaryExtractionModeValues[index] || "novel"
+    }
+
+    function syncGlossaryExtractionModeCombo() {
+        if (typeof glossaryExtractionModeCombo === "undefined") return
+        glossaryExtractionModeCombo.currentIndex = taskPage.glossaryExtractionModeIndex(
+            taskPage.cfg ? taskPage.cfg.glossaryExtractionMode : "novel"
+        )
     }
 
     ScrollView {
@@ -557,6 +577,39 @@ Page {
                         text: taskPage.cfg ? taskPage.cfg.bookGlossaryName : ""
                         enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary && taskPage.cfg.useBookGlossary) : false
                         onTextChanged: { if (taskPage.cfg) taskPage.cfg.bookGlossaryName = text }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Label {
+                        text: "术语抽取模式"
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontCaption
+                        font.weight: Font.DemiBold
+                    }
+
+                    ComboBox {
+                        id: glossaryExtractionModeCombo
+                        Layout.preferredWidth: 172
+                        model: taskPage.glossaryExtractionModeLabels
+                        enabled: !!taskPage.cfg
+                        onActivated: {
+                            if (taskPage.cfg) {
+                                taskPage.cfg.glossaryExtractionMode = taskPage.glossaryExtractionModeValue(currentIndex)
+                            }
+                        }
+                        Component.onCompleted: taskPage.syncGlossaryExtractionModeCombo()
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "小说向会抽取人物、地名、组织、物品等；精简模式只保留人物和地名，适合先做低噪声术语表。"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontTiny
+                        wrapMode: Text.WordWrap
                     }
                 }
 
@@ -1278,6 +1331,9 @@ Page {
 
         function onGlossaryProfilesChanged() {
             taskPage.refreshGlossaryProfiles()
+        }
+        function onGlossaryExtractionModeChanged() {
+            taskPage.syncGlossaryExtractionModeCombo()
         }
     }
 

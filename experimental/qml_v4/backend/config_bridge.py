@@ -339,7 +339,7 @@ PRESET_CONFIG_KEYS = {
     "proofread_provider", "proofread_api_url", "proofread_model",
     "prompt_extra_instruction", "enable_prompt_examples",
     "enable_layered_glossary", "use_global_glossary", "use_genre_glossary", "use_series_glossary", "use_book_glossary",
-    "series_glossary_name", "book_glossary_name", "selected_glossary_profile_ids",
+    "series_glossary_name", "book_glossary_name", "selected_glossary_profile_ids", "glossary_extraction_mode",
     "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
     "japanese_residue_policy",
 }
@@ -356,6 +356,7 @@ _CONFIG_KEYS = [
     "extract_glossary", "enable_glossary",
     "enable_layered_glossary", "use_global_glossary", "use_genre_glossary", "use_series_glossary", "use_book_glossary",
     "pre_extract_glossary", "series_glossary_name", "book_glossary_name", "selected_glossary_profile_ids",
+    "glossary_extraction_mode",
     "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
     "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
@@ -566,6 +567,7 @@ class ConfigBridge(QObject):
     _seriesGlossaryNameChanged = Signal()
     _bookGlossaryNameChanged = Signal()
     _selectedGlossaryProfileIdsChanged = Signal()
+    _glossaryExtractionModeChanged = Signal()
     _maxWorkersChanged = Signal()
     _batchSizeChanged = Signal()
     _maxBatchLengthChanged = Signal()
@@ -611,6 +613,7 @@ class ConfigBridge(QObject):
         self._series_glossary_name = ""
         self._book_glossary_name = ""
         self._selected_glossary_profile_ids = []
+        self._glossary_extraction_mode = "novel"
         self._max_workers = 5
         self._batch_size = 4
         self._max_batch_length = 800
@@ -685,6 +688,8 @@ class ConfigBridge(QObject):
             if "book_glossary_name" not in data:
                 self._book_glossary_name = ""
             self._selected_glossary_profile_ids = _clean_string_list(getattr(self, "_selected_glossary_profile_ids", []))
+            if getattr(self, "_glossary_extraction_mode", "") not in {"novel", "lite"}:
+                self._glossary_extraction_mode = "novel"
             if "enable_notice_page" not in data:
                 self._enable_notice_page = False
             if not str(getattr(self, "_notice_page_text", "") or "").strip():
@@ -770,6 +775,7 @@ class ConfigBridge(QObject):
             "series_glossary_name": self._seriesGlossaryNameChanged,
             "book_glossary_name": self._bookGlossaryNameChanged,
             "selected_glossary_profile_ids": self._selectedGlossaryProfileIdsChanged,
+            "glossary_extraction_mode": self._glossaryExtractionModeChanged,
             "hymt2_generation_mode": self._hymt2GenerationModeChanged,
             "hymt2_prompt_mode": self._hymt2PromptModeChanged,
             "hymt2_runtime_mode": self._hymt2RuntimeModeChanged,
@@ -1327,6 +1333,19 @@ class ConfigBridge(QObject):
         if cleaned != self._selected_glossary_profile_ids:
             self._selected_glossary_profile_ids = cleaned
             self._emit_changed(self._selectedGlossaryProfileIdsChanged)
+
+    @Property(str, notify=_glossaryExtractionModeChanged)
+    def glossaryExtractionMode(self) -> str:
+        return self._glossary_extraction_mode
+
+    @glossaryExtractionMode.setter
+    def glossaryExtractionMode(self, val: str):
+        mode = str(val or "").strip().lower()
+        if mode not in {"novel", "lite"}:
+            mode = "novel"
+        if mode != self._glossary_extraction_mode:
+            self._glossary_extraction_mode = mode
+            self._emit_changed(self._glossaryExtractionModeChanged)
 
     @Property(int, notify=_maxWorkersChanged)
     def maxWorkers(self) -> int: return self._max_workers

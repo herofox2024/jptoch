@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -5,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 DEFAULT_GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
 GLOSSARY_ALIAS_KEYS = ("aliases", "alias", "zh_aliases", "chinese_aliases", "中文别名", "别名", "variants")
+GLOSSARY_CSV_COLUMNS = ["category", "src", "dst", "info", "source", "policy", "aliases"]
 
 
 def normalize_aliases(value: Any) -> List[str]:
@@ -32,6 +35,88 @@ def normalize_aliases(value: Any) -> List[str]:
         if alias and alias not in result:
             result.append(alias)
     return result
+
+
+def glossary_to_csv_text(glossary: Dict[str, Any]) -> str:
+    normalized, _ = normalize_glossary_payload(glossary or {})
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=GLOSSARY_CSV_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for category in DEFAULT_GLOSSARY_CATEGORIES:
+        for entry in normalized.get(category, []):
+            if not isinstance(entry, dict):
+                continue
+            src = str(entry.get("original", entry.get("src", ""))).strip()
+            dst = str(entry.get("translation", entry.get("dst", ""))).strip()
+            if not src or not dst:
+                continue
+            writer.writerow(
+                {
+                    "category": category,
+                    "src": src,
+                    "dst": dst,
+                    "info": str(entry.get("info", "")).strip(),
+                    "source": str(entry.get("source", "")).strip(),
+                    "policy": normalize_policy(entry.get("policy", entry.get("enforcement", ""))),
+                    "aliases": "、".join(_entry_aliases(entry)),
+                }
+            )
+    return "\ufeff" + output.getvalue()
+
+
+def glossary_from_csv_text(text: str) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, int]]:
+    """Parse DocuTranslate-style src,dst CSV into QML/V4 categorized glossary."""
+
+    raw = str(text or "")
+    if raw.startswith("\ufeff"):
+        raw = raw[1:]
+    reader = csv.DictReader(io.StringIO(raw))
+    payload: Dict[str, List[Dict[str, Any]]] = {category: [] for category in DEFAULT_GLOSSARY_CATEGORIES}
+    stats = {"accepted": 0, "skipped": 0, "conflicts": 0}
+    if not reader.fieldnames:
+        return payload, stats
+
+    def pick(row: Dict[str, Any], *keys: str) -> str:
+        lowered = {str(k or "").strip().lower(): v for k, v in (row or {}).items()}
+        for key in keys:
+            if key in row and row.get(key) is not None:
+                return str(row.get(key) or "").strip()
+            low = key.lower()
+            if low in lowered and lowered[low] is not None:
+                return str(lowered[low] or "").strip()
+        return ""
+
+    seen = set()
+    for row in reader:
+        src = pick(row, "src", "original", "原文", "术语", "source")
+        dst = pick(row, "dst", "translation", "译文", "译名", "target")
+        if not src or not dst:
+            stats["skipped"] += 1
+            continue
+        if src in seen:
+            stats["skipped"] += 1
+            continue
+        seen.add(src)
+        category = pick(row, "category", "cat", "分类") or "Item"
+        if category not in DEFAULT_GLOSSARY_CATEGORIES:
+            category = "Item"
+        entry: Dict[str, Any] = {"original": src, "translation": dst}
+        info = pick(row, "info", "note", "备注")
+        source = pick(row, "source", "来源")
+        policy = normalize_policy(pick(row, "policy", "enforcement", "策略"))
+        aliases = normalize_aliases(pick(row, "aliases", "alias", "别名", "中文别名"))
+        if info:
+            entry["info"] = info
+        if source:
+            entry["source"] = source
+        if policy:
+            entry["policy"] = policy
+        aliases = [alias for alias in aliases if alias not in {src, dst}]
+        if aliases:
+            entry["aliases"] = aliases
+        payload[category].append(entry)
+        stats["accepted"] += 1
+    return payload, stats
 
 
 def re_split_aliases(text: str) -> List[str]:

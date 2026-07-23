@@ -28,7 +28,7 @@ from epub_io import (
 from style_detector import detect_novel_style, resolve_style_selection
 from text_utils import is_translatable
 from translator import FastFailError, JaZhTranslator, BatchJsonResult, TranslationIncompleteError, get_data_dir
-from glossary_store import glossary_prompt_payload, rebuild_glossary_index
+from glossary_store import glossary_from_csv_text, glossary_prompt_payload, glossary_to_csv_text, rebuild_glossary_index
 from provider_registry import normalize_api_url, provider_default_model, provider_default_url
 from provider_client import apply_payload_options, is_content_moderation_http_error
 from quality_rules import is_suspicious_translation_pair
@@ -253,6 +253,40 @@ class ExtractedModuleTests(unittest.TestCase):
             atomic_write_json(path, {"hello": "world"})
             self.assertEqual(load_json_file(path, {}), {"hello": "world"})
             self.assertEqual(load_json_file(Path(tmp) / "missing.json", {"fallback": True}), {"fallback": True})
+
+    def test_glossary_csv_roundtrip_preserves_core_fields(self):
+        payload = {
+            "Person": [
+                {
+                    "original": "阿清",
+                    "translation": "阿清",
+                    "info": "角色",
+                    "source": "manual",
+                    "policy": "force",
+                    "aliases": ["清子", "阿清"],
+                }
+            ],
+            "Location": [
+                {
+                    "original": "江戸",
+                    "translation": "江户",
+                    "source": "auto",
+                }
+            ],
+        }
+
+        csv_text = glossary_to_csv_text(payload)
+        normalized, stats = glossary_from_csv_text(csv_text)
+
+        self.assertEqual(stats["accepted"], 2)
+        self.assertEqual(normalized["Person"][0]["original"], "阿清")
+        self.assertEqual(normalized["Person"][0]["translation"], "阿清")
+        self.assertEqual(normalized["Person"][0]["info"], "角色")
+        self.assertEqual(normalized["Person"][0]["source"], "manual")
+        self.assertEqual(normalized["Person"][0]["policy"], "force")
+        self.assertEqual(normalized["Person"][0]["aliases"], ["清子"])
+        self.assertEqual(normalized["Location"][0]["original"], "江戸")
+        self.assertEqual(normalized["Location"][0]["translation"], "江户")
 
     def test_task_history_sanitize_config_preserves_glossary_profile_ids(self):
         sanitized = sanitize_config(
@@ -571,6 +605,32 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(captured["proofread_genre"], "mystery")
         self.assertEqual(captured["proofread_tone"], "light")
         self.assertEqual(captured["enable_prompt_examples"], True)
+        self.assertEqual(captured["glossary_extraction_mode"], "novel")
+
+    def test_create_translator_stage_passes_glossary_extraction_mode(self):
+        captured = {}
+
+        class FakeTranslator:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        cfg = self._minimal_config()
+        cfg["glossary_extraction_mode"] = "lite"
+        ctx = PipelineContext(
+            config=cfg,
+            proofread_style=StyleDetectionResult(
+                genre="mystery",
+                tone="light",
+                confidence=100,
+                reason="manual",
+            ),
+            extra={"translator_factory": FakeTranslator},
+        )
+
+        out = TranslationPipeline().add_stage(CreateTranslatorStage()).run(ctx)
+
+        self.assertIsInstance(out.translator, FakeTranslator)
+        self.assertEqual(captured["glossary_extraction_mode"], "lite")
 
     def test_layered_glossary_disabled_keeps_default_global_glossary_loading(self):
         cfg = self._minimal_config()

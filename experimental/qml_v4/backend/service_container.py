@@ -197,6 +197,7 @@ class ServiceContainer:
             enable_proofread=cfg.get("enable_proofread", False),
             proofread_genre=cfg.get("proofread_genre", "general"),
             proofread_tone=cfg.get("proofread_tone", "neutral"),
+            glossary_extraction_mode=cfg.get("glossary_extraction_mode", "novel"),
         )
         self._translator = translator
         return translator

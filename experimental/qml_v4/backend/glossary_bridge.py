@@ -18,7 +18,7 @@ from PySide6.QtCore import (
 logger = logging.getLogger(__name__)
 
 from backend.toast_bridge import ToastBridge
-from glossary_store import normalize_aliases
+from glossary_store import glossary_from_csv_text, glossary_to_csv_text, normalize_aliases
 
 GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
 
@@ -380,6 +380,40 @@ class GlossaryModel(QAbstractListModel):
         except Exception as e:
             raise ValueError(str(e))
 
+    def import_csv(self, path_str: str):
+        try:
+            translator_cls = _translator_cls()
+            raw = Path(path_str).read_text(encoding="utf-8-sig")
+            normalized, import_stats = glossary_from_csv_text(raw)
+            glossary_path = _data_dir() / "glossary.json"
+            existing = {}
+            if glossary_path.exists():
+                existing = json.loads(glossary_path.read_text(encoding="utf-8"))
+            existing_normalized, _ = translator_cls.normalize_glossary_payload(existing if isinstance(existing, dict) else {})
+            if existing_normalized:
+                merged, merge_stats = translator_cls.merge_glossaries(existing_normalized, normalized)
+            else:
+                merged = normalized
+                merge_stats = {
+                    "added": import_stats.get("accepted", 0),
+                    "skipped": import_stats.get("skipped", 0),
+                    "conflicts": import_stats.get("conflicts", 0),
+                }
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            backup_path = _data_dir() / f"glossary.backup.before_import_csv.{timestamp}.json"
+            if glossary_path.exists():
+                shutil.copy2(glossary_path, backup_path)
+            translator_cls._atomic_write_json(glossary_path, merged)
+            self.load_from_disk()
+            return {
+                "added": int(merge_stats.get("added", 0)),
+                "skipped": int(merge_stats.get("skipped", 0)),
+                "conflicts": int(merge_stats.get("conflicts", 0)),
+                "total": len(self._all_rows),
+            }
+        except Exception as e:
+            raise ValueError(str(e))
+
     def export_json(self, path_str: str):
         translator_cls = _translator_cls()
         payload = {}
@@ -393,6 +427,21 @@ class GlossaryModel(QAbstractListModel):
         normalized, _ = translator_cls.normalize_glossary_payload(payload)
         Path(path_str).write_text(json.dumps(normalized, indent=2, ensure_ascii=False), encoding="utf-8")
         return len(self._all_rows)
+
+    def export_csv(self, path_str: str):
+        translator_cls = _translator_cls()
+        payload = {}
+        for row in self._all_rows:
+            cat, entry = self._row_to_payload_entry(row)
+            if entry is None:
+                continue
+            if cat not in payload:
+                payload[cat] = []
+            payload[cat].append(entry)
+        normalized, _ = translator_cls.normalize_glossary_payload(payload)
+        Path(path_str).write_text(glossary_to_csv_text(normalized), encoding="utf-8")
+        return len(self._all_rows)
+
 
     def restore_backup(self, path_str: str):
         try:
@@ -499,6 +548,16 @@ class GlossaryBridge(QObject):
             ToastBridge.error("术语表导入失败")
 
     @Slot(str)
+    def importCsv(self, path_str: str):
+        try:
+            result = self._model.import_csv(path_str)
+            self.importDone.emit(result["added"], result["skipped"], result["conflicts"], result["total"])
+            ToastBridge.success(f"CSV 导入完成: 新增 {result['added']} 条, 跳过 {result['skipped']} 条")
+        except Exception as e:
+            self.errorOccurred.emit(f"CSV 导入失败: {e}")
+            ToastBridge.error("术语表 CSV 导入失败")
+
+    @Slot(str)
     def exportJson(self, path_str: str):
         try:
             count = self._model.export_json(path_str)
@@ -507,6 +566,16 @@ class GlossaryBridge(QObject):
         except Exception as e:
             self.errorOccurred.emit(f"导出失败: {e}")
             ToastBridge.error("术语表导出失败")
+
+    @Slot(str)
+    def exportCsv(self, path_str: str):
+        try:
+            count = self._model.export_csv(path_str)
+            self.exportDone.emit(path_str, count)
+            ToastBridge.success(f"术语表 CSV 已导出 ({count} 条)")
+        except Exception as e:
+            self.errorOccurred.emit(f"CSV 导出失败: {e}")
+            ToastBridge.error("术语表 CSV 导出失败")
 
     @Slot(str)
     def restoreBackup(self, path_str: str):

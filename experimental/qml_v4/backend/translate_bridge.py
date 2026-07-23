@@ -461,6 +461,9 @@ def _preextract_glossary_profiles(
     api_url = str(cfg.get("api_url") or "").strip() or None
     model = str(cfg.get("model") or "").strip() or None
     api_key = str(cfg.get("api_key") or "").strip()
+    glossary_extraction_mode = str(cfg.get("glossary_extraction_mode") or "novel").strip().lower()
+    if glossary_extraction_mode not in {"novel", "lite"}:
+        glossary_extraction_mode = "novel"
     if provider in {"hymt2", "sakura"} and not api_key:
         api_key = "sk-local"
 
@@ -488,6 +491,7 @@ def _preextract_glossary_profiles(
             hymt2_generation_mode=str(cfg.get("hymt2_generation_mode") or "stable"),
             hymt2_prompt_mode=str(cfg.get("hymt2_prompt_mode") or "official"),
             hymt2_runtime_mode=str(cfg.get("hymt2_runtime_mode") or "cpu"),
+            glossary_extraction_mode=glossary_extraction_mode,
             allow_text_cache_reuse=False,
         )
 
@@ -502,6 +506,7 @@ def _preextract_glossary_profiles(
         extracted = extractor.extract_glossary_candidates(
             list(texts),
             batch_size=max(1, min(int(cfg.get("batch_size") or 1), 4)),
+            extraction_mode=glossary_extraction_mode,
             progress_callback=_progress,
         )
     finally:
@@ -1779,6 +1784,7 @@ class TranslateBridge(QObject):
             "series_glossary_name": getattr(cfg, "seriesGlossaryName", ""),
             "book_glossary_name": getattr(cfg, "bookGlossaryName", ""),
             "glossary_profile_ids": list(getattr(cfg, "selectedGlossaryProfileIds", []) or []),
+            "glossary_extraction_mode": getattr(cfg, "glossaryExtractionMode", "novel"),
             "max_workers": cfg.maxWorkers, "batch_size": cfg.batchSize,
             "max_batch_length": cfg.maxBatchLength, "max_text_size_for_batch": cfg.maxTextSizeForBatch,
             "api_timeout": cfg.apiTimeout, "direction": cfg.direction,
@@ -2490,6 +2496,7 @@ class TranslateBridge(QObject):
             "series_glossary_name": "seriesGlossaryName",
             "book_glossary_name": "bookGlossaryName",
             "glossary_profile_ids": "selectedGlossaryProfileIds",
+            "glossary_extraction_mode": "glossaryExtractionMode",
             "hymt2_generation_mode": "hymt2GenerationMode",
             "hymt2_prompt_mode": "hymt2PromptMode",
             "hymt2_runtime_mode": "hymt2RuntimeMode",

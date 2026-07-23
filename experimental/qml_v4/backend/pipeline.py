@@ -310,6 +310,7 @@ class CreateTranslatorStage(PipelineStage):
             hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
             hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
             hymt2_runtime_mode=cfg.get("hymt2_runtime_mode", "cpu"),
+            glossary_extraction_mode=cfg.get("glossary_extraction_mode", "novel"),
             glossary_override=glossary_override,
             glossary_fingerprint=glossary_fp,
         )
