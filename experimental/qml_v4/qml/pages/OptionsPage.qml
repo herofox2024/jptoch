@@ -816,7 +816,7 @@ Page {
 
                     ColumnLayout {
                         width: parent.width
-                        spacing: AppStyle.gapMedium
+                        spacing: AppStyle.spacingMedium
 
                         GridLayout {
                             Layout.fillWidth: true
@@ -857,7 +857,7 @@ Page {
                         Label {
                             Layout.fillWidth: true
                             text: "残留报告会保存到 C:\\Users\\HUAWEI\\.epub_translator\\residue_reports。不要把明显应该翻译的日文加入白名单，优先加入片假名术语修复词表。"
-                            color: AppPalette.warning
+                            color: AppPalette.amberColor
                             wrapMode: Text.WordWrap
                             font.pixelSize: AppStyle.fontSmall
                         }
