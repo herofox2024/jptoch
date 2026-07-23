@@ -1296,6 +1296,134 @@ class _GlossaryBookExtractionWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class _GlossaryBooksExtractionWorker(QObject):
+    finished = Signal("QVariantMap")
+    failed = Signal(str)
+    statusChanged = Signal(str)
+    errorDetail = Signal(str)
+    progressChanged = Signal(int, int)
+
+    def __init__(self, config: Dict[str, Any], source_paths: Any, cancel_event):
+        super().__init__()
+        self._config = dict(config or {})
+        if isinstance(source_paths, (str, bytes)):
+            source_paths = [source_paths]
+        self._source_paths = [str(item or "") for item in (source_paths or [])]
+        self._cancel_event = cancel_event
+
+    def run(self):
+        try:
+            from backend.pipeline import (
+                BuildTextPlanStage,
+                LoadEpubStage,
+                PipelineContext,
+                StyleDetectStage,
+                TranslationPipeline,
+            )
+
+            source_paths = []
+            for item in self._source_paths:
+                path = str(item or "").strip()
+                if path and os.path.exists(path) and path.lower().endswith(".epub"):
+                    source_paths.append(path)
+            source_paths = list(dict.fromkeys(source_paths))
+            if not source_paths:
+                self.failed.emit("请选择需要提取术语的 EPUB 文件")
+                return
+
+            total_books = len(source_paths)
+            profile_ids: List[str] = []
+            profiles: List[Dict[str, Any]] = []
+            book_results: List[Dict[str, Any]] = []
+            failed_books: List[Dict[str, str]] = []
+            text_count = 0
+            char_count = 0
+            term_count = 0
+            self.progressChanged.emit(0, total_books)
+
+            for index, input_path in enumerate(source_paths):
+                if self._cancel_event.is_set():
+                    self.failed.emit("批量术语提取已取消")
+                    return
+
+                source_book = Path(input_path).stem.strip() or f"book-{index + 1}"
+                cfg = dict(self._config)
+                cfg["inp"] = input_path
+                cfg["book_glossary_name"] = source_book
+                self.statusChanged.emit(f"正在提取术语 {index + 1}/{total_books}: {source_book}")
+
+                try:
+                    ctx = PipelineContext(
+                        config=cfg,
+                        cancel_event=self._cancel_event,
+                        extra={"title": os.path.basename(input_path)},
+                    )
+                    ctx = (
+                        TranslationPipeline()
+                        .add_stage(LoadEpubStage())
+                        .add_stage(BuildTextPlanStage())
+                        .add_stage(StyleDetectStage(enabled=True))
+                        .run(ctx)
+                    )
+
+                    result = _preextract_glossary_profiles(
+                        cfg,
+                        ctx.proofread_style,
+                        ctx.texts,
+                        self._cancel_event,
+                        status_callback=lambda msg, book=source_book: self.statusChanged.emit(f"{book}: {msg}"),
+                        force=True,
+                        target_scopes=[("book", source_book)],
+                    )
+                    result = dict(result or {})
+                    result["source_path"] = input_path
+                    result["book_name"] = source_book
+                    book_results.append(result)
+                    profile_ids.extend(str(item) for item in (result.get("profile_ids") or []) if str(item or "").strip())
+                    profiles.extend([item for item in (result.get("profiles") or []) if isinstance(item, dict)])
+                    text_count += int(result.get("text_count") or 0)
+                    char_count += int(result.get("char_count") or 0)
+                    term_count += int(result.get("term_count") or 0)
+                except Exception as exc:
+                    logger.exception("批量提取术语失败: %s", input_path)
+                    failed_books.append({"path": input_path, "book_name": source_book, "error": str(exc)})
+
+                self.progressChanged.emit(index + 1, total_books)
+
+            profile_ids = list(dict.fromkeys(profile_ids))
+            if not profile_ids and failed_books:
+                self.failed.emit(f"批量术语提取失败: {failed_books[0].get('book_name')}: {failed_books[0].get('error')}")
+                return
+
+            ok_books = len(book_results)
+            message = (
+                f"批量术语提取完成: 成功 {ok_books}/{total_books} 本，"
+                f"生成 {len(profile_ids)} 个 profile，术语 {term_count} 条"
+            )
+            if failed_books:
+                message += f"，失败 {len(failed_books)} 本"
+            self.finished.emit(
+                {
+                    "ok": bool(profile_ids),
+                    "message": message if profile_ids else "批量术语提取完成，但没有生成可保存的术语候选",
+                    "profile_ids": profile_ids,
+                    "profiles": profiles,
+                    "books": book_results,
+                    "failed_books": failed_books,
+                    "book_count": total_books,
+                    "success_count": ok_books,
+                    "failed_count": len(failed_books),
+                    "text_count": text_count,
+                    "char_count": char_count,
+                    "term_count": term_count,
+                }
+            )
+        except Exception as exc:
+            logger.exception("批量本书术语提取异常")
+            self.errorDetail.emit(traceback.format_exc())
+            self.failed.emit(str(exc))
+
+
 class _GlossaryPostApplyWorker(QObject):
     finished = Signal("QVariantMap")
     failed = Signal(str)
@@ -1909,6 +2037,45 @@ class TranslateBridge(QObject):
             [worker.finished, worker.failed],
         )
 
+    @Slot("QVariant", "QVariant")
+    def extractGlossaryFromBooks(self, cfg, paths):
+        if self.busy:
+            self.failed.emit("当前有任务运行中，不能批量提取术语")
+            ToastBridge.warning("请等待当前任务完成后再批量提取术语")
+            return
+        config = self._make_config(cfg)
+        source_paths = self._normalize_epub_paths(paths)
+        if not source_paths:
+            self.failed.emit("请选择需要提取术语的 EPUB 文件")
+            ToastBridge.warning("请先选择待抽取术语的 EPUB 文件")
+            return
+        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
+            self.failed.emit("术语提取 provider 需要 API Key")
+            ToastBridge.warning("请先在 API 页面配置 API Key")
+            return
+        if not config["api_url"] or not config["model"]:
+            self.failed.emit("术语提取缺少 Base URL 或模型名")
+            ToastBridge.warning("请填写 API 地址和模型名称")
+            return
+
+        self._cancel_event.clear()
+        self.busy = True
+        self.glossaryProgressValue = 0.0
+        self.statusChanged.emit(f"正在批量提取术语: {len(source_paths)} 本 EPUB")
+        ToastBridge.info("正在批量提取术语")
+        worker = _GlossaryBooksExtractionWorker(config, source_paths, self._cancel_event)
+        self._start_worker(
+            worker,
+            [
+                (worker.statusChanged, self.statusChanged),
+                (worker.progressChanged, self._on_glossary_progress),
+                (worker.errorDetail, self.errorDetail),
+                (worker.finished, self._on_book_glossary_extracted),
+                (worker.failed, self._on_book_glossary_extract_failed),
+            ],
+            [worker.finished, worker.failed],
+        )
+
     def _on_glossary_progress(self, completed, total):
         total = max(1, int(total or 1))
         completed = max(0, min(int(completed or 0), total))
@@ -1922,7 +2089,7 @@ class TranslateBridge(QObject):
         message = str(payload.get("message") or "本书术语提取完成")
         self.glossaryBookExtractionFinished.emit(payload)
         self.statusChanged.emit(message)
-        if payload.get("ok"):
+        if payload.get("ok") and int(payload.get("failed_count") or 0) <= 0:
             ToastBridge.success(message)
         else:
             ToastBridge.warning(message)
