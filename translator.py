@@ -2572,6 +2572,17 @@ class JaZhTranslator:
                     raw = accumulated_raw
 
                 obj, raw_terms = _parse_terms(raw)
+                if obj is not None and isinstance(obj.get("new_terms", []), list) and not raw_terms:
+                    logger.info("术语抽取批次完成: mode=%s, input=%s, terms=0, truncated=%s", mode, len(texts), is_truncated)
+                    self._record_api_success_event()
+                    return BatchJsonResult(
+                        translations=[],
+                        new_terms=[],
+                        missing_indices=[],
+                        finish_reason=finish_reason,
+                        is_truncated=is_truncated,
+                        raw_content=raw,
+                    )
                 if not raw_terms:
                     self._inc_stat("batch_json_parse_fail")
                     logger.warning("术语抽取解析失败，响应摘要: %s", self._response_snippet(raw))
@@ -2589,7 +2600,6 @@ class JaZhTranslator:
                         filtered_terms.append(item)
                     raw_terms = filtered_terms
                 if not raw_terms:
-                    self._inc_stat("batch_json_parse_fail")
                     logger.info("术语抽取完成但没有通过模式过滤的术语: mode=%s", mode)
                     return BatchJsonResult(translations=[], new_terms=[], missing_indices=[], finish_reason=finish_reason, is_truncated=is_truncated, raw_content=raw)
                 self._record_api_success_event()

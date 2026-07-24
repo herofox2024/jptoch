@@ -53,6 +53,7 @@ Page {
     property var glossaryPostApplyBooks: []
     property var glossaryExtractionModeValues: ["novel", "lite"]
     property var glossaryExtractionModeLabels: ["小说向（novel）", "精简（lite）"]
+    property bool glossaryAdvancedOpen: false
 
     onCfgChanged: syncGlossaryExtractionModeCombo()
 
@@ -569,18 +570,21 @@ Page {
                     }
                     CheckBox {
                         text: "题材 profile"
+                        visible: taskPage.glossaryAdvancedOpen
                         checked: taskPage.cfg ? taskPage.cfg.useGenreGlossary : false
                         enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : false
                         onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useGenreGlossary = checked }
                     }
                     CheckBox {
                         text: "系列 profile"
+                        visible: taskPage.glossaryAdvancedOpen
                         checked: taskPage.cfg ? taskPage.cfg.useSeriesGlossary : false
                         enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : false
                         onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useSeriesGlossary = checked }
                     }
                     CheckBox {
                         text: "本书 profile"
+                        visible: taskPage.glossaryAdvancedOpen
                         checked: taskPage.cfg ? taskPage.cfg.useBookGlossary : false
                         enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : false
                         onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useBookGlossary = checked }
@@ -588,6 +592,27 @@ Page {
                 }
 
                 RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Button {
+                        text: taskPage.glossaryAdvancedOpen ? "收起自动匹配" : "高级自动匹配"
+                        checkable: true
+                        checked: taskPage.glossaryAdvancedOpen
+                        onClicked: taskPage.glossaryAdvancedOpen = checked
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: "常规使用直接勾选下方已提取 profile。高级自动匹配只用于按题材、系列名或当前书名自动加载术语。"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontTiny
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                RowLayout {
+                    visible: taskPage.glossaryAdvancedOpen
                     Layout.fillWidth: true
                     spacing: AppStyle.spacingSmall
 
@@ -608,6 +633,7 @@ Page {
                 }
 
                 RowLayout {
+                    visible: taskPage.glossaryAdvancedOpen
                     Layout.fillWidth: true
                     spacing: AppStyle.spacingSmall
 
