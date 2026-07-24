@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 配置桥接器：管理应用配置，提供 QML 可绑定的属性，支持持久化到 JSON 文件。
 """
@@ -176,13 +176,13 @@ MODEL_PROMPT_PRESETS = [
         "label": "LongCat 平衡",
         "category": "workflow",
         "source": "builtin",
-        "hint": "LongCat 2.0 预设：限制到当前稳定上限，适合速度优先但保留残留检查。",
+        "hint": "LongCat 2.0 预设：较低并发和批量，减少长尾请求和 UI 压力，适合稳定运行。",
         "values": {
             "provider": "longcat",
             "api_url": LONGCAT_API_URL,
             "model": LONGCAT_MODEL,
-            "max_workers": 8,
-            "batch_size": 9,
+            "max_workers": 4,
+            "batch_size": 4,
             "max_batch_length": 4000,
             "max_text_size_for_batch": 600,
             "api_timeout": 300,
@@ -613,7 +613,7 @@ class ConfigBridge(QObject):
         self._series_glossary_name = ""
         self._book_glossary_name = ""
         self._selected_glossary_profile_ids = []
-        self._glossary_extraction_mode = "novel"
+        self._glossary_extraction_mode = "lite"
         self._max_workers = 5
         self._batch_size = 4
         self._max_batch_length = 800

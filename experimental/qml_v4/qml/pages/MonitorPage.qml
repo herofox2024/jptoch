@@ -43,6 +43,7 @@ Page {
     property string proofreadStyleMode: ""
     property int proofreadCount: 0
     property int proofreadMaxItems: 300
+    property bool pageVisible: appWindow && appWindow.currentPageIndex === 1
     property bool qualityReportAvailable: false
     property string qualityReportStatus: "等待完成"
     property string qualityReportSummary: "翻译完成后自动生成本次质量自检报告。"
@@ -294,15 +295,6 @@ Page {
             page.statJapaneseResidueRemaining = japaneseResidueRemaining
         }
 
-        function onItemTranslated(src, dst) {
-            rtSrc.text = src
-            rtDst.text = dst
-        }
-
-        function onProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed) {
-            page.appendProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed)
-        }
-
         function onProofreadStyleDetected(styleText, reason, confidence, mode) {
             page.proofreadStyleText = styleText || "通用小说 + 中性口吻"
             page.proofreadStyleReason = reason || ""
@@ -349,6 +341,20 @@ Page {
                 page.statSpeed = 0
                 page.statCharSpeed = 0
             }
+        }
+    }
+
+    Connections {
+        target: page.tbridge
+        enabled: page.pageVisible
+
+        function onItemTranslated(src, dst) {
+            rtSrc.text = src
+            rtDst.text = dst
+        }
+
+        function onProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed) {
+            page.appendProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed)
         }
     }
 

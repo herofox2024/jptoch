@@ -1,4 +1,4 @@
-import QtQuick
+﻿import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -16,6 +16,8 @@ Page {
     property int activeTab: 0
     property var requestRows: []
     property var selectedRequest: null
+    property string logBuffer: ""
+    property int logBufferLimit: 50000
     readonly property var requestCategoryCodes: ["all", "failed", "timeout", "security", "format", "residue", "rate_limit", "ok"]
     readonly property bool compactRequestLayout: page.width < 1040
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
@@ -31,12 +33,12 @@ Page {
 
     function appendLine(line) {
         if (!line || page.paused || page.activeTab !== 0) return
-        var nextText = logText.text ? (logText.text + "\n" + line) : line
-        if (nextText.length > 260000) {
-            nextText = "... 已截断较早日志，仅保留最新内容 ...\n" + nextText.slice(-220000)
+        page.logBuffer = page.logBuffer ? (page.logBuffer + '\n' + line) : line
+        if (page.logBuffer.length > page.logBufferLimit) {
+            var idx = page.logBuffer.lastIndexOf('\n', page.logBuffer.length - 40000)
+            page.logBuffer = idx > 0 ? page.logBuffer.slice(idx) : page.logBuffer.slice(-40000)
         }
-        logText.text = nextText
-        if (page.followTail) Qt.callLater(page.scrollToBottom)
+        if (!logFlushTimer.running) logFlushTimer.start()
     }
 
     function scrollToBottom() {
@@ -137,11 +139,22 @@ Page {
     }
 
     Timer {
-        interval: 5000
-        running: page.visible && page.activeTab === 1
-        repeat: true
-        onTriggered: page.reloadRequestLogs()
+        id: logFlushTimer
+        interval: 500
+        running: false
+        repeat: false
+        onTriggered: {
+            if (page.logBuffer === "") return;
+            var merged = logText.text ? (logText.text + '\n' + page.logBuffer) : page.logBuffer;
+            if (merged.length > 260000) {
+                merged = merged.slice(-220000);
+            }
+            logText.text = merged;
+            page.logBuffer = "";
+            if (page.followTail) Qt.callLater(page.scrollToBottom)
+        }
     }
+
 
     ColumnLayout {
         anchors.fill: parent

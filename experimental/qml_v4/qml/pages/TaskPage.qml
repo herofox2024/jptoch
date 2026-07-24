@@ -43,7 +43,6 @@ Page {
     property var latestFailedBlocks: []
     property var latestUnfinishedTask: ({})
     property int failedBlockProviderModeIndex: 0
-    property string glossaryBookStatus: ""
     property string glossaryBatchStatus: ""
     property string glossaryPostApplyStatus: ""
     property bool glossaryExtractionActive: false
@@ -869,13 +868,6 @@ Page {
                     spacing: AppStyle.spacingSmall
 
                     Button {
-                        text: "提取本书术语"
-                        highlighted: enabled
-                        enabled: !!taskPage.tbridge && !taskPage.busy && !!taskPage.cfg && taskPage.cfg.inp !== ""
-                        onClicked: taskPage.extractCurrentBookGlossary()
-                    }
-
-                    Button {
                         text: "选择已译 EPUB"
                         enabled: !!taskPage.tbridge && !taskPage.busy
                         onClicked: glossaryPostApplyDialog.open()
@@ -891,7 +883,6 @@ Page {
                     Label {
                         Layout.fillWidth: true
                         text: taskPage.glossaryBatchStatus
-                              || taskPage.glossaryBookStatus
                               || taskPage.glossaryPostApplyStatus
                               || "提取术语使用独立进度条；术语统一只处理已翻译 EPUB，并生成 _glossary_fixed.epub 副本，不覆盖原书。"
                         color: AppPalette.mutedText
@@ -1466,31 +1457,19 @@ Page {
         }
         function onGlossaryBookExtractionProgressChanged(completed, total) {
             taskPage.glossaryExtractionActive = true
-            if (taskPage.glossaryExtractionRunMode === "batch") {
-                taskPage.glossaryBatchStatus = "正在批量提取术语: " + completed + "/" + total
-            } else {
-                taskPage.glossaryBookStatus = "正在提取本书术语: " + completed + "/" + total
-            }
+            taskPage.glossaryBatchStatus = "正在批量提取术语: " + completed + "/" + total
         }
         function onGlossaryBookExtractionFailed(err) {
             taskPage.glossaryExtractionActive = false
-            if (taskPage.glossaryExtractionRunMode === "batch") {
-                taskPage.glossaryBatchStatus = "批量术语提取失败: " + err
-            } else {
-                taskPage.glossaryBookStatus = "本书术语提取失败: " + err
-            }
+            taskPage.glossaryBatchStatus = "批量术语提取失败: " + err
             taskPage.glossaryExtractionRunMode = ""
         }
         function onGlossaryBookExtractionFinished(result) {
             var message = result && result.message ? result.message : "本书术语提取完成"
             taskPage.glossaryExtractionActive = false
-            if (taskPage.glossaryExtractionRunMode === "batch" || (result && Number(result.book_count || 0) > 1)) {
-                taskPage.glossaryBatchStatus = message
-                if (!result || Number(result.failed_count || 0) === 0) {
-                    taskPage.clearGlossaryExtractionBooks()
-                }
-            } else {
-                taskPage.glossaryBookStatus = message
+            taskPage.glossaryBatchStatus = message
+            if (!result || Number(result.failed_count || 0) === 0) {
+                taskPage.clearGlossaryExtractionBooks()
             }
             taskPage.addSelectedGlossaryProfileIds(result && result.profile_ids ? result.profile_ids : [])
             taskPage.refreshGlossaryProfiles()
@@ -1723,23 +1702,12 @@ Page {
         taskPage.tbridge.retranslateLatestFailedBlocks(cfg, mode, 50)
     }
 
-    function extractCurrentBookGlossary() {
-        if (!taskPage.tbridge || !taskPage.tbridge.extractCurrentBookGlossary) return
-        taskPage.glossaryExtractionRunMode = "single"
-        taskPage.glossaryExtractionActive = true
-        taskPage.glossaryBookStatus = "正在提取本书术语..."
-        taskPage.glossaryBatchStatus = ""
-        taskPage.glossaryPostApplyStatus = ""
-        taskPage.tbridge.extractCurrentBookGlossary(taskPage.cfg)
-    }
-
     function extractSelectedBooksGlossary() {
         if (!taskPage.tbridge || !taskPage.tbridge.extractGlossaryFromBooks) return
         if (!taskPage.cfg) return
         if (taskPage.glossaryExtractionBooks.length === 0) return
         taskPage.glossaryExtractionRunMode = "batch"
         taskPage.glossaryExtractionActive = true
-        taskPage.glossaryBookStatus = ""
         taskPage.glossaryBatchStatus = "正在批量提取术语..."
         taskPage.glossaryPostApplyStatus = ""
         taskPage.tbridge.extractGlossaryFromBooks(taskPage.cfg, taskPage.glossaryExtractionBooks)
@@ -1749,7 +1717,6 @@ Page {
         if (!taskPage.tbridge) return
         taskPage.glossaryExtractionRunMode = "post_apply"
         taskPage.glossaryExtractionActive = true
-        taskPage.glossaryBookStatus = ""
         taskPage.glossaryBatchStatus = ""
         taskPage.glossaryPostApplyStatus = "正在统一已翻译 EPUB 的术语..."
         if (taskPage.glossaryPostApplyBooks.length > 0 && taskPage.tbridge.applyGlossaryToTranslatedBooks) {

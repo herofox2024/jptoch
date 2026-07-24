@@ -1219,83 +1219,6 @@ class _RetranslateFailedBlocksWorker(QObject):
             self.failed.emit(str(exc))
 
 
-class _GlossaryBookExtractionWorker(QObject):
-    finished = Signal("QVariantMap")
-    failed = Signal(str)
-    statusChanged = Signal(str)
-    errorDetail = Signal(str)
-    progressChanged = Signal(int, int)
-
-    def __init__(self, config: Dict[str, Any], cancel_event):
-        super().__init__()
-        self._config = dict(config or {})
-        self._cancel_event = cancel_event
-
-    def run(self):
-        try:
-            from backend.pipeline import (
-                BuildTextPlanStage,
-                LoadEpubStage,
-                PipelineContext,
-                StyleDetectStage,
-                TranslationPipeline,
-            )
-
-            cfg = self._config
-            input_path = str(cfg.get("inp") or "").strip()
-            source_book = Path(input_path).stem.strip() or "book"
-            profile_name = str(cfg.get("book_glossary_name") or source_book).strip() or source_book
-
-            self.statusChanged.emit("正在加载 EPUB 并准备提取本书术语...")
-            self.progressChanged.emit(0, 1)
-            ctx = PipelineContext(
-                config=cfg,
-                cancel_event=self._cancel_event,
-                extra={"title": os.path.basename(input_path)},
-            )
-            ctx = (
-                TranslationPipeline()
-                .add_stage(LoadEpubStage())
-                .add_stage(BuildTextPlanStage())
-                .add_stage(StyleDetectStage(enabled=True))
-                .run(ctx)
-            )
-
-            if self._cancel_event.is_set():
-                self.failed.emit("术语提取已取消")
-                return
-
-            expected_batches = max(1, math.ceil(len(ctx.texts or []) / max(1, min(int(cfg.get("batch_size") or 1), 4))))
-            self.progressChanged.emit(0, expected_batches)
-            result = _preextract_glossary_profiles(
-                cfg,
-                ctx.proofread_style,
-                ctx.texts,
-                self._cancel_event,
-                status_callback=self.statusChanged.emit,
-                progress_callback=self.progressChanged.emit,
-                force=True,
-                target_scopes=[("book", profile_name)],
-            )
-            payload = dict(result or {})
-            payload["ok"] = bool(payload.get("profile_ids"))
-            payload["scope"] = "book"
-            payload["name"] = profile_name
-            if payload.get("ok"):
-                payload["message"] = (
-                    f"本书术语提取完成: {profile_name}，"
-                    f"术语 {int(payload.get('term_count') or 0)} 条"
-                )
-            else:
-                payload["message"] = str(payload.get("message") or "本书术语提取完成，但没有生成可保存的术语候选")
-            self.progressChanged.emit(1, 1)
-            self.finished.emit(payload)
-        except Exception as exc:
-            logger.exception("本书术语提取异常")
-            self.errorDetail.emit(traceback.format_exc())
-            self.failed.emit(str(exc))
-
-
 class _GlossaryBooksExtractionWorker(QObject):
     finished = Signal("QVariantMap")
     failed = Signal(str)
@@ -1995,44 +1918,6 @@ class TranslateBridge(QObject):
                 (worker.errorDetail, self.errorDetail),
                 (worker.finished, self._on_finished),
                 (worker.failed, self._on_failed),
-            ],
-            [worker.finished, worker.failed],
-        )
-
-    @Slot("QVariant")
-    def extractCurrentBookGlossary(self, cfg):
-        if self.busy:
-            self.failed.emit("当前有任务运行中，不能提取本书术语")
-            ToastBridge.warning("请等待当前任务完成后再提取术语")
-            return
-        config = self._make_config(cfg)
-        if not config["inp"] or not os.path.exists(config["inp"]):
-            self.failed.emit("请选择有效的输入 EPUB")
-            ToastBridge.warning("请先选择要提取术语的 EPUB 文件")
-            return
-        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
-            self.failed.emit("术语提取 provider 需要 API Key")
-            ToastBridge.warning("请先在 API 页面配置 API Key")
-            return
-        if not config["api_url"] or not config["model"]:
-            self.failed.emit("术语提取缺少 Base URL 或模型名")
-            ToastBridge.warning("请填写 API 地址和模型名称")
-            return
-
-        self._cancel_event.clear()
-        self.busy = True
-        self.glossaryProgressValue = 0.0
-        self.statusChanged.emit("正在独立提取本书术语...")
-        ToastBridge.info("正在提取本书术语")
-        worker = _GlossaryBookExtractionWorker(config, self._cancel_event)
-        self._start_worker(
-            worker,
-            [
-                (worker.statusChanged, self.statusChanged),
-                (worker.progressChanged, self._on_glossary_progress),
-                (worker.errorDetail, self.errorDetail),
-                (worker.finished, self._on_book_glossary_extracted),
-                (worker.failed, self._on_book_glossary_extract_failed),
             ],
             [worker.finished, worker.failed],
         )
