@@ -16,7 +16,7 @@ from typing import Optional, Any, Dict, List
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
 import translation_quality as tq
-from provider_registry import API_KEY_REQUIRED_PROVIDERS
+from provider_registry import API_KEY_REQUIRED_PROVIDERS, provider_default_model, provider_default_url
 from backend.toast_bridge import ToastBridge
 from backend.task_history import (
     TranslationTaskHistoryStore,
@@ -1619,6 +1619,44 @@ class TranslateBridge(QObject):
         thread.start()
         return thread
 
+    @staticmethod
+    def _repair_provider_endpoint_config(config, reason: str = ""):
+        provider = str((config or {}).get("provider") or "").strip().lower()
+        if not provider or provider == "custom":
+            return config
+        saved_url = str(config.get("api_url") or "").strip()
+        saved_model = str(config.get("model") or "").strip()
+        known_provider_hints = {
+            "deepseek": ("deepseek",),
+            "doubao": ("volces", "ark.cn", "doubao"),
+            "sakura": ("sakura",),
+            "hymt2": ("hymt2", "hy-mt2"),
+            "gemini": ("gemini", "generativelanguage"),
+            "glm": ("glm", "bigmodel", "zhipu"),
+            "wenxin": ("wenxin", "qianfan", "baidu", "ernie"),
+            "longcat": ("longcat",),
+        }
+        endpoint_hint = f"{saved_url} {saved_model}".lower()
+        mismatched_known_provider = any(
+            other != provider and any(marker in endpoint_hint for marker in markers)
+            for other, markers in known_provider_hints.items()
+        )
+        if not mismatched_known_provider:
+            return config
+        repaired = dict(config)
+        repaired["api_url"] = provider_default_url(provider)
+        repaired["model"] = provider_default_model(provider)
+        logger.warning(
+            "修正 provider/API 混合配置%s: provider=%s, old_url=%s, old_model=%s, new_url=%s, new_model=%s",
+            f" ({reason})" if reason else "",
+            provider,
+            saved_url,
+            saved_model,
+            repaired.get("api_url", ""),
+            repaired.get("model", ""),
+        )
+        return repaired
+
     def _update_translation_task_history(self, changes):
         task_id = self._current_task_id
         if not task_id:
@@ -1880,7 +1918,7 @@ class TranslateBridge(QObject):
 
     @Slot("QVariant")
     def startTranslation(self, cfg):
-        config = self._make_config(cfg)
+        config = self._repair_provider_endpoint_config(self._make_config(cfg), reason="start")
         if not config["inp"] or not os.path.exists(config["inp"]):
             self._resume_task_id = ""
             self.failed.emit("请选择有效的输入 EPUB")
@@ -1915,6 +1953,16 @@ class TranslateBridge(QObject):
                 return
 
         self._last_cfg = config
+        logger.info(
+            "启动翻译配置: provider=%s, model=%s, api_url=%s, workers=%s, batch=%s, timeout=%s, resume_task_id=%s",
+            config.get("provider", ""),
+            config.get("model", ""),
+            config.get("api_url", ""),
+            config.get("max_workers", ""),
+            config.get("batch_size", ""),
+            config.get("api_timeout", ""),
+            self._resume_task_id or "",
+        )
         self._record_translation_task_started(config)
         self._cancel_event.clear()
         self._is_paused = False
@@ -2221,6 +2269,27 @@ class TranslateBridge(QObject):
         except Exception as exc:
             logger.warning("读取最近未完成翻译任务失败: %s", exc)
             return {}
+
+    @Slot(str, "QVariant", result="QVariantMap")
+    def loadTranslationTaskConfig(self, task_id: str, cfg):
+        task_id = str(task_id or "").strip()
+        if not task_id:
+            return {"ok": False, "message": "缺少任务 ID"}
+        try:
+            for record in self._task_history.load():
+                if str(record.get("task_id") or "") != task_id:
+                    continue
+                self._apply_task_record_to_config(cfg, record)
+                return {
+                    "ok": True,
+                    "message": "已载入任务配置",
+                    "provider": str(record.get("provider") or ""),
+                    "model": str(record.get("model") or ""),
+                }
+            return {"ok": False, "message": "未找到任务记录"}
+        except Exception as exc:
+            logger.warning("载入任务配置失败: %s", exc)
+            return {"ok": False, "message": str(exc)}
 
     @Slot(int, result="QVariantList")
     def getLatestFailedTranslationBlocks(self, limit: int = 20):
@@ -2540,10 +2609,24 @@ class TranslateBridge(QObject):
         values.setdefault("out", record.get("output_path", ""))
         values.setdefault("provider", record.get("provider", ""))
         values.setdefault("model", record.get("model", ""))
+        values = self._repair_provider_endpoint_config(values, reason="resume")
+        provider = str(values.get("provider") or "").strip().lower()
+        if provider:
+            if hasattr(cfg, "setProvider"):
+                try:
+                    cfg.setProvider(provider)
+                    logger.info(
+                        "恢复任务 provider: task_id=%s, provider=%s, api_url=%s, model=%s",
+                        record.get("task_id", ""),
+                        provider,
+                        values.get("api_url", ""),
+                        values.get("model", ""),
+                    )
+                except Exception:
+                    logger.debug("恢复任务 provider 失败: %s", provider, exc_info=True)
         mapping = {
             "inp": "inp",
             "out": "out",
-            "provider": "provider",
             "api_url": "apiUrl",
             "model": "model",
             "max_workers": "maxWorkers",

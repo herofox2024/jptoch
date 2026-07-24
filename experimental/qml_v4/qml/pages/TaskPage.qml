@@ -1732,13 +1732,23 @@ Page {
 
     function applyTaskRecord(record) {
         if (!cfg || !record) return
-        var inp = record.input_path || (record.config ? record.config.inp : "")
-        var out = record.output_path || (record.config ? record.config.out : "")
-        if (inp) cfg.inp = inp
-        if (out) cfg.out = out
-        else if (inp) cfg.out = taskPage.defaultOutputPath(inp)
+        if (taskPage.tbridge && taskPage.tbridge.loadTranslationTaskConfig && record.task_id) {
+            var result = taskPage.tbridge.loadTranslationTaskConfig(String(record.task_id), cfg)
+            if (result && !result.ok) {
+                if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                    ToastBridge.showError(result.message || "载入任务配置失败")
+                }
+                return
+            }
+        } else {
+            var inp = record.input_path || (record.config ? record.config.inp : "")
+            var out = record.output_path || (record.config ? record.config.out : "")
+            if (inp) cfg.inp = inp
+            if (out) cfg.out = out
+            else if (inp) cfg.out = taskPage.defaultOutputPath(inp)
+        }
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
-            ToastBridge.showInfo("已载入最近任务路径")
+            ToastBridge.showInfo("已载入最近任务配置")
         }
     }
 
@@ -1863,4 +1873,5 @@ Page {
     }
 
 }
+
 
