@@ -52,6 +52,8 @@ Page {
     property string qualityReportSuggestions: ""
     property string qualityReportGeneratedAt: ""
     property string diagnosticsText: ""
+    property string pendingRtSrc: ""
+    property string pendingRtDst: ""
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     property real startTs: 0
@@ -254,6 +256,16 @@ Page {
         onTriggered: page.updateElapsed()
     }
 
+    Timer {
+        id: realtimeTextTimer
+        interval: 300
+        repeat: false
+        onTriggered: {
+            rtSrc.text = page.pendingRtSrc
+            rtDst.text = page.pendingRtDst
+        }
+    }
+
     Connections {
         target: page.tbridge
         enabled: true
@@ -349,8 +361,9 @@ Page {
         enabled: page.pageVisible
 
         function onItemTranslated(src, dst) {
-            rtSrc.text = src
-            rtDst.text = dst
+            page.pendingRtSrc = src || ""
+            page.pendingRtDst = dst || ""
+            if (!realtimeTextTimer.running) realtimeTextTimer.start()
         }
 
         function onProofreadDetail(original, draft, revised, reason, japaneseResidue, glossaryMismatch, changed) {

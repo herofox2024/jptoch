@@ -2,10 +2,11 @@
 """QML bridge for viewing the application log in real time."""
 
 import logging
+import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 try:
@@ -39,7 +40,7 @@ class _QtLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self._bridge.entryAppended.emit(self.format(record))
+            self._bridge.enqueueLogLine(self.format(record))
         except Exception:
             # Never let UI log forwarding break the actual logging pipeline.
             pass
@@ -49,12 +50,47 @@ class LogBridge(QObject):
     entryAppended = Signal(str)
     currentLogPathChanged = Signal()
     requestLogChanged = Signal()
+    _flushRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._buffer_lock = threading.RLock()
+        self._pending_lines = []
+        self._flush_scheduled = False
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.setInterval(400)
+        self._flush_timer.timeout.connect(self._flushPendingLines)
+        self._flushRequested.connect(self._startFlushTimer)
         self._handler = _QtLogHandler(self)
         self._handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
         logging.getLogger().addHandler(self._handler)
+
+    def enqueueLogLine(self, line: str) -> None:
+        if not line:
+            return
+        with self._buffer_lock:
+            self._pending_lines.append(line)
+            if len(self._pending_lines) > 300:
+                self._pending_lines = self._pending_lines[-300:]
+            if self._flush_scheduled:
+                return
+            self._flush_scheduled = True
+        self._flushRequested.emit()
+
+    @Slot()
+    def _startFlushTimer(self) -> None:
+        if not self._flush_timer.isActive():
+            self._flush_timer.start()
+
+    @Slot()
+    def _flushPendingLines(self) -> None:
+        with self._buffer_lock:
+            lines = self._pending_lines
+            self._pending_lines = []
+            self._flush_scheduled = False
+        if lines:
+            self.entryAppended.emit("\n".join(lines))
 
     @Property(str, notify=currentLogPathChanged)
     def currentLogPath(self) -> str:

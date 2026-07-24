@@ -461,9 +461,9 @@ def _preextract_glossary_profiles(
     api_url = str(cfg.get("api_url") or "").strip() or None
     model = str(cfg.get("model") or "").strip() or None
     api_key = str(cfg.get("api_key") or "").strip()
-    glossary_extraction_mode = str(cfg.get("glossary_extraction_mode") or "novel").strip().lower()
+    glossary_extraction_mode = str(cfg.get("glossary_extraction_mode") or "lite").strip().lower()
     if glossary_extraction_mode not in {"novel", "lite"}:
-        glossary_extraction_mode = "novel"
+        glossary_extraction_mode = "lite"
     if provider in {"hymt2", "sakura"} and not api_key:
         api_key = "sk-local"
 
@@ -506,6 +506,8 @@ def _preextract_glossary_profiles(
         extracted = extractor.extract_glossary_candidates(
             list(texts),
             batch_size=max(1, min(int(cfg.get("batch_size") or 1), 4)),
+            max_chars=30000,
+            max_texts=120,
             extraction_mode=glossary_extraction_mode,
             progress_callback=_progress,
         )

@@ -60,7 +60,7 @@ PROVIDER_CAPABILITY = {
     "glm": "智谱免费版限制并发 ≤2，batch ≤2",
     "gemini": "Gemini 免费版有限流",
     "wenxin": "文心一言/千帆：建议先低并发低批量测试，旧版 access_token RPC 接口不兼容",
-    "longcat": "LongCat：已自动限制并发≤8、batch≤9；遇到内容审核会拆分/降级处理",
+    "longcat": "LongCat：已自动限制并发≤4、batch≤4；遇到内容审核会拆分/降级处理",
     "hymt2": "Hy-MT2 本地：CPU 限制并发=1、batch=1；GPU 默认 4/4，最大并发≤6、batch≤8；适合离线初译或审核备用",
 }
 
@@ -689,7 +689,7 @@ class ConfigBridge(QObject):
                 self._book_glossary_name = ""
             self._selected_glossary_profile_ids = _clean_string_list(getattr(self, "_selected_glossary_profile_ids", []))
             if getattr(self, "_glossary_extraction_mode", "") not in {"novel", "lite"}:
-                self._glossary_extraction_mode = "novel"
+                self._glossary_extraction_mode = "lite"
             if "enable_notice_page" not in data:
                 self._enable_notice_page = False
             if not str(getattr(self, "_notice_page_text", "") or "").strip():

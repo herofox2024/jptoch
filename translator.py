@@ -860,8 +860,8 @@ class JaZhTranslator:
         endpoint_hint = f"{self.api_url} {self.model}".lower()
         if "longcat" in endpoint_hint:
             old_workers, old_batch = max_workers, batch_size
-            max_workers = min(max_workers, 8)
-            batch_size = min(batch_size, 9)
+            max_workers = min(max_workers, 4)
+            batch_size = min(batch_size, 4)
             if (old_workers, old_batch) != (max_workers, batch_size):
                 logger.info(
                     "LongCat 稳定性保护: 并发 %s→%s，批量 %s→%s",
@@ -4278,8 +4278,8 @@ JSON 顶层字段：
         texts: List[str],
         *,
         batch_size: Optional[int] = None,
-        max_chars: int = 60000,
-        max_texts: int = 240,
+        max_chars: int = 30000,
+        max_texts: int = 120,
         extraction_mode: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, Any]:
