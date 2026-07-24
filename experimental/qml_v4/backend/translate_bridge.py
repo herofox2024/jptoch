@@ -16,6 +16,7 @@ from typing import Optional, Any, Dict, List
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
 import translation_quality as tq
+from provider_registry import API_KEY_REQUIRED_PROVIDERS
 from backend.toast_bridge import ToastBridge
 from backend.task_history import (
     TranslationTaskHistoryStore,
@@ -466,6 +467,25 @@ def _preextract_glossary_profiles(
         glossary_extraction_mode = "lite"
     if provider in {"hymt2", "sakura"} and not api_key:
         api_key = "sk-local"
+    configured_timeout = int(cfg.get("api_timeout") or 120)
+    extraction_timeout = (
+        max(120, min(configured_timeout, 300))
+        if provider in {"hymt2", "sakura"}
+        else max(30, min(configured_timeout, 90))
+    )
+    logger.info(
+        "术语提取准备: provider=%s, model=%s, mode=%s, texts=%s, chars<=%s, max_texts=%s, timeout=%ss",
+        provider,
+        model or "",
+        glossary_extraction_mode,
+        len(texts or []),
+        30000,
+        120,
+        extraction_timeout,
+    )
+    _emit_status(
+        f"术语提取使用模型: {provider}/{model or ''}，模式={glossary_extraction_mode}，超时={extraction_timeout}s"
+    )
 
     extractor = None
     try:
@@ -478,7 +498,7 @@ def _preextract_glossary_profiles(
             batch_size=max(1, min(int(cfg.get("batch_size") or 1), 4)),
             max_batch_length=max(100, min(int(cfg.get("max_batch_length") or 800), 1000)),
             max_text_size_for_batch=max(60, min(int(cfg.get("max_text_size_for_batch") or 200), 250)),
-            api_timeout=max(120, int(cfg.get("api_timeout") or 120)),
+            api_timeout=extraction_timeout,
             cancel_event=cancel_event,
             extract_glossary=False,
             enable_glossary=False,
@@ -501,7 +521,7 @@ def _preextract_glossary_profiles(
                     progress_callback(batch_index, total_batches)
                 except Exception:
                     pass
-            _emit_status(f"正在提取术语 {batch_index}/{total_batches} ...")
+            _emit_status(f"正在提取术语 {batch_index}/{total_batches}: {provider}/{model or ''}")
 
         extracted = extractor.extract_glossary_candidates(
             list(texts),
@@ -1871,7 +1891,7 @@ class TranslateBridge(QObject):
             self.failed.emit("请填写输出文件路径")
             ToastBridge.warning("请填写输出文件保存路径")
             return
-        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
+        if config["provider"] in API_KEY_REQUIRED_PROVIDERS and not config["api_key"]:
             self._resume_task_id = ""
             self.failed.emit("该提供方需要 API Key")
             ToastBridge.warning("请先在 API 页面配置 API Key")
@@ -1883,7 +1903,7 @@ class TranslateBridge(QObject):
             return
         proofread_provider = config.get("proofread_provider") or ""
         if config.get("enable_proofread") and proofread_provider and proofread_provider != config["provider"]:
-            if proofread_provider in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config.get("proofread_api_key"):
+            if proofread_provider in API_KEY_REQUIRED_PROVIDERS and not config.get("proofread_api_key"):
                 self._resume_task_id = ""
                 self.failed.emit("校对供应商需要单独填写 API Key")
                 ToastBridge.warning("请填写校对模型 API Key")
@@ -1936,7 +1956,7 @@ class TranslateBridge(QObject):
             self.failed.emit("请选择需要提取术语的 EPUB 文件")
             ToastBridge.warning("请先选择待抽取术语的 EPUB 文件")
             return
-        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config["api_key"]:
+        if config["provider"] in API_KEY_REQUIRED_PROVIDERS and not config["api_key"]:
             self.failed.emit("术语提取 provider 需要 API Key")
             ToastBridge.warning("请先在 API 页面配置 API Key")
             return
@@ -2270,7 +2290,7 @@ class TranslateBridge(QObject):
             self.failed.emit(provider_error)
             ToastBridge.warning(provider_error)
             return
-        if config["provider"] in {"deepseek", "doubao", "gemini", "glm", "wenxin", "custom"} and not config.get("api_key"):
+        if config["provider"] in API_KEY_REQUIRED_PROVIDERS and not config.get("api_key"):
             self.failed.emit("重译 provider 需要 API Key")
             ToastBridge.warning("请先配置重译 provider 的 API Key")
             return

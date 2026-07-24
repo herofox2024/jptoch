@@ -94,6 +94,39 @@ Page {
         )
     }
 
+    function glossaryProviderLabel(provider) {
+        var value = String(provider || "deepseek").toLowerCase()
+        if (value === "deepseek") return "DeepSeek"
+        if (value === "doubao") return "豆包"
+        if (value === "sakura") return "Sakura 本地"
+        if (value === "hymt2") return "Hy-MT2 本地"
+        if (value === "gemini") return "Gemini"
+        if (value === "glm") return "GLM"
+        if (value === "wenxin") return "文心/千帆"
+        if (value === "longcat") return "LongCat"
+        if (value === "custom") return "Custom"
+        return value
+    }
+
+    function glossaryProviderCapability(provider) {
+        var value = String(provider || "deepseek").toLowerCase()
+        if (value === "deepseek") return "推荐用于术语抽取：支持 JSON 输出约束，稳定性最好。"
+        if (value === "longcat") return "可用于术语抽取：注意 API Key、审核拦截和长尾等待。"
+        if (value === "sakura" || value === "hymt2") return "本地模型可用，但 JSON 稳定性较弱，不建议作为高质量术语抽取首选。"
+        if (value === "custom") return "自定义接口可用，前提是兼容 OpenAI chat/completions 并能稳定返回 JSON。"
+        return "已接入术语抽取，稳定性取决于模型对 JSON 输出的遵循程度。"
+    }
+
+    function glossaryExtractionProviderText() {
+        var provider = taskPage.cfg ? taskPage.cfg.provider : "deepseek"
+        var model = taskPage.cfg ? String(taskPage.cfg.model || "") : ""
+        var mode = taskPage.cfg ? String(taskPage.cfg.glossaryExtractionMode || "lite") : "lite"
+        return "当前术语抽取模型：" + taskPage.glossaryProviderLabel(provider)
+                + (model !== "" ? " / " + model : "")
+                + "；模式：" + mode + "。"
+                + taskPage.glossaryProviderCapability(provider)
+    }
+
     function addGlossaryExtractionBooks(paths) {
         var values = taskPage._normalizeEpubPaths(paths)
         if (values.length === 0) return
@@ -682,6 +715,25 @@ Page {
                         color: AppPalette.mutedText
                         font.pixelSize: AppStyle.fontTiny
                         wrapMode: Text.WordWrap
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: glossaryProviderHint.implicitHeight + 18
+                    radius: AppPalette.radiusSmall
+                    color: AppPalette.cardBg
+                    border.color: AppPalette.lineColor
+
+                    Label {
+                        id: glossaryProviderHint
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        text: taskPage.glossaryExtractionProviderText()
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontTiny
+                        wrapMode: Text.WordWrap
+                        verticalAlignment: Text.AlignVCenter
                     }
                 }
 

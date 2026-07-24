@@ -2492,6 +2492,38 @@ class JaZhTranslator:
                 self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
                 request_started = time.time()
+                logger.info(
+                    "术语抽取请求开始: provider=%s, model=%s, mode=%s, attempt=%s/%s, texts=%s, timeout=%ss",
+                    self.provider,
+                    self.model,
+                    mode,
+                    attempt + 1,
+                    max_retries,
+                    len(texts),
+                    self.API_TIMEOUT,
+                )
+                if qml_request_log is not None:
+                    try:
+                        qml_request_log.record_event(
+                            context="术语抽取",
+                            provider=self.provider or "-",
+                            model=self.model or "-",
+                            url=self.api_url or "-",
+                            status_code=None,
+                            outcome="started",
+                            elapsed_ms=0,
+                            attempt=attempt,
+                            max_retries=max_retries,
+                            batch_size=len(texts),
+                            prompt_summary=self._summarize_prompt(messages),
+                            source_text=numbered,
+                            response_text="",
+                            error="",
+                            token_total=None,
+                            category=f"glossary_extract:{mode}",
+                        )
+                    except Exception:
+                        pass
                 resp = self.session.post(
                     self.api_url,
                     headers={
