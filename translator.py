@@ -681,10 +681,19 @@ class JaZhTranslator:
     ENABLE_CONTEXT_WINDOW = True   # 是否启用上下文窗口
     ENABLE_BATCH_ITEM_CONTEXT = False  # 批量 JSON 不默认给每条塞 prev/next，避免大幅增加 token
     CONTEXT_PREVIEW_LEN = 80       # 前后文预览最大字符数
+    DEEPSEEK_CONTEXT_WINDOW_MAX_TEXTS = 2000
 
     def _provider_uses_context_window(self) -> bool:
         """Hy-MT2 is prone to leaking reference context into the translation."""
         return self.ENABLE_CONTEXT_WINDOW and self.provider != "hymt2"
+
+    def _provider_uses_context_window_for_task(self, total_texts: int) -> bool:
+        """Disable per-batch context on large DeepSeek books to avoid token/cache amplification."""
+        if not self._provider_uses_context_window():
+            return False
+        if self.provider == "deepseek" and int(total_texts or 0) > self.DEEPSEEK_CONTEXT_WINDOW_MAX_TEXTS:
+            return False
+        return True
 
     def _build_context_guidance(self, prev_text: Optional[str], next_text: Optional[str]) -> str:
         """构建上下文提示（仅附加到 user_prompt，不影响 system_prompt）。"""
@@ -982,6 +991,12 @@ class JaZhTranslator:
             "proofread_batch_requests": 0,
             "proofread_batch_success": 0,
             "proofread_batch_lenient_success": 0,
+            "translate_total_texts": 0,
+            "translate_cache_hits": 0,
+            "translate_pending_unique": 0,
+            "translate_planned_batches": 0,
+            "translate_context_cache_tasks": 0,
+            "translate_elapsed_ms": 0,
         }
         logger.info(
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
@@ -2739,6 +2754,8 @@ class JaZhTranslator:
     _text_cache: Dict[str, Dict[str, Any]] = {}
     _text_cache_loaded = False
     TEXT_CACHE_FILE_NAME = "text_cache.json"
+    TEXT_CACHE_SAVE_THRESHOLD = 250
+    _text_cache_dirty_count = 0
     _manual_cache: Dict[str, Dict[str, Any]] = {}
     _manual_cache_loaded = False
     MANUAL_CACHE_FILE_NAME = "manual_cache.json"
@@ -2751,6 +2768,7 @@ class JaZhTranslator:
         loaded = self._load_json(text_cache_path, {})
         if isinstance(loaded, dict):
             self._text_cache = loaded
+        self._text_cache_dirty_count = 0
         self._text_cache_loaded = True
         logger.info(f"文本缓存已加载: {len(self._text_cache)} 条记录")
 
@@ -2903,25 +2921,39 @@ class JaZhTranslator:
             return
         self._load_text_cache()
         key = self._text_cache_key(text)
-        # 不覆盖已 verified 的条目
-        existing = self._text_cache.get(key, {})
-        if isinstance(existing, dict) and existing.get("verified", False):
-            return
-        self._text_cache[key] = {
+        entry = {
             "translation": translation,
             "verified": verified,
             "updated_at": int(time.time()),
         }
-        # 每 50 条保存一次
-        if len(self._text_cache) % 50 == 0:
+        with self._cache_lock:
+            # 不覆盖已 verified 的条目
+            existing = self._text_cache.get(key, {})
+            if isinstance(existing, dict) and existing.get("verified", False):
+                return
+            if isinstance(existing, dict) and existing.get("translation") == translation and bool(existing.get("verified", False)) == bool(verified):
+                return
+            self._text_cache[key] = entry
+            self._text_cache_dirty_count = int(getattr(self, "_text_cache_dirty_count", 0)) + 1
+            should_flush = self._text_cache_dirty_count >= self.TEXT_CACHE_SAVE_THRESHOLD
+        if should_flush:
             self._flush_text_cache()
 
     def _flush_text_cache(self):
         """持久化文本缓存。"""
-        if not self._text_cache:
-            return
+        with self._cache_lock:
+            if not self._text_cache:
+                return
+            snapshot = dict(self._text_cache)
+            dirty_count = int(getattr(self, "_text_cache_dirty_count", 0))
         text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
-        self._atomic_write_json(text_cache_path, self._text_cache)
+        self._atomic_write_json(text_cache_path, snapshot)
+        if dirty_count > 0:
+            with self._cache_lock:
+                self._text_cache_dirty_count = max(
+                    0,
+                    int(getattr(self, "_text_cache_dirty_count", 0)) - dirty_count,
+                )
 
     def _save_cache(self, force: bool = False):
         """保存缓存到文件，使用延迟写入策略。"""
@@ -4760,6 +4792,14 @@ JSON 顶层字段：
         """并发批量翻译多个文本（Phase 1 优化版）"""
         results: Dict[str, str] = {}
         total = len(texts)
+        batch_started_at = time.time()
+        start_stats = self.get_stats()
+        start_api_requests = int(start_stats.get("api_requests_total", 0))
+        start_tokens = int(start_stats.get("tokens_total", 0))
+        start_batch_total = int(start_stats.get("batch_total", 0))
+        start_quality_retranslate = int(start_stats.get("quality_retranslate", 0))
+        total_chars = sum(len(str(text or "")) for text in texts)
+        planned_batches = 0
         completed = 0
         failed_texts: Dict[str, str] = {}
         residue_texts: Dict[str, str] = {}
@@ -4773,9 +4813,48 @@ JSON 顶层字段：
         context_sequence = list(context_texts or texts)
         if len(context_sequence) < total:
             context_sequence = list(texts)
+        use_context_window = self._provider_uses_context_window_for_task(total)
+        if self._provider_uses_context_window() and not use_context_window:
+            logger.info(
+                "DeepSeek 大书快速策略: texts=%s，已关闭批量上下文窗口以减少 token 与缓存碎片",
+                total,
+            )
+
+        def log_translate_summary(status: str, planned: int = 0) -> None:
+            elapsed = max(0.001, time.time() - batch_started_at)
+            stats = self.get_stats()
+            api_delta = max(0, int(stats.get("api_requests_total", 0)) - start_api_requests)
+            token_delta = max(0, int(stats.get("tokens_total", 0)) - start_tokens)
+            batch_delta = max(0, int(stats.get("batch_total", 0)) - start_batch_total)
+            quality_delta = max(0, int(stats.get("quality_retranslate", 0)) - start_quality_retranslate)
+            chars_per_second = int(total_chars / elapsed) if total_chars else 0
+            texts_per_second = round(float(completed) / elapsed, 2) if completed else 0.0
+            self._set_stat("translate_elapsed_ms", int(elapsed * 1000))
+            cache_hits = int(stats.get("translate_cache_hits", 0))
+            logger.info(
+                "翻译阶段性能汇总: status=%s, texts=%s, completed=%s, chars=%s, elapsed=%.1fs, "
+                "chars/s=%s, texts/s=%s, cache_hits=%s, pending_unique=%s, planned_batches=%s, "
+                "actual_batch_tasks=%s, api_requests=%s, tokens=%s, quality_retranslate=%s, "
+                "context_window=%s",
+                status,
+                total,
+                completed,
+                total_chars,
+                elapsed,
+                chars_per_second,
+                texts_per_second,
+                cache_hits,
+                len(uncached_unique),
+                planned,
+                batch_delta,
+                api_delta,
+                token_delta,
+                quality_delta,
+                "on" if use_context_window else "off",
+            )
 
         def get_context_for_index(idx: int) -> Tuple[Optional[str], Optional[str]]:
-            if not self._provider_uses_context_window() or idx < 0 or idx >= len(context_sequence):
+            if not use_context_window or idx < 0 or idx >= len(context_sequence):
                 return None, None
             prev_text = context_sequence[idx - 1] if idx > 0 else None
             next_text = context_sequence[idx + 1] if idx + 1 < len(context_sequence) else None
@@ -4964,17 +5043,31 @@ JSON 顶层字段：
             self._save_cache(force=True)
             if pre_translated or text_cache_hits:
                 self._flush_text_cache()
+            self._set_stat("translate_total_texts", total)
+            self._set_stat("translate_cache_hits", completed)
+            self._set_stat("translate_pending_unique", 0)
+            self._set_stat("translate_planned_batches", 0)
+            self._set_stat("translate_context_cache_tasks", 0)
+            log_translate_summary("cache_only", planned=0)
             self._last_ordered_results = ordered_results
             return results
 
         # ---- Phase 1-①: 智能分批 ----
         task_texts = {key: str(task.get("text", "")) for key, task in pending_tasks.items()}
         batches = self._smart_batch_task_keys(uncached_unique, task_texts, effective_batch_size)
-        logger.info(f"智能分批为 {len(batches)} 个批次进行并发翻译")
+        planned_batches = len(batches)
+        logger.info(f"智能分批为 {planned_batches} 个批次进行并发翻译")
+        self._set_stat("translate_total_texts", total)
+        self._set_stat("translate_cache_hits", completed)
+        self._set_stat("translate_pending_unique", len(uncached_unique))
+        self._set_stat("translate_planned_batches", planned_batches)
 
-        if self._provider_uses_context_window():
+        if use_context_window:
             context_cache_count = sum(1 for key, task in pending_tasks.items() if key.startswith("v3ctx:"))
             logger.info(f"上下文窗口已启用: {len(context_sequence)} 条文本；上下文缓存任务 {context_cache_count} 个")
+            self._set_stat("translate_context_cache_tasks", context_cache_count)
+        else:
+            self._set_stat("translate_context_cache_tasks", 0)
 
         def get_context_for_task(task_key: str) -> Tuple[Optional[str], Optional[str]]:
             task = pending_tasks.get(task_key) or {}
@@ -5269,7 +5362,7 @@ JSON 顶层字段：
             # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
             item_contexts = (
                 [get_context_for_task(task_key) for task_key in batch]
-                if self._provider_uses_context_window() and self.ENABLE_BATCH_ITEM_CONTEXT
+                if use_context_window and self.ENABLE_BATCH_ITEM_CONTEXT
                 else None
             )
             batch_prev_ctx, batch_next_ctx = get_context_for_task(batch[0])
@@ -5560,11 +5653,13 @@ JSON 顶层字段：
                 incomplete_error.format_diagnostics(max_items=5),
                 self.japanese_residue_allowlist_path(),
             )
+            log_translate_summary("incomplete", planned=planned_batches)
             raise incomplete_error
 
         if progress_callback and completed < total:
             progress_callback(total, total)
 
+        log_translate_summary("success", planned=planned_batches)
         self._last_ordered_results = ordered_results
         return results
 

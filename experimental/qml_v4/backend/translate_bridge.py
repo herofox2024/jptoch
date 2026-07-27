@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Tuple
 
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread
 
@@ -759,14 +759,34 @@ class _TranslateWorker(QObject):
                     int(stats.get("japanese_residue_remaining", 0)),
                 )
 
+            last_progress_emit_ts = 0.0
+            last_progress_completed = -1
+            progress_emit_interval = 0.5
+            progress_emit_step = 20
+            last_item_emit_ts = 0.0
+            item_emit_interval = 0.3
+
             def on_progress(completed, total):
+                nonlocal last_progress_emit_ts, last_progress_completed
+                now = time.time()
+                force = completed <= 0 or completed >= total
+                enough_time = now - last_progress_emit_ts >= progress_emit_interval
+                enough_step = completed - last_progress_completed >= progress_emit_step
+                if not (force or enough_time or enough_step):
+                    return
+                last_progress_emit_ts = now
+                last_progress_completed = completed
                 self.progressChanged.emit(completed, total, total_chars)
                 _emit_stat(completed, total)
 
             def on_item(src, dst):
+                nonlocal last_item_emit_ts
                 if self._bridge:
                     self._bridge._record_translation_item_success(src, dst)
-                self.itemTranslated.emit(src, dst)
+                now = time.time()
+                if now - last_item_emit_ts >= item_emit_interval:
+                    last_item_emit_ts = now
+                    self.itemTranslated.emit(src, dst)
 
             def on_proofread_detail(detail):
                 issues = detail.get("issues") or []
@@ -1542,6 +1562,9 @@ class _TestWorker(QObject):
 
 
 class TranslateBridge(QObject):
+    TASK_SUCCESS_FLUSH_SIZE = 50
+    TASK_SUCCESS_FLUSH_INTERVAL = 5.0
+
 
     progressChanged = Signal(int, int, int)
     itemTranslated = Signal(str, str)
@@ -1593,6 +1616,9 @@ class TranslateBridge(QObject):
         self._current_task_id = ""
         self._resume_task_id = ""
         self._last_task_history_update_ts = 0.0
+        self._task_success_lock = threading.RLock()
+        self._pending_task_successes: List[Tuple[str, str]] = []
+        self._last_task_success_flush_ts = 0.0
 
     def _track_worker_thread(self, worker, thread):
         """Prevent GC by holding a reference until thread finishes."""
@@ -1673,6 +1699,9 @@ class TranslateBridge(QObject):
         self._current_task_id = self._resume_task_id or make_task_id()
         self._resume_task_id = ""
         self._last_task_history_update_ts = 0.0
+        with self._task_success_lock:
+            self._pending_task_successes = []
+            self._last_task_success_flush_ts = time.time()
         payload = {
             "status": "running",
             "started_at": int(time.time()),
@@ -1720,10 +1749,44 @@ class TranslateBridge(QObject):
     def _record_translation_item_success(self, src, dst):
         if not self._current_task_id:
             return
+        now = time.time()
+        with self._task_success_lock:
+            self._pending_task_successes.append((str(src or ""), str(dst or "")))
+            should_flush = (
+                len(self._pending_task_successes) >= self.TASK_SUCCESS_FLUSH_SIZE
+                or now - self._last_task_success_flush_ts >= self.TASK_SUCCESS_FLUSH_INTERVAL
+            )
+        if should_flush:
+            self._flush_translation_item_successes()
+
+    def _flush_translation_item_successes(self, force: bool = False):
+        if not self._current_task_id:
+            return
+        with self._task_success_lock:
+            if not self._pending_task_successes:
+                if force:
+                    self._last_task_success_flush_ts = time.time()
+                return
+            pending = list(self._pending_task_successes)
+            self._pending_task_successes = []
+            self._last_task_success_flush_ts = time.time()
+
+        translations = {}
+        for src, dst in pending:
+            if src.strip() and dst.strip():
+                translations[src] = dst
+        if not translations:
+            return
         try:
-            self._task_history.mark_subtask_success(self._current_task_id, src, dst)
+            self._task_history.mark_subtasks_success(self._current_task_id, translations)
+            self.translationTaskHistoryChanged.emit()
         except Exception as exc:
-            logger.debug("保存文本块成功状态失败: %s", exc, exc_info=True)
+            with self._task_success_lock:
+                self._pending_task_successes = pending + self._pending_task_successes
+            if force:
+                logger.warning("保存文本块成功状态失败: %s", exc)
+            else:
+                logger.debug("保存文本块成功状态失败: %s", exc, exc_info=True)
 
     def _record_translation_task_progress(self, completed, total, total_chars):
         if not self._current_task_id:
@@ -1746,6 +1809,7 @@ class TranslateBridge(QObject):
     def _record_translation_task_failures(self, exc):
         if not self._current_task_id:
             return
+        self._flush_translation_item_successes(force=True)
         failed_texts = list(getattr(exc, "failed_texts", []) or [])
         residue_texts = list(getattr(exc, "residue_texts", []) or [])
         blocks = normalize_failed_blocks(
@@ -1783,6 +1847,7 @@ class TranslateBridge(QObject):
     def _record_translation_task_save_residue(self, residue_samples, residue_total, report_path):
         if not self._current_task_id:
             return
+        self._flush_translation_item_successes(force=True)
         blocks = normalize_failed_blocks(residue_samples=list(residue_samples or []))
         self._update_translation_task_history(
             {
@@ -2151,6 +2216,7 @@ class TranslateBridge(QObject):
 
     def _on_finished(self, out_path):
         was_stopped = self._stop_requested
+        self._flush_translation_item_successes(force=True)
         if was_stopped:
             self._discard_and_clear_active_cache()
         self._active_translator = None
@@ -2195,6 +2261,7 @@ class TranslateBridge(QObject):
         self._stop_requested = False
 
     def _on_failed(self, msg):
+        self._flush_translation_item_successes(force=True)
         self._active_translator = None
         self._active_texts = []
         self.busy = False
@@ -2218,6 +2285,7 @@ class TranslateBridge(QObject):
 
     @Slot()
     def cancelTranslation(self):
+        self._flush_translation_item_successes(force=True)
         self._update_translation_task_history({"status": "cancelling"})
         self._request_active_cancel(close_session=True)
         self.statusChanged.emit("正在取消...")
@@ -2227,6 +2295,7 @@ class TranslateBridge(QObject):
     def stopTranslation(self):
         self._is_paused = False
         self._stop_requested = True
+        self._flush_translation_item_successes(force=True)
         self._update_translation_task_history({"status": "stopping"})
         self._request_active_cancel(close_session=True)
         removed = self._discard_and_clear_active_cache()
@@ -2241,6 +2310,7 @@ class TranslateBridge(QObject):
     def pauseTranslation(self):
         self._is_paused = True
         self._stop_requested = False
+        self._flush_translation_item_successes(force=True)
         self._update_translation_task_history({"status": "pausing"})
         self._request_active_cancel(close_session=True)
         self.statusChanged.emit("暂停中 — 等待当前请求完成...")
@@ -2794,4 +2864,3 @@ class TranslateBridge(QObject):
         from translator import get_data_dir
 
         return str(get_data_dir())
-

@@ -15,6 +15,8 @@ _LOCK = threading.RLock()
 _MAX_LINES_PER_FILE = 2000
 _MAX_FILES = 14
 _SNIPPET_LIMIT = 900
+_PRUNE_EVERY_WRITES = 100
+_WRITE_COUNTER = 0
 
 _SECRET_PATTERNS = [
     re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;\"'}]+"),
@@ -158,11 +160,18 @@ def record_event(**fields: Any) -> Dict[str, Any]:
 
     try:
         with _LOCK:
+            global _WRITE_COUNTER
             path = current_log_path()
             with path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
-            _prune_current_file(path)
-            _prune_files()
+            _WRITE_COUNTER += 1
+            should_prune = (
+                _MAX_LINES_PER_FILE <= _PRUNE_EVERY_WRITES
+                or _WRITE_COUNTER % _PRUNE_EVERY_WRITES == 0
+            )
+            if should_prune:
+                _prune_current_file(path)
+                _prune_files()
     except Exception:
         pass
     return entry

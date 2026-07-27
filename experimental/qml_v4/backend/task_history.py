@@ -343,7 +343,17 @@ class TranslationTaskHistoryStore:
             return dict(record)
 
     def mark_subtask_success(self, task_id: str, source: Any, translation: Any) -> Dict[str, Any]:
-        source_digest = text_hash(source)
+        return self.mark_subtasks_success(task_id, {source: translation})
+
+    def mark_subtasks_success(self, task_id: str, translations: Mapping[Any, Any]) -> Dict[str, Any]:
+        cleaned = {
+            text_hash(source): _compact_text(dst, MAX_PERSISTED_TEXT_CHARS)
+            for source, dst in dict(translations or {}).items()
+            if str(source or "").strip() and str(dst or "").strip()
+        }
+        if not cleaned:
+            return {"changed": 0, "record": {}}
+
         now = now_ts()
         with self._lock:
             records = self.load()
@@ -352,12 +362,13 @@ class TranslationTaskHistoryStore:
             for item in record.get("subtasks", []) or []:
                 if not isinstance(item, dict):
                     continue
-                if item.get("source_hash") != source_digest:
+                translated = cleaned.get(item.get("source_hash"))
+                if translated is None:
                     continue
                 if item.get("status") == "success" and item.get("translation"):
                     continue
                 item["status"] = "success"
-                item["translation"] = _compact_text(translation, MAX_PERSISTED_TEXT_CHARS)
+                item["translation"] = translated
                 item["reason"] = ""
                 item["updated_at"] = now
                 changed += 1
