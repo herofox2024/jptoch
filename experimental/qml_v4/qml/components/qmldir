@@ -4,6 +4,7 @@ NoticePageSettings 1.0 NoticePageSettings.qml
 StatCard 1.0 StatCard.qml
 ProgressMetric 1.0 ProgressMetric.qml
 RealtimeTextPanel 1.0 RealtimeTextPanel.qml
+TranslationBlockMap 1.0 TranslationBlockMap.qml
 IssueChip 1.0 IssueChip.qml
 ReportField 1.0 ReportField.qml
 ClearCacheDialog 1.0 ClearCacheDialog.qml

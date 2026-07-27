@@ -54,6 +54,7 @@ Page {
     property string diagnosticsText: ""
     property string pendingRtSrc: ""
     property string pendingRtDst: ""
+    property bool showFullRealtimeText: false
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
     property real startTs: 0
@@ -258,11 +259,13 @@ Page {
 
     Timer {
         id: realtimeTextTimer
-        interval: 300
+        interval: 500
         repeat: false
         onTriggered: {
-            rtSrc.text = page.pendingRtSrc
-            rtDst.text = page.pendingRtDst
+            if (page.showFullRealtimeText) {
+                rtSrc.text = page.pendingRtSrc
+                rtDst.text = page.pendingRtDst
+            }
         }
     }
 
@@ -739,24 +742,125 @@ Page {
                 radius: AppPalette.radiusLarge
                 border.color: AppPalette.borderColor
 
-                RowLayout {
+                ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 16
                     spacing: AppStyle.spacingLarge
 
-                    RealtimeTextPanel {
-                        id: rtSrc
+                    RowLayout {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        title: "原文"
-                        textColor: AppPalette.textColor
+                        spacing: AppStyle.spacingMedium
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: AppStyle.spacingTight
+                            Label {
+                                text: "\u5b9e\u65f6\u7ffb\u8bd1\u6982\u89c8"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSubSection
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: "\u9ed8\u8ba4\u4f7f\u7528\u8272\u5757\u5730\u56fe\u663e\u793a\u6587\u672c\u5757\u8fdb\u5ea6\uff0c\u51cf\u5c11\u957f\u4e66\u7ffb\u8bd1\u65f6\u7684 UI \u6587\u672c\u91cd\u6392\u3002"
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontSmall
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Switch {
+                            id: fullRealtimeSwitch
+                            text: "\u663e\u793a\u5168\u6587\u5b9e\u65f6\u8bd1\u6587"
+                            checked: page.showFullRealtimeText
+                            onToggled: {
+                                page.showFullRealtimeText = checked
+                                if (checked) {
+                                    rtSrc.text = page.pendingRtSrc
+                                    rtDst.text = page.pendingRtDst
+                                }
+                            }
+                        }
                     }
-                    RealtimeTextPanel {
-                        id: rtDst
+
+                    TranslationBlockMap {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        title: "译文"
-                        textColor: AppPalette.accentColor
+                        Layout.preferredHeight: page.showFullRealtimeText ? 190 : 260
+                        completed: page.statCompleted
+                        total: page.statTotal
+                        failed: page.statFailCount
+                        warnings: page.statJapaneseResidueRemaining
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.max(118, latestPreviewColumn.implicitHeight + 28)
+                        radius: AppPalette.radiusMedium
+                        color: AppPalette.surfaceRaised
+                        border.color: AppPalette.lineColor
+                        clip: true
+
+                        ColumnLayout {
+                            id: latestPreviewColumn
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            spacing: AppStyle.spacingSmall
+
+                            Label {
+                                text: "\u6700\u65b0\u8bd1\u6587\u9884\u89c8"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontBodyLarge
+                                font.weight: Font.DemiBold
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.pendingRtSrc || "\u6682\u65e0\u539f\u6587"
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontSmall
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: AppPalette.lineColor
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.pendingRtDst || "\u6682\u65e0\u8bd1\u6587"
+                                color: page.pendingRtDst ? AppPalette.accentColor : AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontBody
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: page.showFullRealtimeText
+                        visible: page.showFullRealtimeText
+                        spacing: AppStyle.spacingLarge
+
+                        RealtimeTextPanel {
+                            id: rtSrc
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            title: "\u539f\u6587"
+                            textColor: AppPalette.textColor
+                        }
+                        RealtimeTextPanel {
+                            id: rtDst
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            title: "\u8bd1\u6587"
+                            textColor: AppPalette.accentColor
+                        }
                     }
                 }
             }
