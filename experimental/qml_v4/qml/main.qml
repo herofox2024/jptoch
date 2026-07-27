@@ -456,6 +456,7 @@ ApplicationWindow {
                     sourceComponent: GlossaryPage {
                         cfg: appWindow.cfg
                         gbridge: appWindow.gbridge
+                        tbridge: appWindow.tbridge
                     }
                     onLoaded: appWindow.activateCurrentPage()
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }

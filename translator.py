@@ -781,9 +781,13 @@ class JaZhTranslator:
     ENABLE_BATCH_ITEM_CONTEXT = False  # 批量 JSON 不默认给每条塞 prev/next，避免大幅增加 token
     CONTEXT_PREVIEW_LEN = 80       # 前后文预览最大字符数
     DEEPSEEK_CONTEXT_WINDOW_MAX_TEXTS = 2000
+    LONGCAT_CONTEXT_WINDOW_MAX_TEXTS = 2000
     FAST_BATCH_PROVIDERS = {"deepseek", "longcat"}
     FAST_BATCH_MIN_TEXTS = 2000
     FAST_BATCH_MAX_ITEMS = 16
+    FAST_BATCH_PROVIDER_MAX_ITEMS = {
+        "longcat": 6,
+    }
     FAST_BATCH_MAX_CHARS = 2600
     FAST_BATCH_LONG_THRESHOLD = 700
     RATE_WINDOW_SECONDS = 60.0
@@ -797,12 +801,18 @@ class JaZhTranslator:
         return self.ENABLE_CONTEXT_WINDOW and self.provider != "hymt2"
 
     def _provider_uses_context_window_for_task(self, total_texts: int) -> bool:
-        """Disable per-batch context on large DeepSeek books to avoid token/cache amplification."""
+        """Disable per-batch context on large books where context increases latency more than quality."""
         if not self._provider_uses_context_window():
             return False
         if self.provider == "deepseek" and int(total_texts or 0) > self.DEEPSEEK_CONTEXT_WINDOW_MAX_TEXTS:
             return False
+        if self.provider == "longcat" and int(total_texts or 0) > self.LONGCAT_CONTEXT_WINDOW_MAX_TEXTS:
+            return False
         return True
+
+    def _fast_batch_max_items_for_provider(self) -> int:
+        provider = (self.provider or "").strip().lower()
+        return max(1, int(self.FAST_BATCH_PROVIDER_MAX_ITEMS.get(provider, self.FAST_BATCH_MAX_ITEMS)))
 
     def _build_context_guidance(self, prev_text: Optional[str], next_text: Optional[str]) -> str:
         """构建上下文提示（仅附加到 user_prompt，不影响 system_prompt）。"""
@@ -5061,9 +5071,10 @@ JSON 顶层字段：
                 batches.append(current)
 
         if fast_mode:
-            max_items = min(max(effective_batch_size, 1), self.FAST_BATCH_MAX_ITEMS)
+            max_items = min(max(effective_batch_size, 1), self._fast_batch_max_items_for_provider())
             max_chars = max(int(getattr(self, "max_batch_length", 0) or 0), self.FAST_BATCH_MAX_CHARS)
-            flush_group(short, min(max_items * 2, 32), max_chars * 2)
+            short_max_items = max_items if self.provider == "longcat" else min(max_items * 2, 32)
+            flush_group(short, short_max_items, max_chars * 2)
             flush_group(medium, max_items, max_chars)
         else:
             flush_group(short, min(effective_batch_size * 2, 20), self.max_batch_length * 2)
@@ -5119,9 +5130,10 @@ JSON 顶层字段：
         )
         if fast_batch_mode:
             old_effective_batch_size = effective_batch_size
+            fast_batch_max_items = self._fast_batch_max_items_for_provider()
             effective_batch_size = min(
-                self.FAST_BATCH_MAX_ITEMS,
-                max(effective_batch_size, min(self.FAST_BATCH_MAX_ITEMS, max(8, old_effective_batch_size * 2))),
+                fast_batch_max_items,
+                max(effective_batch_size, min(fast_batch_max_items, max(8, old_effective_batch_size * 2))),
             )
             with self._dynamic_limit_lock:
                 self._dynamic_batch_size = max(int(self._dynamic_batch_size), effective_batch_size)
@@ -5147,7 +5159,8 @@ JSON 顶层字段：
         use_context_window = self._provider_uses_context_window_for_task(total)
         if self._provider_uses_context_window() and not use_context_window:
             logger.info(
-                "DeepSeek 大书快速策略: texts=%s，已关闭批量上下文窗口以减少 token 与缓存碎片",
+                "%s 大书快速策略: texts=%s，已关闭批量上下文窗口以减少 token 与缓存碎片",
+                self.provider,
                 total,
             )
 

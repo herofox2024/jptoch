@@ -43,19 +43,7 @@ Page {
     property var latestFailedBlocks: []
     property var latestUnfinishedTask: ({})
     property int failedBlockProviderModeIndex: 0
-    property string glossaryBatchStatus: ""
-    property string glossaryPostApplyStatus: ""
-    property bool glossaryExtractionActive: false
-    property string glossaryExtractionRunMode: ""
     property var glossaryProfiles: []
-    property var glossaryExtractionBooks: []
-    property var glossaryPostApplyBooks: []
-    property var glossaryExtractionModeValues: ["novel", "lite"]
-    property var glossaryExtractionModeLabels: ["小说向（novel）", "精简（lite）"]
-    property bool glossaryAdvancedOpen: false
-
-    onCfgChanged: syncGlossaryExtractionModeCombo()
-
     signal navigateToStatus()
     signal navigateToApi()
     signal navigateToLogs()
@@ -63,99 +51,6 @@ Page {
 
     function openManualEdit(src, dst) {
         manualEditDialog.openWith(src, dst)
-    }
-
-    function _normalizeEpubPaths(values) {
-        var items = []
-        if (!values) return items
-        if (typeof values === "string") values = [values]
-        for (var i = 0; i < values.length; i++) {
-            var path = FilePathUtils.normalizeFileUrl(values[i])
-            if (path && path.toLowerCase().endsWith(".epub") && items.indexOf(path) < 0) {
-                items.push(path)
-            }
-        }
-        return items
-    }
-
-    function glossaryExtractionModeIndex(value) {
-        var idx = taskPage.glossaryExtractionModeValues.indexOf(String(value || "novel").toLowerCase())
-        return idx >= 0 ? idx : 0
-    }
-
-    function glossaryExtractionModeValue(index) {
-        return taskPage.glossaryExtractionModeValues[index] || "novel"
-    }
-
-    function syncGlossaryExtractionModeCombo() {
-        if (typeof glossaryExtractionModeCombo === "undefined") return
-        glossaryExtractionModeCombo.currentIndex = taskPage.glossaryExtractionModeIndex(
-            taskPage.cfg ? taskPage.cfg.glossaryExtractionMode : "novel"
-        )
-    }
-
-    function glossaryProviderLabel(provider) {
-        var value = String(provider || "deepseek").toLowerCase()
-        if (value === "deepseek") return "DeepSeek"
-        if (value === "doubao") return "豆包"
-        if (value === "sakura") return "Sakura 本地"
-        if (value === "hymt2") return "Hy-MT2 本地"
-        if (value === "gemini") return "Gemini"
-        if (value === "glm") return "GLM"
-        if (value === "wenxin") return "文心/千帆"
-        if (value === "longcat") return "LongCat"
-        if (value === "custom") return "Custom"
-        return value
-    }
-
-    function glossaryProviderCapability(provider) {
-        var value = String(provider || "deepseek").toLowerCase()
-        if (value === "deepseek") return "推荐用于术语抽取：支持 JSON 输出约束，稳定性最好。"
-        if (value === "longcat") return "可用于术语抽取：注意 API Key、审核拦截和长尾等待。"
-        if (value === "sakura" || value === "hymt2") return "本地模型可用，但 JSON 稳定性较弱，不建议作为高质量术语抽取首选。"
-        if (value === "custom") return "自定义接口可用，前提是兼容 OpenAI chat/completions 并能稳定返回 JSON。"
-        return "已接入术语抽取，稳定性取决于模型对 JSON 输出的遵循程度。"
-    }
-
-    function glossaryExtractionProviderText() {
-        var provider = taskPage.cfg ? taskPage.cfg.provider : "deepseek"
-        var model = taskPage.cfg ? String(taskPage.cfg.model || "") : ""
-        var mode = taskPage.cfg ? String(taskPage.cfg.glossaryExtractionMode || "lite") : "lite"
-        return "当前术语抽取模型：" + taskPage.glossaryProviderLabel(provider)
-                + (model !== "" ? " / " + model : "")
-                + "；模式：" + mode + "。"
-                + taskPage.glossaryProviderCapability(provider)
-    }
-
-    function addGlossaryExtractionBooks(paths) {
-        var values = taskPage._normalizeEpubPaths(paths)
-        if (values.length === 0) return
-        var merged = []
-        for (var i = 0; i < taskPage.glossaryExtractionBooks.length; i++) {
-            var existing = String(taskPage.glossaryExtractionBooks[i] || "").trim()
-            if (existing !== "" && merged.indexOf(existing) < 0) merged.push(existing)
-        }
-        for (var j = 0; j < values.length; j++) {
-            if (merged.indexOf(values[j]) < 0) merged.push(values[j])
-        }
-        taskPage.glossaryExtractionBooks = merged
-        taskPage.glossaryBatchStatus = merged.length > 0
-                ? "已选择 " + merged.length + " 本待抽取 EPUB，点击“批量提取术语”生成 profile。"
-                : ""
-    }
-
-    function removeGlossaryExtractionBook(index) {
-        var values = taskPage.glossaryExtractionBooks.slice()
-        if (index >= 0 && index < values.length) values.splice(index, 1)
-        taskPage.glossaryExtractionBooks = values
-        taskPage.glossaryBatchStatus = values.length > 0
-                ? "已选择 " + values.length + " 本待抽取 EPUB，点击“批量提取术语”生成 profile。"
-                : ""
-    }
-
-    function clearGlossaryExtractionBooks() {
-        taskPage.glossaryExtractionBooks = []
-        taskPage.glossaryBatchStatus = ""
     }
 
     ScrollView {
@@ -546,7 +441,7 @@ Page {
                         spacing: AppStyle.spacingTight
 
                         Label {
-                            text: "术语分层"
+                            text: "术语设置"
                             color: AppPalette.textColor
                             font.pixelSize: AppStyle.fontSubHeader
                             font.weight: Font.DemiBold
@@ -554,7 +449,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: "已提取的术语 profile 可以直接勾选。翻译时会注入到当前工作台 EPUB；已翻译 EPUB 可在下方选择后统一术语并输出副本。"
+                            text: "这里仅选择翻译时注入的术语 profile。提取术语、管理 profile、译后统一请到“术语表”页的“术语任务”。"
                             color: AppPalette.mutedText
                             font.pixelSize: AppStyle.fontCaption
                             wrapMode: Text.WordWrap
@@ -578,7 +473,6 @@ Page {
                 }
 
                 Flow {
-                    id: glossaryScopeFlow
                     Layout.fillWidth: true
                     Layout.preferredHeight: implicitHeight
                     spacing: AppStyle.spacingMedium
@@ -599,141 +493,6 @@ Page {
                         checked: taskPage.cfg ? taskPage.cfg.useGlobalGlossary : true
                         enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : true
                         onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useGlobalGlossary = checked }
-                    }
-                    CheckBox {
-                        text: "题材 profile"
-                        visible: taskPage.glossaryAdvancedOpen
-                        checked: taskPage.cfg ? taskPage.cfg.useGenreGlossary : false
-                        enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : false
-                        onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useGenreGlossary = checked }
-                    }
-                    CheckBox {
-                        text: "系列 profile"
-                        visible: taskPage.glossaryAdvancedOpen
-                        checked: taskPage.cfg ? taskPage.cfg.useSeriesGlossary : false
-                        enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : false
-                        onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useSeriesGlossary = checked }
-                    }
-                    CheckBox {
-                        text: "本书 profile"
-                        visible: taskPage.glossaryAdvancedOpen
-                        checked: taskPage.cfg ? taskPage.cfg.useBookGlossary : false
-                        enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : false
-                        onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useBookGlossary = checked }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    Button {
-                        text: taskPage.glossaryAdvancedOpen ? "收起自动匹配" : "高级自动匹配"
-                        checkable: true
-                        checked: taskPage.glossaryAdvancedOpen
-                        onClicked: taskPage.glossaryAdvancedOpen = checked
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: "常规使用直接勾选下方已提取 profile。高级自动匹配只用于按题材、系列名或当前书名自动加载术语。"
-                        color: AppPalette.mutedText
-                        font.pixelSize: AppStyle.fontTiny
-                        wrapMode: Text.WordWrap
-                    }
-                }
-
-                RowLayout {
-                    visible: taskPage.glossaryAdvancedOpen
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    Label {
-                        text: "系列名"
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    TextField {
-                        Layout.fillWidth: true
-                        placeholderText: "例如：某一系列的统一术语名"
-                        text: taskPage.cfg ? taskPage.cfg.seriesGlossaryName : ""
-                        enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary && taskPage.cfg.useSeriesGlossary) : false
-                        onTextChanged: { if (taskPage.cfg) taskPage.cfg.seriesGlossaryName = text }
-                    }
-                }
-
-                RowLayout {
-                    visible: taskPage.glossaryAdvancedOpen
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    Label {
-                        text: "本书 profile 名"
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    TextField {
-                        Layout.fillWidth: true
-                        placeholderText: "留空=当前 EPUB 文件名；用于提取和翻译时匹配本书术语"
-                        text: taskPage.cfg ? taskPage.cfg.bookGlossaryName : ""
-                        enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary && taskPage.cfg.useBookGlossary) : false
-                        onTextChanged: { if (taskPage.cfg) taskPage.cfg.bookGlossaryName = text }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    Label {
-                        text: "术语抽取模式"
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    ComboBox {
-                        id: glossaryExtractionModeCombo
-                        Layout.preferredWidth: 172
-                        model: taskPage.glossaryExtractionModeLabels
-                        enabled: !!taskPage.cfg
-                        onActivated: {
-                            if (taskPage.cfg) {
-                                taskPage.cfg.glossaryExtractionMode = taskPage.glossaryExtractionModeValue(currentIndex)
-                            }
-                        }
-                        Component.onCompleted: taskPage.syncGlossaryExtractionModeCombo()
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: "小说向会抽取人物、地名、组织、物品等；精简模式只保留人物和地名，适合先做低噪声术语表。"
-                        color: AppPalette.mutedText
-                        font.pixelSize: AppStyle.fontTiny
-                        wrapMode: Text.WordWrap
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: glossaryProviderHint.implicitHeight + 18
-                    radius: AppPalette.radiusSmall
-                    color: AppPalette.cardBg
-                    border.color: AppPalette.lineColor
-
-                    Label {
-                        id: glossaryProviderHint
-                        anchors.fill: parent
-                        anchors.margins: 9
-                        text: taskPage.glossaryExtractionProviderText()
-                        color: AppPalette.mutedText
-                        font.pixelSize: AppStyle.fontTiny
-                        wrapMode: Text.WordWrap
-                        verticalAlignment: Text.AlignVCenter
                     }
                 }
 
@@ -769,8 +528,8 @@ Page {
                                 Label {
                                     Layout.fillWidth: true
                                     text: taskPage.selectedGlossaryProfileCount() > 0
-                                          ? "已选 " + taskPage.selectedGlossaryProfileCount() + " 个 profile；开始翻译或术语统一时生效。"
-                                          : "未选择 profile；可先提取本书术语，或刷新后勾选已有 profile。"
+                                          ? "已选 " + taskPage.selectedGlossaryProfileCount() + " 个 profile；开始翻译时生效。"
+                                          : "未选择 profile；可到术语表页提取或勾选已有 profile。"
                                     color: AppPalette.mutedText
                                     font.pixelSize: AppStyle.fontTiny
                                     elide: Text.ElideRight
@@ -792,7 +551,7 @@ Page {
                         Label {
                             Layout.fillWidth: true
                             visible: taskPage.glossaryProfiles.length === 0
-                            text: "暂无可选 profile。先选择 EPUB 并点击“提取本书术语”。"
+                            text: "暂无可选 profile。请到术语表页提取本书术语，或刷新后再勾选。"
                             color: AppPalette.mutedText
                             font.pixelSize: AppStyle.fontTiny
                             wrapMode: Text.WordWrap
@@ -823,202 +582,6 @@ Page {
                                 }
                             }
                         }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(108, Math.min(220, glossaryExtractionBooksContent.implicitHeight + 24))
-                    radius: AppPalette.radiusMedium
-                    color: AppPalette.cardBg
-                    border.color: AppPalette.lineColor
-                    clip: true
-
-                    ColumnLayout {
-                        id: glossaryExtractionBooksContent
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: AppStyle.spacingSmall
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: AppStyle.spacingSmall
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: "待抽取 EPUB（生成术语 profile）"
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontCaption
-                                font.weight: Font.DemiBold
-                            }
-
-                            Button {
-                                text: "选择待抽取 EPUB"
-                                onClicked: glossaryExtractionDialog.open()
-                            }
-
-                            Button {
-                                text: "批量提取术语"
-                                highlighted: true
-                                enabled: !!taskPage.tbridge && !taskPage.busy && !!taskPage.cfg && taskPage.glossaryExtractionBooks.length > 0
-                                onClicked: taskPage.extractSelectedBooksGlossary()
-                            }
-
-                            Button {
-                                text: "清空书籍"
-                                enabled: taskPage.glossaryExtractionBooks.length > 0
-                                onClicked: taskPage.clearGlossaryExtractionBooks()
-                            }
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: taskPage.glossaryBatchStatus || "选择原始或待翻译 EPUB，批量提取后会自动生成对应 book profile 并勾选。"
-                            color: AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontTiny
-                            wrapMode: Text.WordWrap
-                        }
-
-                        ScrollView {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(36, Math.min(92, glossaryExtractionBooksList.contentHeight + 4))
-                            clip: true
-                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                            ListView {
-                                id: glossaryExtractionBooksList
-                                width: Math.max(0, parent.width)
-                                height: contentHeight
-                                spacing: AppStyle.spacingTight
-                                model: taskPage.glossaryExtractionBooks
-
-                                delegate: RowLayout {
-                                    width: ListView.view.width
-                                    spacing: AppStyle.spacingSmall
-
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: taskPage.pathDisplay(modelData)
-                                        color: AppPalette.textColor
-                                        font.pixelSize: AppStyle.fontTiny
-                                        elide: Text.ElideMiddle
-                                    }
-
-                                    Button {
-                                        text: "移除"
-                                        onClicked: taskPage.removeGlossaryExtractionBook(index)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    Button {
-                        text: "选择已译 EPUB"
-                        enabled: !!taskPage.tbridge && !taskPage.busy
-                        onClicked: glossaryPostApplyDialog.open()
-                    }
-
-                    Button {
-                        text: "统一术语并输出 EPUB"
-                        enabled: !!taskPage.tbridge && !taskPage.busy && !!taskPage.cfg
-                                 && (taskPage.glossaryPostApplyBooks.length > 0 || taskPage.cfg.out !== "")
-                        onClicked: taskPage.applyGlossaryToTranslatedBook()
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: taskPage.glossaryBatchStatus
-                              || taskPage.glossaryPostApplyStatus
-                              || "提取术语使用独立进度条；术语统一只处理已翻译 EPUB，并生成 _glossary_fixed.epub 副本，不覆盖原书。"
-                        color: AppPalette.mutedText
-                        font.pixelSize: AppStyle.fontCaption
-                        wrapMode: Text.WordWrap
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(76, Math.min(168, glossaryPostApplyContent.implicitHeight + 24))
-                    radius: AppPalette.radiusMedium
-                    color: AppPalette.cardBg
-                    border.color: AppPalette.lineColor
-                    visible: taskPage.glossaryPostApplyBooks.length > 0
-                    clip: true
-
-                    ColumnLayout {
-                        id: glossaryPostApplyContent
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: AppStyle.spacingSmall
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: AppStyle.spacingSmall
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: "待统一术语的已翻译 EPUB: " + taskPage.glossaryPostApplyBooks.length + " 本"
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontCaption
-                                font.weight: Font.DemiBold
-                            }
-
-                            Button {
-                                text: "清空书籍"
-                                onClicked: taskPage.clearGlossaryPostApplyBooks()
-                            }
-                        }
-
-                        ScrollView {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(36, Math.min(92, glossaryPostApplyList.contentHeight + 4))
-                            clip: true
-                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                            ListView {
-                                id: glossaryPostApplyList
-                                width: Math.max(0, parent.width)
-                                height: contentHeight
-                                spacing: AppStyle.spacingTight
-                                model: taskPage.glossaryPostApplyBooks
-
-                                delegate: RowLayout {
-                                    width: ListView.view.width
-                                    spacing: AppStyle.spacingSmall
-
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: taskPage.pathDisplay(modelData)
-                                        color: AppPalette.textColor
-                                        font.pixelSize: AppStyle.fontTiny
-                                        elide: Text.ElideMiddle
-                                    }
-
-                                    Button {
-                                        text: "移除"
-                                        onClicked: taskPage.removeGlossaryPostApplyBook(index)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                ProgressBar {
-                    Layout.fillWidth: true
-                    visible: taskPage.glossaryExtractionActive
-                    value: taskPage.tbridge ? taskPage.tbridge.glossaryProgressValue : 0
-                    indeterminate: taskPage.glossaryExtractionActive && value < 0.001
-                    Behavior on value {
-                        NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
                     }
                 }
             }
@@ -1156,34 +719,6 @@ Page {
                 var p = FilePathUtils.normalizeFileUrl(selectedFile)
                 if (!p.toLowerCase().endsWith(".epub")) p += ".epub"
                 if (cfg) cfg.out = p
-            }
-        }
-    }
-
-    FileDialog {
-        id: glossaryExtractionDialog
-        title: "选择待抽取 EPUB"
-        nameFilters: ["EPUB 文件 (*.epub)"]
-        fileMode: FileDialog.OpenFiles
-        onAccepted: {
-            if (selectedFiles && selectedFiles.length > 0) {
-                taskPage.addGlossaryExtractionBooks(selectedFiles)
-            } else if (selectedFile) {
-                taskPage.addGlossaryExtractionBooks([selectedFile])
-            }
-        }
-    }
-
-    FileDialog {
-        id: glossaryPostApplyDialog
-        title: "选择已翻译 EPUB"
-        nameFilters: ["EPUB 文件 (*.epub)"]
-        fileMode: FileDialog.OpenFiles
-        onAccepted: {
-            if (selectedFiles && selectedFiles.length > 0) {
-                taskPage.addGlossaryPostApplyBooks(selectedFiles)
-            } else if (selectedFile) {
-                taskPage.addGlossaryPostApplyBooks([selectedFile])
             }
         }
     }
@@ -1507,43 +1042,6 @@ Page {
         function onFailedBlocksRetranslated(result) {
             taskPage.refreshTaskHistory()
         }
-        function onGlossaryBookExtractionProgressChanged(completed, total) {
-            taskPage.glossaryExtractionActive = true
-            taskPage.glossaryBatchStatus = "正在批量提取术语: " + completed + "/" + total
-        }
-        function onGlossaryBookExtractionFailed(err) {
-            taskPage.glossaryExtractionActive = false
-            taskPage.glossaryBatchStatus = "批量术语提取失败: " + err
-            taskPage.glossaryExtractionRunMode = ""
-        }
-        function onGlossaryBookExtractionFinished(result) {
-            var message = result && result.message ? result.message : "本书术语提取完成"
-            taskPage.glossaryExtractionActive = false
-            taskPage.glossaryBatchStatus = message
-            if (!result || Number(result.failed_count || 0) === 0) {
-                taskPage.clearGlossaryExtractionBooks()
-            }
-            taskPage.addSelectedGlossaryProfileIds(result && result.profile_ids ? result.profile_ids : [])
-            taskPage.refreshGlossaryProfiles()
-            if (taskPage.cfg && taskPage.cfg.notifyGlossaryProfilesChanged) {
-                taskPage.cfg.notifyGlossaryProfilesChanged()
-            }
-            taskPage.glossaryExtractionRunMode = ""
-        }
-        function onGlossaryPostApplyFinished(result) {
-            var message = result && result.message ? result.message : "术语后处理完成"
-            if (result && result.output_path) {
-                message += "；输出: " + taskPage.fileName(result.output_path)
-            } else if (result && result.output_paths && result.output_paths.length > 0) {
-                message += "；输出 " + result.output_paths.length + " 本"
-            }
-            taskPage.glossaryExtractionActive = false
-            taskPage.glossaryPostApplyStatus = message
-        }
-        function onGlossaryPostApplyFailed(err) {
-            taskPage.glossaryExtractionActive = false
-            taskPage.glossaryPostApplyStatus = "术语后处理失败: " + err
-        }
         function onFailed(err) {
             if (typeof manualEditDialog !== "undefined") {
                 manualEditDialog.showError(err)
@@ -1558,9 +1056,6 @@ Page {
 
         function onGlossaryProfilesChanged() {
             taskPage.refreshGlossaryProfiles()
-        }
-        function onGlossaryExtractionModeChanged() {
-            taskPage.syncGlossaryExtractionModeCombo()
         }
     }
 
@@ -1673,30 +1168,6 @@ Page {
         return taskPage.glossaryScopeLabel(item.scope) + " / " + profileName + " / " + count + " 条"
     }
 
-    function addGlossaryPostApplyBooks(paths) {
-        if (!paths) return
-        var values = taskPage._normalizeEpubPaths(paths)
-        var merged = taskPage.glossaryPostApplyBooks.slice()
-        for (var i = 0; i < values.length; i++) {
-            if (merged.indexOf(values[i]) < 0) merged.push(values[i])
-        }
-        taskPage.glossaryPostApplyBooks = merged
-        if (merged.length > 0) {
-            taskPage.glossaryPostApplyStatus = "已选择 " + merged.length + " 本已翻译 EPUB，点击“统一术语并输出 EPUB”生成副本。"
-        }
-    }
-
-    function removeGlossaryPostApplyBook(index) {
-        var values = taskPage.glossaryPostApplyBooks.slice()
-        if (index >= 0 && index < values.length) values.splice(index, 1)
-        taskPage.glossaryPostApplyBooks = values
-    }
-
-    function clearGlossaryPostApplyBooks() {
-        taskPage.glossaryPostApplyBooks = []
-        taskPage.glossaryPostApplyStatus = ""
-    }
-
     function refreshTaskHistory() {
         if (!taskPage.tbridge || !taskPage.tbridge.getTranslationTaskHistory) {
             taskPage.taskHistory = []
@@ -1762,30 +1233,6 @@ Page {
         if (!taskPage.tbridge || !taskPage.tbridge.retranslateLatestFailedBlocks) return
         var mode = taskPage.failedBlockProviderModeIndex === 1 ? "proofread" : "current"
         taskPage.tbridge.retranslateLatestFailedBlocks(cfg, mode, 50)
-    }
-
-    function extractSelectedBooksGlossary() {
-        if (!taskPage.tbridge || !taskPage.tbridge.extractGlossaryFromBooks) return
-        if (!taskPage.cfg) return
-        if (taskPage.glossaryExtractionBooks.length === 0) return
-        taskPage.glossaryExtractionRunMode = "batch"
-        taskPage.glossaryExtractionActive = true
-        taskPage.glossaryBatchStatus = "正在批量提取术语..."
-        taskPage.glossaryPostApplyStatus = ""
-        taskPage.tbridge.extractGlossaryFromBooks(taskPage.cfg, taskPage.glossaryExtractionBooks)
-    }
-
-    function applyGlossaryToTranslatedBook() {
-        if (!taskPage.tbridge) return
-        taskPage.glossaryExtractionRunMode = "post_apply"
-        taskPage.glossaryExtractionActive = true
-        taskPage.glossaryBatchStatus = ""
-        taskPage.glossaryPostApplyStatus = "正在统一已翻译 EPUB 的术语..."
-        if (taskPage.glossaryPostApplyBooks.length > 0 && taskPage.tbridge.applyGlossaryToTranslatedBooks) {
-            taskPage.tbridge.applyGlossaryToTranslatedBooks(taskPage.cfg, taskPage.glossaryPostApplyBooks)
-        } else if (taskPage.tbridge.applyGlossaryToTranslatedBook) {
-            taskPage.tbridge.applyGlossaryToTranslatedBook(taskPage.cfg)
-        }
     }
 
     function taskStatusLabel(status) {
