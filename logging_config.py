@@ -13,6 +13,18 @@ def setup_logging() -> None:
     root.setLevel(logging.INFO)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
+    # Keep the main app log focused on translator events. httpx/httpcore log one
+    # INFO line for every successful 200 OK request, which floods large-book runs.
+    for noisy_logger in (
+        "httpx",
+        "httpcore",
+        "httpcore.connection",
+        "httpcore.http11",
+        "urllib3",
+        "urllib3.connectionpool",
+    ):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
     if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(formatter)

@@ -1594,8 +1594,10 @@ class JaZhTranslator:
                 pass
         if is_ok and elapsed_ms < 15000:
             return
+        log_label = "慢请求" if is_ok else "API请求"
         logger.warning(
-            "API请求%s: context=%s, outcome=%s, status=%s, provider=%s, model=%s, url=%s, batch_size=%s, elapsed_ms=%s%s",
+            "%s%s: context=%s, outcome=%s, status=%s, provider=%s, model=%s, url=%s, batch_size=%s, elapsed_ms=%s%s",
+            log_label,
             self._format_attempt(attempt, max_retries),
             context,
             outcome or "-",
@@ -5160,6 +5162,18 @@ JSON 顶层字段：
             texts_per_second = round(float(completed) / elapsed, 2) if completed else 0.0
             self._set_stat("translate_elapsed_ms", int(elapsed * 1000))
             cache_hits = int(stats.get("translate_cache_hits", 0))
+            if planned or batch_delta or api_delta:
+                logger.info(
+                    "批量JSON翻译完成: status=%s, planned_batches=%s, actual_batch_tasks=%s, "
+                    "api_requests=%s, tokens=%s, elapsed=%.1fs, fast_batch=%s",
+                    status,
+                    planned,
+                    batch_delta,
+                    api_delta,
+                    token_delta,
+                    elapsed,
+                    "on" if fast_batch_mode else "off",
+                )
             logger.info(
                 "翻译阶段性能汇总: status=%s, texts=%s, completed=%s, chars=%s, elapsed=%.1fs, "
                 "chars/s=%s, texts/s=%s, cache_hits=%s, pending_unique=%s, planned_batches=%s, "
