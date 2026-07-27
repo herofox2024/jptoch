@@ -62,6 +62,27 @@ Page {
         page.modelPromptPresets = cfg.getModelPromptPresets() || []
     }
 
+    function currentModelPromptPresetText() {
+        if (!cfg || !cfg.getCurrentModelPromptPresetMatch) return "当前配置未命中任何模型 / Prompt 预设。"
+        var deps = [
+            cfg.provider, cfg.apiUrl, cfg.model, cfg.maxWorkers, cfg.batchSize,
+            cfg.maxBatchLength, cfg.maxTextSizeForBatch, cfg.apiTimeout,
+            cfg.enableThinking, cfg.enableProofread, cfg.proofreadGenre, cfg.proofreadTone,
+            cfg.proofreadProvider, cfg.proofreadApiUrl, cfg.proofreadModel,
+            cfg.promptExtraInstruction, cfg.enablePromptExamples,
+            cfg.enableLayeredGlossary, cfg.useGlobalGlossary, cfg.useGenreGlossary,
+            cfg.useSeriesGlossary, cfg.useBookGlossary, cfg.seriesGlossaryName,
+            cfg.bookGlossaryName, cfg.selectedGlossaryProfileIds, cfg.glossaryExtractionMode,
+            cfg.hymt2GenerationMode, cfg.hymt2PromptMode, cfg.hymt2RuntimeMode,
+            cfg.japaneseResiduePolicy
+        ]
+        var dependencyTracker = deps.length
+        if (dependencyTracker < 0) return ""
+        var match = cfg.getCurrentModelPromptPresetMatch()
+        if (!match || !match.key) return "当前配置未命中任何模型 / Prompt 预设。"
+        return "当前命中：" + (match.label || match.key) + " / " + (match.categoryLabel || "组合")
+    }
+
     function applyModelPromptPreset(key) {
         if (!cfg || !cfg.applyModelPromptPreset) return
         var result = cfg.applyModelPromptPreset(key)
@@ -133,6 +154,80 @@ Page {
             : "已应用 Hy-MT2 CPU 配置：并发1、批量1。请启动服务后测试连接。"
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
             ToastBridge.showSuccess(useGpu ? "已应用 Hy-MT2 GPU 配置" : "已应用 Hy-MT2 CPU 配置")
+        }
+    }
+
+    function providerRatePresetKey(providerKey, runtimeMode) {
+        var key = String(providerKey || "").toLowerCase()
+        if (key !== "hymt2") return key
+        var runtime = String(runtimeMode || (cfg ? cfg.hymt2RuntimeMode || "cpu" : "cpu")).toLowerCase()
+        return runtime === "gpu" ? "hymt2_gpu" : "hymt2_cpu"
+    }
+
+    function providerRateTitle(providerKey, runtimeMode) {
+        var key = page.providerRatePresetKey(providerKey, runtimeMode)
+        if (key === "hymt2_gpu") return "当前预设：Hy-MT2 GPU"
+        if (key === "hymt2_cpu") return "当前预设：Hy-MT2 CPU"
+        if (key === "deepseek") return "当前预设：DeepSeek 推荐"
+        if (key === "longcat") return "当前预设：LongCat 推荐"
+        return "当前预设：通用性能参数"
+    }
+
+    function providerRateText(providerKey, runtimeMode) {
+        if (!cfg || !cfg.getProviderRatePreset) return "暂无 provider 速率预设。"
+        var key = page.providerRatePresetKey(providerKey, runtimeMode)
+        var preset = cfg.getProviderRatePreset(key)
+        if (!preset || Object.keys(preset).length === 0) {
+            return "当前 provider 暂无独立速率预设，可继续沿用通用性能参数。"
+        }
+        var parts = []
+        if (preset.hint) parts.push(preset.hint)
+        if (preset.rpm || preset.tpm) {
+            parts.push("RPM " + (preset.rpm || 0) + " / TPM " + (preset.tpm || 0))
+        }
+        if (preset.max_workers || preset.batch_size) {
+            parts.push("并发 " + (preset.max_workers || 0) + " / 批量 " + (preset.batch_size || 0))
+        }
+        if (preset.api_timeout) {
+            parts.push("超时 " + preset.api_timeout + " 秒")
+        }
+        return parts.join("；")
+    }
+
+    function applyProviderRatePreset(providerKey) {
+        if (!cfg || !cfg.getProviderRatePreset || !cfg.getProviderDefaults) return
+        var key = String(providerKey || "").toLowerCase()
+        var preset = cfg.getProviderRatePreset(key)
+        if (!preset || Object.keys(preset).length === 0) {
+            return
+        }
+        var provider = key.indexOf("hymt2") === 0 ? "hymt2" : key
+        cfg.setProvider(provider)
+        if (provider === "hymt2") {
+            cfg.apiKey = "sk-local"
+        }
+        var defaults = cfg.getProviderDefaults(provider)
+        if (defaults && defaults.url !== undefined) {
+            cfg.apiUrl = defaults.url || cfg.apiUrl
+        }
+        if (defaults && defaults.model !== undefined) {
+            cfg.model = defaults.model || cfg.model
+        }
+        if (preset.max_workers !== undefined) cfg.maxWorkers = preset.max_workers
+        if (preset.batch_size !== undefined) cfg.batchSize = preset.batch_size
+        if (preset.max_batch_length !== undefined) cfg.maxBatchLength = preset.max_batch_length
+        if (preset.max_text_size_for_batch !== undefined) cfg.maxTextSizeForBatch = preset.max_text_size_for_batch
+        if (preset.api_timeout !== undefined) cfg.apiTimeout = preset.api_timeout
+        if (provider === "hymt2" && preset.runtime_mode) {
+            cfg.hymt2RuntimeMode = preset.runtime_mode
+        }
+        page.currentProvider = provider
+        page.isCustom = (provider === "custom")
+        page.isLocalProvider = (provider === "sakura" || provider === "hymt2")
+        page.needsKey = !page.isLocalProvider
+        page.connectionResult = (preset.label || provider) + " 已应用，请继续测试连接。"
+        if (typeof ToastBridge !== "undefined" && ToastBridge) {
+            ToastBridge.showSuccess(preset.label || "已应用 provider 预设")
         }
     }
 
@@ -296,6 +391,71 @@ Page {
 
         Rectangle {
             Layout.fillWidth: true
+            Layout.preferredHeight: providerRateColumn.implicitHeight + 32
+            radius: AppPalette.radiusLarge
+            color: AppPalette.surfaceRaised
+            border.color: AppPalette.borderColor
+
+            ColumnLayout {
+                id: providerRateColumn
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: AppStyle.spacingSmall
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingSmall
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: page.providerRateTitle(page.currentProvider, cfg ? cfg.hymt2RuntimeMode : "cpu")
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontSubHeader
+                        font.weight: Font.DemiBold
+                    }
+
+                    Label {
+                        text: "rpm / tpm / 并发 / 批量"
+                        color: AppPalette.accentColor
+                        font.pixelSize: AppStyle.fontTiny
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: providerRateText(page.currentProvider, cfg ? cfg.hymt2RuntimeMode : "cpu")
+                    color: AppPalette.mutedText
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: AppStyle.fontSmall
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    width: parent.width
+                    spacing: AppStyle.spacingSmall
+
+                    Button {
+                        text: "DeepSeek 推荐"
+                        onClicked: applyProviderRatePreset("deepseek")
+                    }
+                    Button {
+                        text: "LongCat 推荐"
+                        onClicked: applyProviderRatePreset("longcat")
+                    }
+                    Button {
+                        text: "Hy-MT2 CPU"
+                        onClicked: applyProviderRatePreset("hymt2_cpu")
+                    }
+                    Button {
+                        text: "Hy-MT2 GPU"
+                        onClicked: applyProviderRatePreset("hymt2_gpu")
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
             Layout.preferredHeight: apiManagerSummaryRow.implicitHeight + 32
             radius: AppPalette.radiusLarge
             color: AppPalette.surfaceRaised
@@ -335,6 +495,13 @@ Page {
                                       ? "当前可用预设 " + page.modelPromptPresets.length + " 个；应用、导入、导出在弹窗中完成。"
                                       : "暂无可用预设；可保存当前配置为自定义预设。"
                                 color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontCaption
+                                elide: Text.ElideRight
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.currentModelPromptPresetText()
+                                color: AppPalette.accentColor
                                 font.pixelSize: AppStyle.fontCaption
                                 elide: Text.ElideRight
                             }

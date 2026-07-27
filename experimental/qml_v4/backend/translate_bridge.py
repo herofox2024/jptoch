@@ -669,15 +669,13 @@ class _TranslateWorker(QObject):
             from translator import JaZhTranslator, TranslationIncompleteError
             from epub_io import save_book, set_book_title_metadata
             from backend.pipeline import (
-                ApplyBookTranslationsStage,
                 BatchTranslateStage,
-                BuildTextPlanStage,
                 CreateTranslatorStage,
-                FinalizeBookContentStage,
-                LoadEpubStage,
                 PipelineContext,
-                StyleDetectStage,
                 TranslationPipeline,
+                run_apply_pipeline,
+                run_finalize_pipeline,
+                run_ingest_pipeline,
             )
             from text_utils import is_translatable
 
@@ -690,13 +688,7 @@ class _TranslateWorker(QObject):
                     "looks_like_refusal": _looks_like_model_refusal,
                 },
             )
-            ctx = (
-                TranslationPipeline()
-                .add_stage(LoadEpubStage())
-                .add_stage(BuildTextPlanStage())
-                .add_stage(StyleDetectStage(enabled=True))
-                .run(ctx)
-            )
+            ctx = run_ingest_pipeline(ctx)
 
             book = ctx.book
             docs = ctx.docs
@@ -856,7 +848,7 @@ class _TranslateWorker(QObject):
 
             ctx.results = results
             ctx.ordered_results = ordered_results
-            ctx = TranslationPipeline().add_stage(ApplyBookTranslationsStage()).run(ctx)
+            ctx = run_apply_pipeline(ctx)
             repair_report = ctx.repair_report
             if repair_report and repair_report.repaired_total:
                 logger.info(
@@ -998,7 +990,7 @@ class _TranslateWorker(QObject):
             if safe_output_title and cfg.get("direction") == "zh":
                 set_book_title_metadata(book, safe_output_title)
 
-            ctx = TranslationPipeline().add_stage(FinalizeBookContentStage()).run(ctx)
+            ctx = run_finalize_pipeline(ctx)
 
             try:
                 logger.info("开始保存 EPUB: %s", cfg["out"])
@@ -1279,11 +1271,8 @@ class _GlossaryBooksExtractionWorker(QObject):
     def run(self):
         try:
             from backend.pipeline import (
-                BuildTextPlanStage,
-                LoadEpubStage,
                 PipelineContext,
-                StyleDetectStage,
-                TranslationPipeline,
+                run_ingest_pipeline,
             )
 
             source_paths = []
@@ -1323,13 +1312,7 @@ class _GlossaryBooksExtractionWorker(QObject):
                         cancel_event=self._cancel_event,
                         extra={"title": os.path.basename(input_path)},
                     )
-                    ctx = (
-                        TranslationPipeline()
-                        .add_stage(LoadEpubStage())
-                        .add_stage(BuildTextPlanStage())
-                        .add_stage(StyleDetectStage(enabled=True))
-                        .run(ctx)
-                    )
+                    ctx = run_ingest_pipeline(ctx)
 
                     result = _preextract_glossary_profiles(
                         cfg,

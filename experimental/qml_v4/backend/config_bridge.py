@@ -64,6 +64,55 @@ PROVIDER_CAPABILITY = {
     "hymt2": "Hy-MT2 本地：CPU 限制并发=1、batch=1；GPU 默认 4/4，最大并发≤6、batch≤8；适合离线初译或审核备用",
 }
 
+PROVIDER_RATE_PRESETS = {
+    "deepseek": {
+        "key": "deepseek",
+        "label": "DeepSeek 推荐",
+        "hint": "建议并发 6、批量 6；适合主翻译云端初译。",
+        "rpm": 36,
+        "tpm": 120000,
+        "max_workers": 6,
+        "batch_size": 6,
+        "max_batch_length": 3000,
+        "max_text_size_for_batch": 600,
+        "api_timeout": 120,
+    },
+    "longcat": {
+        "key": "longcat",
+        "label": "LongCat 推荐",
+        "hint": "建议并发 4、批量 4；适合稳态翻译，避免审核/长尾抖动。",
+        "rpm": 24,
+        "tpm": 90000,
+        "max_workers": 4,
+        "batch_size": 4,
+        "max_batch_length": 1200,
+        "max_text_size_for_batch": 260,
+        "api_timeout": 300,
+    },
+    "hymt2_cpu": {
+        "key": "hymt2_cpu",
+        "label": "Hy-MT2 CPU",
+        "hint": "建议 1/1，优先稳定保存；适合 Python 本地模式。",
+        "runtime_mode": "cpu",
+        "max_workers": 1,
+        "batch_size": 1,
+        "max_batch_length": 300,
+        "max_text_size_for_batch": 120,
+        "api_timeout": 300,
+    },
+    "hymt2_gpu": {
+        "key": "hymt2_gpu",
+        "label": "Hy-MT2 GPU",
+        "hint": "建议 4/4 起步，显存充足可再试 6/6；适合 CUDA llama-server 模式。",
+        "runtime_mode": "gpu",
+        "max_workers": 4,
+        "batch_size": 4,
+        "max_batch_length": 1000,
+        "max_text_size_for_batch": 250,
+        "api_timeout": 300,
+    },
+}
+
 PERF_UI_PRESETS = {
     "default": {
         "label": "默认", "hint": "稳定安全，适合所有账户",
@@ -741,6 +790,45 @@ class ConfigBridge(QObject):
     @Slot(str, result=str)
     def getProviderCapability(self, provider: str) -> str:
         return PROVIDER_CAPABILITY.get(provider, "")
+
+    @Slot(str, result="QVariantMap")
+    def getProviderRatePreset(self, provider: str):
+        preset = PROVIDER_RATE_PRESETS.get(str(provider or "").strip().lower(), {})
+        return dict(preset)
+
+    @Slot(result="QVariantMap")
+    def getCurrentModelPromptPresetMatch(self):
+        current = self._current_model_prompt_preset_values()
+        if not current:
+            return {}
+        items = list(MODEL_PROMPT_PRESETS) + _load_user_model_prompt_presets()
+        best_item = None
+        best_score = -1
+        for item in items:
+            values = _clean_preset_values(item.get("values"))
+            if not values:
+                continue
+            matched = True
+            for key, value in values.items():
+                if current.get(key) != value:
+                    matched = False
+                    break
+            if matched:
+                score = len(values)
+                if score > best_score:
+                    best_item = item
+                    best_score = score
+        if best_item:
+            return {
+                "key": best_item.get("key", ""),
+                "label": best_item.get("label", ""),
+                "hint": best_item.get("hint", ""),
+                "category": best_item.get("category", "workflow"),
+                "categoryLabel": PRESET_CATEGORY_LABELS.get(best_item.get("category", "workflow"), "组合"),
+                "source": best_item.get("source", "builtin"),
+                "user": best_item.get("source") == "user",
+            }
+        return {}
 
     @Slot(str, result="QVariantMap")
     def getPerfPreset(self, key: str):

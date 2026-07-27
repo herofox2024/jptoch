@@ -1,4 +1,5 @@
-﻿import json
+import asyncio
+import json
 import logging
 import os
 import random
@@ -14,6 +15,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
+try:
+    import httpx
+except Exception:  # pragma: no cover - optional speed-up dependency
+    httpx = None
 try:
     import json_repair
 except Exception:  # pragma: no cover - optional dependency
@@ -126,6 +131,100 @@ WENXIN_MODEL = provider_default_model("wenxin")
 LONGCAT_API_URL = provider_default_url("longcat")
 LONGCAT_MODEL = provider_default_model("longcat")
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
+
+
+class _HttpxResponseAdapter:
+    """Small adapter exposing the requests.Response subset used by this module."""
+
+    def __init__(self, status_code: int, text: str, url: str, json_data: Optional[Dict[str, Any]] = None):
+        self.status_code = int(status_code)
+        self.text = text or ""
+        self.url = url or ""
+        self._json_data = json_data
+
+    def json(self) -> Dict[str, Any]:
+        if self._json_data is not None:
+            return self._json_data
+        return json.loads(self.text or "{}")
+
+    def raise_for_status(self) -> None:
+        if self.status_code < 400:
+            return
+        raise requests.exceptions.HTTPError(
+            f"{self.status_code} Error for url: {self.url}",
+            response=self,
+        )
+
+
+class _AsyncHttpJsonExecutor:
+    """Run OpenAI-compatible JSON POST calls through one httpx.AsyncClient pool."""
+
+    def __init__(self, max_connections: int):
+        if httpx is None:
+            raise RuntimeError("httpx is not available")
+        self._max_connections = max(1, int(max_connections or 1))
+        self._loop = asyncio.new_event_loop()
+        self._ready = threading.Event()
+        self._closed = threading.Event()
+        self._client = None
+        self._thread = threading.Thread(target=self._run_loop, name="translator-httpx", daemon=True)
+        self._thread.start()
+        self._ready.wait(timeout=5)
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        limits = httpx.Limits(
+            max_connections=self._max_connections * 2,
+            max_keepalive_connections=self._max_connections,
+        )
+        self._client = httpx.AsyncClient(limits=limits, trust_env=True)
+        self._ready.set()
+        self._loop.run_forever()
+
+    async def _post(self, url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: int) -> _HttpxResponseAdapter:
+        assert self._client is not None
+        try:
+            resp = await self._client.post(url, headers=headers, json=payload, timeout=float(timeout))
+            text = resp.text or ""
+            try:
+                json_data = resp.json()
+            except Exception:
+                json_data = None
+            return _HttpxResponseAdapter(resp.status_code, text, str(resp.url), json_data)
+        except httpx.TimeoutException as exc:
+            raise requests.exceptions.Timeout(str(exc)) from exc
+        except httpx.ConnectError as exc:
+            raise requests.exceptions.ConnectionError(str(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise requests.exceptions.RequestException(str(exc)) from exc
+
+    def post(self, url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: int) -> _HttpxResponseAdapter:
+        if self._closed.is_set():
+            raise requests.exceptions.ConnectionError("async http executor is closed")
+        future = asyncio.run_coroutine_threadsafe(
+            self._post(url, headers, payload, timeout),
+            self._loop,
+        )
+        return future.result(timeout=max(float(timeout) + 10.0, 15.0))
+
+    def close(self) -> None:
+        if self._closed.is_set():
+            return
+        self._closed.set()
+
+        async def _close_client():
+            if self._client is not None:
+                await self._client.aclose()
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(_close_client(), self._loop)
+            future.result(timeout=5)
+        except Exception:
+            pass
+        try:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        except Exception:
+            pass
 
 
 class FastFailError(RuntimeError):
@@ -682,6 +781,16 @@ class JaZhTranslator:
     ENABLE_BATCH_ITEM_CONTEXT = False  # 批量 JSON 不默认给每条塞 prev/next，避免大幅增加 token
     CONTEXT_PREVIEW_LEN = 80       # 前后文预览最大字符数
     DEEPSEEK_CONTEXT_WINDOW_MAX_TEXTS = 2000
+    FAST_BATCH_PROVIDERS = {"deepseek", "longcat"}
+    FAST_BATCH_MIN_TEXTS = 2000
+    FAST_BATCH_MAX_ITEMS = 16
+    FAST_BATCH_MAX_CHARS = 2600
+    FAST_BATCH_LONG_THRESHOLD = 700
+    RATE_WINDOW_SECONDS = 60.0
+    PROVIDER_RATE_PRESETS: Dict[str, Dict[str, int]] = {
+        "deepseek": {"rpm": 36, "tpm": 120000, "max_workers": 6, "batch_size": 6},
+        "longcat": {"rpm": 24, "tpm": 90000, "max_workers": 4, "batch_size": 4},
+    }
 
     def _provider_uses_context_window(self) -> bool:
         """Hy-MT2 is prone to leaking reference context into the translation."""
@@ -729,6 +838,10 @@ class JaZhTranslator:
     @classmethod
     def _get_provider_default_model(cls, provider: str) -> str:
         return provider_default_model(provider)
+
+    @classmethod
+    def _get_provider_rate_profile(cls, provider: str) -> Dict[str, int]:
+        return dict(cls.PROVIDER_RATE_PRESETS.get((provider or "").strip().lower(), {}))
 
     def _get_proofread_url(self) -> str:
         """获取校对专用 API URL。"""
@@ -880,6 +993,27 @@ class JaZhTranslator:
                     batch_size,
                 )
 
+        rate_profile = self._get_provider_rate_profile(self.provider)
+        if rate_profile:
+            old_workers, old_batch = max_workers, batch_size
+            profile_workers = int(rate_profile.get("max_workers") or 0)
+            profile_batch = int(rate_profile.get("batch_size") or 0)
+            if profile_workers > 0:
+                max_workers = min(max_workers, profile_workers)
+            if profile_batch > 0:
+                batch_size = min(batch_size, profile_batch)
+            if (old_workers, old_batch) != (max_workers, batch_size):
+                logger.info(
+                    "%s 预设限制: 并发 %s→%s，批量 %s→%s",
+                    self.provider,
+                    old_workers,
+                    max_workers,
+                    old_batch,
+                    batch_size,
+                )
+        self._provider_rpm_limit = int(rate_profile.get("rpm") or 0)
+        self._provider_tpm_limit = int(rate_profile.get("tpm") or 0)
+
         data_dir = get_data_dir()
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
         self.glossary_fingerprint = re.sub(r"[^0-9a-f]", "", str(glossary_fingerprint or "").lower())[:16]
@@ -939,6 +1073,16 @@ class JaZhTranslator:
         self.cancel_event = cancel_event or threading.Event()
         # 连接池大小与并发数匹配，避免 "Connection pool is full" 警告
         self.session = create_session(self.max_workers)
+        self._provider_rate_lock = threading.RLock()
+        self._provider_rate_requests: deque[float] = deque()
+        self._provider_rate_tokens: deque[Tuple[float, int]] = deque()
+        self._async_http_executor = None
+        if httpx is not None and self.provider in self.FAST_BATCH_PROVIDERS:
+            try:
+                self._async_http_executor = _AsyncHttpJsonExecutor(self.max_workers)
+                logger.info("批量 JSON 已启用 httpx 异步连接池: provider=%s, max_connections=%s", self.provider, self.max_workers)
+            except Exception as exc:
+                logger.warning("httpx 异步连接池初始化失败，回退 requests: %s", exc)
         self.extract_glossary = bool(extract_glossary)
         self.enable_thinking = bool(enable_thinking)
         self.enable_proofread = bool(enable_proofread)
@@ -997,6 +1141,9 @@ class JaZhTranslator:
             "translate_planned_batches": 0,
             "translate_context_cache_tasks": 0,
             "translate_elapsed_ms": 0,
+            "translate_fast_batch_mode": 0,
+            "async_httpx_available": 1 if httpx is not None else 0,
+            "async_httpx_requests": 0,
         }
         logger.info(
             f"翻译器初始化完成: provider={self.provider}, model={self.model}, "
@@ -1027,6 +1174,120 @@ class JaZhTranslator:
                 payload["repeat_penalty"] = self.repetition_penalty
             if self.max_tokens is not None:
                 payload["max_tokens"] = self.max_tokens
+
+    def _post_batch_json_payload(
+        self,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        *,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        source_text: Optional[Any] = None,
+        batch_size: int = 1,
+        context: str = "批量JSON翻译",
+    ):
+        """POST batch JSON requests through httpx pool when available, otherwise requests."""
+        self._wait_provider_rate_budget(
+            estimated_tokens=self._estimate_request_tokens(messages=messages, source_text=source_text, batch_size=batch_size),
+            estimated_requests=1,
+            context=context,
+        )
+        executor = getattr(self, "_async_http_executor", None)
+        if executor is not None:
+            self._inc_stat("async_httpx_requests")
+            return executor.post(self.api_url, headers, payload, self.API_TIMEOUT)
+        return self.session.post(
+            self.api_url,
+            headers=headers,
+            json=payload,
+            timeout=self.API_TIMEOUT,
+        )
+
+    def _estimate_request_tokens(
+        self,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        source_text: Optional[Any] = None,
+        batch_size: int = 1,
+    ) -> int:
+        parts: List[str] = []
+        for message in messages or []:
+            if isinstance(message, dict):
+                content = str(message.get("content") or "").strip()
+                if content:
+                    parts.append(content)
+            elif message is not None:
+                content = str(message).strip()
+                if content:
+                    parts.append(content)
+        if source_text is not None:
+            if isinstance(source_text, str):
+                text = source_text.strip()
+            else:
+                try:
+                    text = json.dumps(source_text, ensure_ascii=False)
+                except Exception:
+                    text = str(source_text)
+            text = str(text or "").strip()
+            if text:
+                parts.append(text)
+        total_chars = sum(len(part) for part in parts)
+        estimated = max(1, int(total_chars / 4) + max(1, int(batch_size or 1)) * 12)
+        return estimated
+
+    def _wait_provider_rate_budget(
+        self,
+        *,
+        estimated_tokens: int = 0,
+        estimated_requests: int = 1,
+        context: str = "",
+    ) -> None:
+        rpm = max(0, int(getattr(self, "_provider_rpm_limit", 0) or 0))
+        tpm = max(0, int(getattr(self, "_provider_tpm_limit", 0) or 0))
+        if rpm <= 0 and tpm <= 0:
+            return
+
+        estimated_tokens = max(1, int(estimated_tokens or 1))
+        estimated_requests = max(1, int(estimated_requests or 1))
+        now = time.time()
+        with self._provider_rate_lock:
+            while True:
+                cutoff = now - self.RATE_WINDOW_SECONDS
+                while self._provider_rate_requests and self._provider_rate_requests[0] <= cutoff:
+                    self._provider_rate_requests.popleft()
+                while self._provider_rate_tokens and self._provider_rate_tokens[0][0] <= cutoff:
+                    self._provider_rate_tokens.popleft()
+
+                request_count = len(self._provider_rate_requests)
+                token_count = sum(tokens for _, tokens in self._provider_rate_tokens)
+                wait_seconds = 0.0
+
+                if rpm > 0 and request_count + estimated_requests > rpm and self._provider_rate_requests:
+                    oldest_request = self._provider_rate_requests[0]
+                    wait_seconds = max(wait_seconds, self.RATE_WINDOW_SECONDS - (now - oldest_request))
+
+                if tpm > 0 and token_count + estimated_tokens > tpm and self._provider_rate_tokens:
+                    running_tokens = token_count
+                    for ts, tokens in self._provider_rate_tokens:
+                        running_tokens -= tokens
+                        if running_tokens + estimated_tokens <= tpm:
+                            wait_seconds = max(wait_seconds, self.RATE_WINDOW_SECONDS - (now - ts))
+                            break
+
+                if wait_seconds <= 0:
+                    self._provider_rate_requests.append(now)
+                    self._provider_rate_tokens.append((now, estimated_tokens))
+                    return
+
+                logger.info(
+                    "%s 触发 provider 预限流: provider=%s, rpm=%s, tpm=%s, 预计等待 %.1fs",
+                    context or "API请求",
+                    self.provider,
+                    rpm,
+                    tpm,
+                    wait_seconds,
+                )
+                if self.cancel_event.wait(wait_seconds):
+                    raise RuntimeError("翻译已取消")
+                now = time.time()
 
     @classmethod
     def _wait_global_rate_limit(cls, cancel_event: threading.Event) -> None:
@@ -1967,6 +2228,11 @@ class JaZhTranslator:
                 raise RuntimeError("翻译已取消")
             try:
                 self._wait_dynamic_backoff()
+                self._wait_provider_rate_budget(
+                    estimated_tokens=self._estimate_request_tokens(messages=messages, source_text=src, batch_size=1),
+                    estimated_requests=1,
+                    context="译后校对",
+                )
                 self._inc_stat("api_requests_total")
                 request_started = time.time()
                 resp = self.session.post(
@@ -2170,6 +2436,11 @@ class JaZhTranslator:
                 raise RuntimeError("翻译已取消")
             try:
                 self._wait_dynamic_backoff()
+                self._wait_provider_rate_budget(
+                    estimated_tokens=self._estimate_request_tokens(messages=messages, source_text=prepared, batch_size=len(prepared)),
+                    estimated_requests=1,
+                    context="批量校对",
+                )
                 self._inc_stat("proofread_batch_requests")
                 self._inc_stat("api_requests_total")
                 request_started = time.time()
@@ -2391,6 +2662,11 @@ class JaZhTranslator:
 
         try:
             self._wait_dynamic_backoff()
+            self._wait_provider_rate_budget(
+                estimated_tokens=self._estimate_request_tokens(messages=continuation_messages, source_text=continuation_prompt, batch_size=1),
+                estimated_requests=1,
+                context="截断续取",
+            )
             self._inc_stat("api_requests_total")
             request_started = time.time()
             resp = self.session.post(
@@ -2505,6 +2781,11 @@ class JaZhTranslator:
                 raise RuntimeError("翻译已取消")
             try:
                 self._wait_dynamic_backoff()
+                self._wait_provider_rate_budget(
+                    estimated_tokens=self._estimate_request_tokens(messages=messages, source_text=numbered, batch_size=len(texts)),
+                    estimated_requests=1,
+                    context=f"术语抽取:{mode}",
+                )
                 self._inc_stat("api_requests_total")
                 request_started = time.time()
                 logger.info(
@@ -3594,6 +3875,11 @@ JSON 顶层字段：
                 raise RuntimeError("翻译已取消")
             try:
                 self._inc_stat("moderation_fallback_requests")
+                self._wait_provider_rate_budget(
+                    estimated_tokens=self._estimate_request_tokens(messages=messages, source_text=messages, batch_size=1),
+                    estimated_requests=1,
+                    context="内容审核备用翻译",
+                )
                 self._inc_stat("api_requests_total")
                 request_started = time.time()
                 resp = self.session.post(
@@ -3790,6 +4076,11 @@ JSON 顶层字段：
 
             try:
                 self._wait_dynamic_backoff()
+                self._wait_provider_rate_budget(
+                    estimated_tokens=self._estimate_request_tokens(messages=messages, source_text=text, batch_size=1),
+                    estimated_requests=1,
+                    context="单条翻译",
+                )
                 self._inc_stat("api_requests_total")
                 request_started = time.time()
                 resp = self.session.post(
@@ -4067,11 +4358,13 @@ JSON 顶层字段：
                 self._wait_dynamic_backoff()
                 self._inc_stat("api_requests_total")
                 request_started = time.time()
-                resp = self.session.post(
-                    self.api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=self.API_TIMEOUT,
+                resp = self._post_batch_json_payload(
+                    headers,
+                    payload,
+                    messages=messages,
+                    source_text=numbered,
+                    batch_size=len(texts),
+                    context="批量JSON翻译",
                 )
                 self._log_api_request_event(
                     "批量JSON翻译",
@@ -4727,6 +5020,7 @@ JSON 顶层字段：
         task_keys: List[str],
         task_texts: Dict[str, str],
         effective_batch_size: int,
+        fast_mode: bool = False,
     ) -> List[List[str]]:
         """Smart-batch internal task keys while measuring the real source text length."""
         short: List[str] = []
@@ -4736,6 +5030,8 @@ JSON 顶层字段：
             self.SMART_BATCH_LONG,
             int(getattr(self, "max_text_size_for_batch", self.SMART_BATCH_LONG) or self.SMART_BATCH_LONG),
         )
+        if fast_mode:
+            long_threshold = max(long_threshold, self.FAST_BATCH_LONG_THRESHOLD)
 
         for key in task_keys:
             text_len = len(task_texts.get(key, ""))
@@ -4762,8 +5058,14 @@ JSON 顶层字段：
             if current:
                 batches.append(current)
 
-        flush_group(short, min(effective_batch_size * 2, 20), self.max_batch_length * 2)
-        flush_group(medium, effective_batch_size, self.max_batch_length)
+        if fast_mode:
+            max_items = min(max(effective_batch_size, 1), self.FAST_BATCH_MAX_ITEMS)
+            max_chars = max(int(getattr(self, "max_batch_length", 0) or 0), self.FAST_BATCH_MAX_CHARS)
+            flush_group(short, min(max_items * 2, 32), max_chars * 2)
+            flush_group(medium, max_items, max_chars)
+        else:
+            flush_group(short, min(effective_batch_size * 2, 20), self.max_batch_length * 2)
+            flush_group(medium, effective_batch_size, self.max_batch_length)
         for key in long:
             batches.append([key])
 
@@ -4777,6 +5079,7 @@ JSON 顶层字段：
             f"智能分批: 短文本 {len(short)}→{short_count}批, "
             f"中文本 {len(medium)}→{medium_count}批, "
             f"长文本 {len(long)}→{long_count}批"
+            + ("，大书快速模式已启用" if fast_mode else "")
         )
         return batches
 
@@ -4807,6 +5110,32 @@ JSON 顶层字段：
         # 使用实例配置，允许传入覆盖
         effective_batch_size = batch_size if batch_size is not None else self.batch_size
         effective_batch_size = max(1, min(int(effective_batch_size or 1), self._current_dynamic_batch_size()))
+        fast_batch_mode = (
+            self.provider in self.FAST_BATCH_PROVIDERS
+            and total >= self.FAST_BATCH_MIN_TEXTS
+            and effective_batch_size > 1
+        )
+        if fast_batch_mode:
+            old_effective_batch_size = effective_batch_size
+            effective_batch_size = min(
+                self.FAST_BATCH_MAX_ITEMS,
+                max(effective_batch_size, min(self.FAST_BATCH_MAX_ITEMS, max(8, old_effective_batch_size * 2))),
+            )
+            with self._dynamic_limit_lock:
+                self._dynamic_batch_size = max(int(self._dynamic_batch_size), effective_batch_size)
+            self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
+            self._set_stat("translate_fast_batch_mode", 1)
+            logger.info(
+                "%s 大书快速批量: texts=%s, batch_size=%s→%s, max_chars=%s, long_threshold=%s",
+                self.provider,
+                total,
+                old_effective_batch_size,
+                effective_batch_size,
+                self.FAST_BATCH_MAX_CHARS,
+                self.FAST_BATCH_LONG_THRESHOLD,
+            )
+        else:
+            self._set_stat("translate_fast_batch_mode", 0)
 
         ordered_results: List[Optional[str]] = [None] * total
         self._last_ordered_results = ordered_results
@@ -4835,7 +5164,7 @@ JSON 顶层字段：
                 "翻译阶段性能汇总: status=%s, texts=%s, completed=%s, chars=%s, elapsed=%.1fs, "
                 "chars/s=%s, texts/s=%s, cache_hits=%s, pending_unique=%s, planned_batches=%s, "
                 "actual_batch_tasks=%s, api_requests=%s, tokens=%s, quality_retranslate=%s, "
-                "context_window=%s",
+                "context_window=%s, fast_batch=%s",
                 status,
                 total,
                 completed,
@@ -4851,6 +5180,7 @@ JSON 顶层字段：
                 token_delta,
                 quality_delta,
                 "on" if use_context_window else "off",
+                "on" if fast_batch_mode else "off",
             )
 
         def get_context_for_index(idx: int) -> Tuple[Optional[str], Optional[str]]:
@@ -5054,7 +5384,12 @@ JSON 顶层字段：
 
         # ---- Phase 1-①: 智能分批 ----
         task_texts = {key: str(task.get("text", "")) for key, task in pending_tasks.items()}
-        batches = self._smart_batch_task_keys(uncached_unique, task_texts, effective_batch_size)
+        batches = self._smart_batch_task_keys(
+            uncached_unique,
+            task_texts,
+            effective_batch_size,
+            fast_mode=fast_batch_mode,
+        )
         planned_batches = len(batches)
         logger.info(f"智能分批为 {planned_batches} 个批次进行并发翻译")
         self._set_stat("translate_total_texts", total)
@@ -5666,6 +6001,9 @@ JSON 顶层字段：
     def __del__(self):
         """析构时保存缓存"""
         try:
+            executor = getattr(self, "_async_http_executor", None)
+            if executor is not None:
+                executor.close()
             self.request_cancel(close_session=True)
             self.flush_cache()
         except Exception:

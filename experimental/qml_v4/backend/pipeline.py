@@ -423,6 +423,41 @@ class FinalizeBookContentStage(PipelineStage):
         return ctx
 
 
+def build_ingest_pipeline() -> "TranslationPipeline":
+    """Load EPUB, extract text, and detect style."""
+    return (
+        TranslationPipeline()
+        .add_stage(LoadEpubStage())
+        .add_stage(BuildTextPlanStage())
+        .add_stage(StyleDetectStage(enabled=True))
+    )
+
+
+def run_ingest_pipeline(ctx: PipelineContext) -> PipelineContext:
+    return build_ingest_pipeline().run(ctx)
+
+
+def build_writeback_pipeline() -> "TranslationPipeline":
+    """Apply translated text and finalize EPUB metadata/content."""
+    return (
+        TranslationPipeline()
+        .add_stage(ApplyBookTranslationsStage())
+        .add_stage(FinalizeBookContentStage())
+    )
+
+
+def run_apply_pipeline(ctx: PipelineContext) -> PipelineContext:
+    return TranslationPipeline().add_stage(ApplyBookTranslationsStage()).run(ctx)
+
+
+def run_finalize_pipeline(ctx: PipelineContext) -> PipelineContext:
+    return TranslationPipeline().add_stage(FinalizeBookContentStage()).run(ctx)
+
+
+def run_writeback_pipeline(ctx: PipelineContext) -> PipelineContext:
+    return build_writeback_pipeline().run(ctx)
+
+
 class TranslationPipeline:
     """Run enabled stages in order."""
 
