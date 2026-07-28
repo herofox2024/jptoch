@@ -79,6 +79,9 @@ def temp_test_dir():
     try:
         yield str(path)
     finally:
+        from translation_cache_db import TranslationCacheDB
+
+        TranslationCacheDB.close_open_under(path)
         shutil.rmtree(path, ignore_errors=True)
 
 
@@ -2161,6 +2164,185 @@ class TranslatorTests(unittest.TestCase):
         self.assertIn("后文上下文", user_prompt)
         self.assertIn("后文：彼は頷いた。", user_prompt)
 
+    def test_single_proofread_uses_independent_longcat_route(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.provider = "deepseek"
+        t.api_key = "main-deepseek-key"
+        t.api_url = "https://api.deepseek.com/chat/completions"
+        t.model = "deepseek-chat"
+        t.proofread_provider = "longcat"
+        t.proofread_api_key = "proofread-longcat-key"
+        t._proofread_api_url = "https://api.longcat.chat/openai/v1/chat/completions"
+        t.proofread_model = "LongCat-2.0"
+        t.session = mock.Mock()
+        response = mock.Mock(status_code=200, headers={})
+        response.raise_for_status = mock.Mock()
+        response.json.return_value = {
+            "choices": [{"message": {"content": "她笑了。"}}],
+            "usage": {"total_tokens": 8},
+        }
+        t.session.post.return_value = response
+
+        revised = t._proofread_translation(
+            "彼女は笑った。",
+            "她笑了。",
+            ["需要检查语气"],
+        )
+
+        self.assertEqual(revised, "她笑了。")
+        call = t.session.post.call_args
+        self.assertEqual(call.args[0], t._proofread_api_url)
+        self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer proofread-longcat-key")
+        self.assertEqual(call.kwargs["json"]["model"], "LongCat-2.0")
+        self.assertEqual(call.kwargs["json"].get("thinking"), {"type": "disabled"})
+
+    def test_batch_proofread_uses_independent_deepseek_route(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.provider = "longcat"
+        t.api_key = "main-longcat-key"
+        t.api_url = "https://api.longcat.chat/openai/v1/chat/completions"
+        t.model = "LongCat-2.0"
+        t.proofread_provider = "deepseek"
+        t.proofread_api_key = "proofread-deepseek-key"
+        t._proofread_api_url = "https://api.deepseek.com/chat/completions"
+        t.proofread_model = "deepseek-chat"
+        t.session = mock.Mock()
+        response = mock.Mock(status_code=200, headers={})
+        response.raise_for_status = mock.Mock()
+        response.json.return_value = {
+            "choices": [{"message": {"content": '{"items":[{"idx":0,"revised":"她笑了。"}]}'}}],
+            "usage": {"total_tokens": 12},
+        }
+        t.session.post.return_value = response
+
+        revised = t._proofread_translations_batch([
+            {"idx": 0, "src": "彼女は笑った。", "draft": "她笑了。", "issues": ["需要检查语气"]}
+        ])
+
+        self.assertEqual(revised, {0: "她笑了。"})
+        call = t.session.post.call_args
+        self.assertEqual(call.args[0], t._proofread_api_url)
+        self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer proofread-deepseek-key")
+        self.assertEqual(call.kwargs["json"]["model"], "deepseek-chat")
+        self.assertEqual(call.kwargs["json"].get("response_format"), {"type": "json_object"})
+
+    def test_hymt2_translation_can_use_online_proofread_route(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.provider = "hymt2"
+        t.api_key = "sk-local"
+        t.api_url = "http://127.0.0.1:8080/v1/chat/completions"
+        t.model = "Hy-MT2-1.8B-Q4_K_M"
+        t.proofread_provider = "deepseek"
+        t.proofread_api_key = "online-proofread-key"
+        t._proofread_api_url = "https://api.deepseek.com/chat/completions"
+        t.proofread_model = "deepseek-chat"
+        t.session = mock.Mock()
+        response = mock.Mock(status_code=200, headers={})
+        response.raise_for_status = mock.Mock()
+        response.json.return_value = {
+            "choices": [{"message": {"content": "她点了点头。"}}],
+        }
+        t.session.post.return_value = response
+
+        revised = t._proofread_translation(
+            "彼女は頷いた。",
+            "她点了点头。",
+            ["检查表达"],
+        )
+
+        self.assertEqual(revised, "她点了点头。")
+        call = t.session.post.call_args
+        self.assertEqual(call.args[0], t._proofread_api_url)
+        self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer online-proofread-key")
+        self.assertEqual(call.kwargs["json"]["model"], "deepseek-chat")
+
+    def test_proofread_429_retries_with_response_headers(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.proofread_provider = "deepseek"
+        t.proofread_api_key = "proofread-key"
+        t._proofread_api_url = "https://api.deepseek.com/chat/completions"
+        t.proofread_model = "deepseek-chat"
+        t.session = mock.Mock()
+        limited = mock.Mock(status_code=429, headers={"Retry-After": "9"}, text="rate limited")
+        success = mock.Mock(status_code=200, headers={}, text="ok")
+        success.raise_for_status = mock.Mock()
+        success.json.return_value = {"choices": [{"message": {"content": "她笑了。"}}]}
+        t.session.post.side_effect = [limited, success]
+        t._record_dynamic_limit_event = mock.Mock()
+        t._wait_http_retry = mock.Mock(return_value=9.0)
+
+        revised = t._proofread_translation("彼女は笑った。", "她笑了。", ["检查语气"])
+
+        self.assertEqual(revised, "她笑了。")
+        self.assertEqual(t.session.post.call_count, 2)
+        t._wait_http_retry.assert_called_once_with(
+            0,
+            context="译后校对",
+            response=limited,
+        )
+
+    def test_proofread_timeout_retries_then_succeeds(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.session = mock.Mock()
+        success = mock.Mock(status_code=200, headers={}, text="ok")
+        success.raise_for_status = mock.Mock()
+        success.json.return_value = {"choices": [{"message": {"content": "她笑了。"}}]}
+        t.session.post.side_effect = [requests.exceptions.Timeout("slow"), success]
+        t._record_dynamic_limit_event = mock.Mock()
+        t._wait_http_retry = mock.Mock(return_value=2.0)
+
+        revised = t._proofread_translation("彼女は笑った。", "她笑了。", ["检查语气"])
+
+        self.assertEqual(revised, "她笑了。")
+        self.assertEqual(t.session.post.call_count, 2)
+        t._wait_http_retry.assert_called_once_with(0, context="译后校对")
+
+    def test_proofread_auth_failure_stops_without_retry(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.proofread_provider = "deepseek"
+        t.proofread_api_key = "invalid-key"
+        t._proofread_api_url = "https://api.deepseek.com/chat/completions"
+        t.proofread_model = "deepseek-chat"
+        t.session = mock.Mock()
+        denied = mock.Mock(status_code=401, headers={}, text="unauthorized")
+        denied.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "401 Unauthorized",
+            response=denied,
+        )
+        t.session.post.return_value = denied
+
+        revised = t._proofread_translation("彼女は笑った。", "她笑了。", ["检查语气"])
+
+        self.assertIsNone(revised)
+        self.assertTrue(t._proofread_auth_failed)
+        self.assertEqual(t.session.post.call_count, 1)
+
+    def test_proofread_security_rejection_keeps_draft_without_retry(self):
+        t = DummyTranslator()
+        t.enable_proofread = True
+        t.session = mock.Mock()
+        rejected = mock.Mock(
+            status_code=400,
+            headers={},
+            text='{"error":{"code":"security_audit_fail"}}',
+        )
+        rejected.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "400 Bad Request",
+            response=rejected,
+        )
+        t.session.post.return_value = rejected
+
+        revised = t._proofread_translation("彼女は笑った。", "她笑了。", ["检查语气"])
+
+        self.assertEqual(revised, "她笑了。")
+        self.assertEqual(t.session.post.call_count, 1)
+
     def test_fast_fail_502_not_swallowed(self):
         t = DummyTranslator()
         t.cancel_event = threading.Event()
@@ -2176,9 +2358,12 @@ class TranslatorTests(unittest.TestCase):
         resp.status_code = 502
         resp.raise_for_status = mock.Mock()
         t.session.post.return_value = resp
+        t._record_dynamic_limit_event = mock.Mock()
+        t._wait_http_retry = mock.Mock(return_value=0.0)
 
         with self.assertRaises(FastFailError):
             t._call_deepseek("abc")
+        self.assertEqual(t.session.post.call_count, 4)
 
     def test_gemini_payload_does_not_include_thinking(self):
         t = DummyTranslator()

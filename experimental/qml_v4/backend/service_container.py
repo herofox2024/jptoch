@@ -76,6 +76,7 @@ class ServiceContainer:
         self._cache: Dict[str, str] = {}
         self._glossary: Dict[str, Any] = {}
         self._data_dir: Optional[Path] = None
+        self._cache_db_path: Optional[Path] = None
         self._light_initialized = False
         self._heavy_initialized = False
         self._lock = threading.Lock()
@@ -137,10 +138,34 @@ class ServiceContainer:
             self._config = self._load_json(config_path) or {}
             logger.info(f"配置已加载: {config_path}")
 
-            # 加载缓存
+            # SQLite cache is queried lazily by the translator. Keep startup memory flat.
             cache_path = self._data_dir / "cache.json"
-            self._cache = self._load_json(str(cache_path)) or {}
-            logger.info(f"缓存已加载: {len(self._cache)} 条记录")
+            try:
+                from translation_cache_db import TranslationCacheDB, cache_db_path_for
+
+                self._cache_db_path = cache_db_path_for(cache_path)
+                cache_db = TranslationCacheDB(self._cache_db_path)
+                migrated = 0
+                for source, cache_type in (
+                    (cache_path, "model"),
+                    (self._data_dir / "text_cache.json", "text"),
+                    (self._data_dir / "manual_cache.json", "manual"),
+                ):
+                    migrated += cache_db.migrate_json(source, cache_type).imported
+                expired = cache_db.cleanup_expired(730)
+                cache_count = cache_db.count()
+                cache_db.close()
+                self._cache = {}
+                if migrated:
+                    logger.info("旧 JSON 缓存已迁移到 SQLite: %s 条", migrated)
+                if expired:
+                    logger.info("SQLite 缓存已清理 %s 条两年以上未使用的普通记录", expired)
+                logger.info("SQLite 缓存已就绪: %s 条记录（%s）", cache_count, self._cache_db_path)
+            except Exception as exc:
+                logger.warning("SQLite 缓存初始化失败，回退 JSON 加载: %s", exc)
+                self._cache_db_path = None
+                self._cache = self._load_json(str(cache_path)) or {}
+                logger.info(f"缓存已加载: {len(self._cache)} 条记录")
 
             self._light_initialized = True
             logger.info("轻量初始化完成")
@@ -210,6 +235,8 @@ class ServiceContainer:
 
     def save_cache(self, path: Optional[str] = None) -> bool:
         """保存缓存到磁盘。"""
+        if self._cache_db_path is not None:
+            return True
         if path is None:
             path = str(self._data_dir / "cache.json")
         return self._save_json(path, self._cache)

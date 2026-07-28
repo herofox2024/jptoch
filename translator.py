@@ -61,6 +61,8 @@ from translation_cache import (
     parse_model_cache_key as tc_parse_model_cache_key,
     text_cache_key as tc_text_cache_key,
 )
+from translation_http import is_retryable_status, retry_delay
+from translation_cache_db import SQLiteCacheMapping, TranslationCacheDB, cache_db_path_for
 
 try:
     from backend import request_log as qml_request_log
@@ -136,11 +138,19 @@ DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
 class _HttpxResponseAdapter:
     """Small adapter exposing the requests.Response subset used by this module."""
 
-    def __init__(self, status_code: int, text: str, url: str, json_data: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        status_code: int,
+        text: str,
+        url: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ):
         self.status_code = int(status_code)
         self.text = text or ""
         self.url = url or ""
         self._json_data = json_data
+        self.headers = headers or {}
 
     def json(self) -> Dict[str, Any]:
         if self._json_data is not None:
@@ -190,7 +200,7 @@ class _AsyncHttpJsonExecutor:
                 json_data = resp.json()
             except Exception:
                 json_data = None
-            return _HttpxResponseAdapter(resp.status_code, text, str(resp.url), json_data)
+            return _HttpxResponseAdapter(resp.status_code, text, str(resp.url), json_data, dict(resp.headers))
         except httpx.TimeoutException as exc:
             raise requests.exceptions.Timeout(str(exc)) from exc
         except httpx.ConnectError as exc:
@@ -578,6 +588,7 @@ PERFORMANCE_PRESETS = {
 class JaZhTranslator:
     # 类常量：配置参数
     CACHE_SAVE_THRESHOLD = 20  # 缓存保存阈值，每 N 次更新后保存
+    CACHE_RETENTION_DAYS = 730
     API_TIMEOUT = 120  # API 请求超时时间（秒）
     MAX_RETRIES = 3  # API 请求最大重试次数
     MAX_CONTINUATIONS = 2  # finish_reason=length 时最大续取次数
@@ -1028,6 +1039,9 @@ class JaZhTranslator:
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
         self.glossary_fingerprint = re.sub(r"[^0-9a-f]", "", str(glossary_fingerprint or "").lower())[:16]
         self.cache_path = cache_path or str(data_dir / "cache.json")
+        self.cache_db_path = str(cache_db_path_for(self.cache_path))
+        self._cache_data_dir = Path(self.cache_path).parent
+        self._cache_db: Optional[TranslationCacheDB] = None
         self.enable_glossary = bool(enable_glossary)
 
         override_glossary = None
@@ -1043,7 +1057,49 @@ class JaZhTranslator:
             self.glossary = override_glossary if override_glossary is not None else self._load_json(self.glossary_path, {})
         else:
             self.glossary = {}
-        self.cache = self._load_json(self.cache_path, {})
+        try:
+            self._cache_db = TranslationCacheDB(self.cache_db_path)
+            migration_sources = [(self.cache_path, "model")]
+            if Path(self.cache_path).name.lower() == "cache.json":
+                migration_sources.extend([
+                    (self._cache_data_dir / self.TEXT_CACHE_FILE_NAME, "text"),
+                    (self._cache_data_dir / self.MANUAL_CACHE_FILE_NAME, "manual"),
+                ])
+            migrated_total = 0
+            for migration_path, cache_type in migration_sources:
+                migration = self._cache_db.migrate_json(migration_path, cache_type)
+                migrated_total += migration.imported
+            expired_total = self._cache_db.cleanup_expired(self.CACHE_RETENTION_DAYS)
+            self.cache = SQLiteCacheMapping(
+                self._cache_db,
+                "model",
+                buffer_size=self.CACHE_SAVE_THRESHOLD,
+            )
+            self._text_cache = SQLiteCacheMapping(
+                self._cache_db,
+                "text",
+                buffer_size=self.TEXT_CACHE_SAVE_THRESHOLD,
+            )
+            self._manual_cache = SQLiteCacheMapping(self._cache_db, "manual")
+            self._text_cache_loaded = True
+            self._manual_cache_loaded = True
+            if migrated_total:
+                logger.info("旧 JSON 缓存已迁移到 SQLite: %s 条", migrated_total)
+            if expired_total:
+                logger.info("SQLite 缓存已清理 %s 条两年以上未使用的普通记录", expired_total)
+            logger.info(
+                "SQLite 缓存已加载: 模型 %s 条，文本 %s 条，人工 %s 条（%s）",
+                len(self.cache),
+                len(self._text_cache),
+                len(self._manual_cache),
+                self.cache_db_path,
+            )
+        except Exception as exc:
+            logger.warning("SQLite 缓存初始化失败，回退 JSON 缓存: %s", exc)
+            self._cache_db = None
+            self.cache = self._load_json(self.cache_path, {})
+            self._text_cache_loaded = False
+            self._manual_cache_loaded = False
         self._cross_model_text_cache_index: Dict[str, str] = {}
         self._cross_model_context_cache_index: Dict[Tuple[str, str], str] = {}
         self._cross_model_cache_index_built = False
@@ -1744,6 +1800,58 @@ class JaZhTranslator:
         if wait_seconds > 0 and self.cancel_event.wait(wait_seconds):
             raise RuntimeError("翻译已取消")
 
+    def _wait_http_retry(
+        self,
+        attempt: int,
+        *,
+        context: str,
+        response: Any = None,
+    ) -> float:
+        """Wait for a cancellable retry using exponential backoff and Retry-After."""
+        wait_seconds = retry_delay(attempt, response=response)
+        retry_after = None
+        headers = getattr(response, "headers", None)
+        if headers:
+            try:
+                retry_after = headers.get("Retry-After")
+            except (AttributeError, TypeError):
+                retry_after = None
+        logger.warning(
+            "%s 将在 %.1f 秒后重试%s",
+            context,
+            wait_seconds,
+            f" (Retry-After={retry_after})" if retry_after not in (None, "") else "",
+        )
+        if self.cancel_event.wait(wait_seconds):
+            raise RuntimeError("翻译已取消")
+        return wait_seconds
+
+    @staticmethod
+    def _is_retryable_response(response: Any) -> bool:
+        return is_retryable_status(getattr(response, "status_code", None))
+
+    def _retry_transient_response(
+        self,
+        response: Any,
+        attempt: int,
+        max_retries: int,
+        *,
+        context: str,
+    ) -> bool:
+        """Record a transient HTTP failure and wait when another attempt remains."""
+        if not self._is_retryable_response(response):
+            return False
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if attempt >= max(1, int(max_retries)) - 1:
+            return False
+        self._inc_stat("api_requests_failed")
+        self._record_dynamic_limit_event(
+            f"{context} HTTP {status_code}",
+            kind="rate" if status_code == 429 else "timeout",
+        )
+        self._wait_http_retry(attempt, context=context, response=response)
+        return True
+
     def _accumulate_usage_tokens(self, data: Dict[str, Any]) -> None:
         """Accumulate usage.total_tokens from OpenAI-compatible responses when present."""
         if not isinstance(data, dict):
@@ -2235,7 +2343,8 @@ class JaZhTranslator:
         }
         self._apply_provider_payload_options(payload, self.proofread_provider or self.provider)
 
-        for attempt in range(2):
+        max_retries = 4
+        for attempt in range(max_retries):
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
             try:
@@ -2259,7 +2368,7 @@ class JaZhTranslator:
                     "ok" if 200 <= resp.status_code < 300 else "http_error",
                     status_code=resp.status_code,
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                     url=proofread_url,
@@ -2268,16 +2377,10 @@ class JaZhTranslator:
                     source_text=src,
                     response_text=getattr(resp, "text", ""),
                 )
-                if resp.status_code == 429:
-                    self._inc_stat("api_requests_failed")
-                    self._record_dynamic_limit_event("校对 HTTP 429", kind="rate")
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
-                    if self.cancel_event.wait(wait_time):
-                        raise RuntimeError("翻译已取消")
+                if self._retry_transient_response(
+                    resp, attempt, max_retries, context="译后校对"
+                ):
                     continue
-                if resp.status_code == 502:
-                    logger.warning("校对请求遇到 502，保留初译")
-                    return draft
                 resp.raise_for_status()
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
@@ -2310,7 +2413,7 @@ class JaZhTranslator:
                     locals().get("request_started", time.time()),
                     "timeout",
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                     url=proofread_url,
@@ -2320,8 +2423,9 @@ class JaZhTranslator:
                     error=e,
                 )
                 logger.warning(f"译后校对超时: {e}")
-                if attempt == 1:
+                if attempt == max_retries - 1:
                     return draft
+                self._wait_http_retry(attempt, context="译后校对")
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
                 self._log_api_request_event(
@@ -2330,7 +2434,7 @@ class JaZhTranslator:
                     "http_error",
                     status_code=getattr(getattr(e, "response", None), "status_code", None),
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                     url=proofread_url,
@@ -2344,18 +2448,20 @@ class JaZhTranslator:
                     e,
                     "译后校对",
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                 )
                 if self._is_auth_http_error(e):
                     self._mark_proofread_auth_failed()
                     return None
-                if attempt == 1:
+                if not is_retryable_status(getattr(getattr(e, "response", None), "status_code", None)):
+                    return draft
+                if attempt == max_retries - 1:
                     return draft
             except Exception as e:
                 logger.warning(f"译后校对失败: {e}")
-                if attempt == 1:
+                if attempt == max_retries - 1:
                     return draft
         return draft
 
@@ -2443,7 +2549,8 @@ class JaZhTranslator:
         if active_provider == "deepseek":
             payload["response_format"] = {"type": "json_object"}
 
-        for attempt in range(2):
+        max_retries = 4
+        for attempt in range(max_retries):
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
             try:
@@ -2468,7 +2575,7 @@ class JaZhTranslator:
                     "ok" if 200 <= resp.status_code < 300 else "http_error",
                     status_code=resp.status_code,
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                     url=proofread_url,
@@ -2477,16 +2584,10 @@ class JaZhTranslator:
                     source_text=prepared,
                     response_text=getattr(resp, "text", ""),
                 )
-                if resp.status_code == 429:
-                    self._inc_stat("api_requests_failed")
-                    self._record_dynamic_limit_event("批量校对 HTTP 429", kind="rate")
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
-                    if self.cancel_event.wait(wait_time):
-                        raise RuntimeError("翻译已取消")
+                if self._retry_transient_response(
+                    resp, attempt, max_retries, context="批量校对"
+                ):
                     continue
-                if resp.status_code == 502:
-                    logger.warning("批量校对请求遇到 502，回退单条校对")
-                    return {}
                 if resp.status_code in (401, 403):
                     self._inc_stat("api_requests_failed")
                     try:
@@ -2496,7 +2597,7 @@ class JaZhTranslator:
                             e,
                             "批量校对",
                             attempt=attempt,
-                            max_retries=2,
+                            max_retries=max_retries,
                             provider=self.proofread_provider or self.provider,
                             model=proofread_model,
                         )
@@ -2595,7 +2696,7 @@ class JaZhTranslator:
                     locals().get("request_started", time.time()),
                     "timeout",
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                     url=proofread_url,
@@ -2605,8 +2706,9 @@ class JaZhTranslator:
                     error=e,
                 )
                 logger.warning(f"批量校对超时: {e}")
-                if attempt == 1:
+                if attempt == max_retries - 1:
                     return {}
+                self._wait_http_retry(attempt, context="批量校对")
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
                 self._log_api_request_event(
@@ -2615,7 +2717,7 @@ class JaZhTranslator:
                     "http_error",
                     status_code=getattr(getattr(e, "response", None), "status_code", None),
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                     url=proofread_url,
@@ -2629,18 +2731,20 @@ class JaZhTranslator:
                     e,
                     "批量校对",
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=self.proofread_provider or self.provider,
                     model=proofread_model,
                 )
                 if self._is_auth_http_error(e):
                     self._mark_proofread_auth_failed()
                     return None
-                if attempt == 1:
+                if not is_retryable_status(getattr(getattr(e, "response", None), "status_code", None)):
+                    return {}
+                if attempt == max_retries - 1:
                     return {}
             except Exception as e:
                 logger.warning(f"批量校对失败: {e}")
-                if attempt == 1:
+                if attempt == max_retries - 1:
                     return {}
         return {}
 
@@ -2651,6 +2755,8 @@ class JaZhTranslator:
         continuation_prompt: str,
         headers: Dict[str, str],
         base_payload: Dict[str, Any],
+        _attempt: int = 0,
+        max_retries: int = 4,
     ) -> Tuple[str, Optional[str]]:
         """
         发送截断续取请求（finish_reason=length 时继续）
@@ -2697,11 +2803,18 @@ class JaZhTranslator:
                 source_text=continuation_prompt,
                 response_text=getattr(resp, "text", ""),
             )
-            if resp.status_code in (429, 502):
-                if resp.status_code == 429:
-                    self._inc_stat("api_requests_failed")
-                    self._record_dynamic_limit_event("截断续取 HTTP 429", kind="rate")
-                return "", None  # 优雅降级
+            if self._retry_transient_response(
+                resp, _attempt, max_retries, context="截断续取"
+            ):
+                return self._send_continuation_request(
+                    messages,
+                    accumulated_content,
+                    continuation_prompt,
+                    headers,
+                    base_payload,
+                    _attempt=_attempt + 1,
+                    max_retries=max_retries,
+                )
             resp.raise_for_status()
             data = resp.json()
             self._accumulate_usage_tokens(data)
@@ -2714,6 +2827,21 @@ class JaZhTranslator:
             if additional:
                 self._record_api_success_event()
             return (additional or "").strip(), finish_reason
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            self._inc_stat("api_requests_failed")
+            if _attempt < max_retries - 1:
+                self._wait_http_retry(_attempt, context="截断续取")
+                return self._send_continuation_request(
+                    messages,
+                    accumulated_content,
+                    continuation_prompt,
+                    headers,
+                    base_payload,
+                    _attempt=_attempt + 1,
+                    max_retries=max_retries,
+                )
+            logger.warning("截断续取请求失败: %s", e)
+            return "", None
         except requests.exceptions.HTTPError as e:
             self._inc_stat("api_requests_failed")
             self._log_api_request_event(
@@ -2746,7 +2874,7 @@ class JaZhTranslator:
         self,
         texts: List[str],
         *,
-        max_retries: int = 2,
+        max_retries: int = 4,
         extraction_mode: Optional[str] = None,
     ) -> BatchJsonResult:
         """Dedicated glossary extraction request with JSON repair/continuation."""
@@ -2854,16 +2982,10 @@ class JaZhTranslator:
                     response_text=getattr(resp, "text", ""),
                     category=f"glossary_extract:{mode}",
                 )
-                if resp.status_code == 429:
-                    self._inc_stat("api_requests_failed")
-                    self._record_dynamic_limit_event("术语抽取 HTTP 429", kind="rate")
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
-                    if self.cancel_event.wait(wait_time):
-                        raise RuntimeError("翻译已取消")
+                if self._retry_transient_response(
+                    resp, attempt, max_retries, context="术语抽取"
+                ):
                     continue
-                if resp.status_code == 502:
-                    self._inc_stat("api_requests_failed")
-                    raise FastFailError("术语抽取失败: HTTP 502 Bad Gateway（已按配置直接中断）")
                 resp.raise_for_status()
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
@@ -2960,16 +3082,26 @@ class JaZhTranslator:
                 )
             except FastFailError:
                 raise
-            except requests.exceptions.Timeout as e:
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 self._inc_stat("api_requests_failed")
+                self._record_dynamic_limit_event("术语抽取请求超时或连接失败", kind="timeout")
                 logger.warning("术语抽取超时 (尝试 %s/%s): %s", attempt + 1, max_retries, e)
                 if attempt + 1 >= max_retries:
                     return BatchJsonResult(translations=None, new_terms=[], missing_indices=list(range(len(texts))), finish_reason=None, raw_content="")
+                self._wait_http_retry(attempt, context="术语抽取")
             except requests.exceptions.HTTPError as e:
                 self._inc_stat("api_requests_failed")
                 self._log_http_error_response(e, "术语抽取")
                 if self._is_content_moderation_http_error(e):
                     raise ContentModerationError(str(e))
+                if not is_retryable_status(getattr(getattr(e, "response", None), "status_code", None)):
+                    return BatchJsonResult(
+                        translations=None,
+                        new_terms=[],
+                        missing_indices=list(range(len(texts))),
+                        finish_reason=None,
+                        raw_content=getattr(getattr(e, "response", None), "text", ""),
+                    )
                 if attempt + 1 >= max_retries:
                     return BatchJsonResult(translations=None, new_terms=[], missing_indices=list(range(len(texts))), finish_reason=None, raw_content=getattr(getattr(e, "response", None), "text", ""))
             except Exception as e:
@@ -3044,6 +3176,7 @@ class JaZhTranslator:
         return list(getattr(self, "_last_ordered_results", []))
 
     # ---- Phase 1-②: 文本级缓存（跨模型共享可复用译文）----
+    _cache_db: Optional[TranslationCacheDB] = None
     _text_cache: Dict[str, Dict[str, Any]] = {}
     _text_cache_loaded = False
     TEXT_CACHE_FILE_NAME = "text_cache.json"
@@ -3055,9 +3188,19 @@ class JaZhTranslator:
 
     def _load_text_cache(self):
         """加载文本级缓存（跨模型共享）。"""
+        if self._cache_db is not None:
+            if not isinstance(self._text_cache, SQLiteCacheMapping):
+                self._text_cache = SQLiteCacheMapping(
+                    self._cache_db,
+                    "text",
+                    buffer_size=self.TEXT_CACHE_SAVE_THRESHOLD,
+                )
+            self._text_cache_loaded = True
+            return
         if self._text_cache_loaded:
             return
-        text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
+        cache_data_dir = getattr(self, "_cache_data_dir", get_data_dir())
+        text_cache_path = str(Path(cache_data_dir) / self.TEXT_CACHE_FILE_NAME)
         loaded = self._load_json(text_cache_path, {})
         if isinstance(loaded, dict):
             self._text_cache = loaded
@@ -3080,6 +3223,9 @@ class JaZhTranslator:
 
     def _ensure_cross_model_cache_index(self) -> None:
         """Build digest indexes so a new provider/model can reuse previous model-cache entries."""
+        if self._cache_db is not None:
+            self._cross_model_cache_index_built = True
+            return
         with self._cache_lock:
             if self._cross_model_cache_index_built:
                 return
@@ -3111,6 +3257,12 @@ class JaZhTranslator:
             return None
         self._ensure_cross_model_cache_index()
         kind, text_digest, context_digest = self._parse_model_cache_key(current_cache_key)
+        if self._cache_db is not None and text_digest:
+            return self._cache_db.find_model_translation(
+                text_digest,
+                context_hash=context_digest if kind == "context" else None,
+                exclude_key=current_cache_key,
+            )
         with self._cache_lock:
             if kind == "context" and text_digest and context_digest:
                 return self._cross_model_context_cache_index.get((context_digest, text_digest))
@@ -3120,9 +3272,15 @@ class JaZhTranslator:
 
     def _load_manual_cache(self, force: bool = False):
         """加载人工修改缓存。人工译文优先级最高，不受跨模型缓存开关影响。"""
+        if self._cache_db is not None:
+            if not isinstance(self._manual_cache, SQLiteCacheMapping):
+                self._manual_cache = SQLiteCacheMapping(self._cache_db, "manual")
+            self._manual_cache_loaded = True
+            return
         if self._manual_cache_loaded and not force:
             return
-        manual_cache_path = str(get_data_dir() / self.MANUAL_CACHE_FILE_NAME)
+        cache_data_dir = getattr(self, "_cache_data_dir", get_data_dir())
+        manual_cache_path = str(Path(cache_data_dir) / self.MANUAL_CACHE_FILE_NAME)
         loaded = self._load_json(manual_cache_path, {})
         self._manual_cache = loaded if isinstance(loaded, dict) else {}
         self._manual_cache_loaded = True
@@ -3150,7 +3308,14 @@ class JaZhTranslator:
         return False
 
     def _flush_manual_cache(self):
-        manual_cache_path = str(get_data_dir() / self.MANUAL_CACHE_FILE_NAME)
+        if self._cache_db is not None:
+            if isinstance(self._manual_cache, SQLiteCacheMapping):
+                self._manual_cache.flush()
+            else:
+                self._cache_db.checkpoint()
+            return
+        cache_data_dir = getattr(self, "_cache_data_dir", get_data_dir())
+        manual_cache_path = str(Path(cache_data_dir) / self.MANUAL_CACHE_FILE_NAME)
         self._atomic_write_json(manual_cache_path, self._manual_cache)
 
     def save_manual_translation(self, src: str, dst: str, trusted: bool = True) -> None:
@@ -3188,10 +3353,16 @@ class JaZhTranslator:
             model_cached = self.cache.get(cache_key)
             if not model_cached:
                 digest = self._cache_digest(src)
-                for key, value in self.cache.items():
-                    if digest in str(key):
-                        model_cached = value
-                        break
+                if self._cache_db is not None:
+                    model_cached = self._cache_db.find_model_translation(
+                        digest,
+                        exclude_key=cache_key,
+                    )
+                else:
+                    for key, value in self.cache.items():
+                        if digest in str(key):
+                            model_cached = value
+                            break
         if model_cached:
             return str(model_cached), "model_cache"
 
@@ -3234,12 +3405,20 @@ class JaZhTranslator:
 
     def _flush_text_cache(self):
         """持久化文本缓存。"""
+        if self._cache_db is not None:
+            if isinstance(self._text_cache, SQLiteCacheMapping):
+                self._text_cache.flush()
+            else:
+                self._cache_db.checkpoint()
+            self._text_cache_dirty_count = 0
+            return
         with self._cache_lock:
             if not self._text_cache:
                 return
             snapshot = dict(self._text_cache)
             dirty_count = int(getattr(self, "_text_cache_dirty_count", 0))
-        text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
+        cache_data_dir = getattr(self, "_cache_data_dir", get_data_dir())
+        text_cache_path = str(Path(cache_data_dir) / self.TEXT_CACHE_FILE_NAME)
         self._atomic_write_json(text_cache_path, snapshot)
         if dirty_count > 0:
             with self._cache_lock:
@@ -3250,6 +3429,20 @@ class JaZhTranslator:
 
     def _save_cache(self, force: bool = False):
         """保存缓存到文件，使用延迟写入策略。"""
+        if self._cache_db is not None:
+            with self._cache_lock:
+                self._cache_dirty = True
+                self._save_counter += 1
+                should_flush = force or self._save_counter >= self.CACHE_SAVE_THRESHOLD
+                if should_flush:
+                    self._cache_dirty = False
+                    self._save_counter = 0
+            if should_flush:
+                if isinstance(self.cache, SQLiteCacheMapping):
+                    self.cache.flush()
+                else:
+                    self._cache_db.checkpoint()
+            return
         snapshot = None
         with self._cache_lock:
             self._cache_dirty = True
@@ -3343,7 +3536,7 @@ class JaZhTranslator:
             # QML "clear cache" button) its in-memory cache is empty even
             # though cache.json on disk is populated. Load it first so we
             # actually have something to clear.
-            if not self.cache:
+            if self._cache_db is None and not self.cache:
                 try:
                     loaded = self._load_json(self.cache_path, {})
                     if isinstance(loaded, dict) and loaded:
@@ -3352,7 +3545,13 @@ class JaZhTranslator:
                 except Exception as e:
                     logger.warning(f"加载缓存以进行清理失败: {e}")
 
-            if all_models:
+            if all_models and self._cache_db is not None and isinstance(self.cache, SQLiteCacheMapping):
+                self.cache.flush()
+                removed += self._cache_db.delete_model_sources(
+                    digests,
+                    plain_texts | digests,
+                )
+            elif all_models:
                 def _matches(key: str) -> bool:
                     s = str(key)
                     if s in plain_texts:
@@ -3382,25 +3581,37 @@ class JaZhTranslator:
 
         if include_text_cache:
             self._load_text_cache()
-            text_removed = 0
-            for text in unique_texts:
-                key = self._text_cache_key(text)
-                if key in self._text_cache:
-                    self._text_cache.pop(key, None)
-                    text_removed += 1
+            text_keys = [self._text_cache_key(text) for text in unique_texts]
+            if self._cache_db is not None and isinstance(self._text_cache, SQLiteCacheMapping):
+                self._text_cache.flush()
+                text_removed = self._cache_db.delete_many("text", text_keys)
+            else:
+                text_removed = 0
+                for key in text_keys:
+                    if key in self._text_cache:
+                        self._text_cache.pop(key, None)
+                        text_removed += 1
             if text_removed:
-                text_cache_path = str(get_data_dir() / self.TEXT_CACHE_FILE_NAME)
-                self._atomic_write_json(text_cache_path, self._text_cache)
+                if self._cache_db is not None:
+                    self._cache_db.checkpoint()
+                else:
+                    cache_data_dir = getattr(self, "_cache_data_dir", get_data_dir())
+                    text_cache_path = str(Path(cache_data_dir) / self.TEXT_CACHE_FILE_NAME)
+                    self._atomic_write_json(text_cache_path, self._text_cache)
                 removed += text_removed
                 self._invalidate_cross_model_cache_index()
 
             self._load_manual_cache(force=True)
-            manual_removed = 0
-            for text in unique_texts:
-                key = self._manual_cache_key(text)
-                if key in self._manual_cache:
-                    self._manual_cache.pop(key, None)
-                    manual_removed += 1
+            manual_keys = [self._manual_cache_key(text) for text in unique_texts]
+            if self._cache_db is not None and isinstance(self._manual_cache, SQLiteCacheMapping):
+                self._manual_cache.flush()
+                manual_removed = self._cache_db.delete_many("manual", manual_keys)
+            else:
+                manual_removed = 0
+                for key in manual_keys:
+                    if key in self._manual_cache:
+                        self._manual_cache.pop(key, None)
+                        manual_removed += 1
             if manual_removed:
                 self._flush_manual_cache()
                 removed += manual_removed
@@ -3882,7 +4093,8 @@ JSON 顶层字段：
         )
 
         last_error = None
-        for attempt in range(2):
+        max_retries = 4
+        for attempt in range(max_retries):
             if self.cancel_event.is_set():
                 raise RuntimeError("翻译已取消")
             try:
@@ -3906,7 +4118,7 @@ JSON 顶层字段：
                     "ok" if 200 <= resp.status_code < 300 else "http_error",
                     status_code=resp.status_code,
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=provider,
                     model=fallback["model"],
                     url=fallback["api_url"],
@@ -3915,6 +4127,10 @@ JSON 顶层字段：
                     source_text=messages,
                     response_text=getattr(resp, "text", ""),
                 )
+                if self._retry_transient_response(
+                    resp, attempt, max_retries, context="内容审核备用翻译"
+                ):
+                    continue
                 resp.raise_for_status()
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
@@ -3940,7 +4156,7 @@ JSON 顶层字段：
                     "http_error",
                     status_code=getattr(getattr(e, "response", None), "status_code", None),
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=provider,
                     model=fallback["model"],
                     url=fallback["api_url"],
@@ -3954,7 +4170,7 @@ JSON 顶层字段：
                     e,
                     "内容审核备用翻译",
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=provider,
                     model=fallback["model"],
                 )
@@ -3962,6 +4178,15 @@ JSON 顶层字段：
                     last_error = "备用模型也被内容审核拦截"
                     break
                 last_error = f"备用模型 HTTP 错误: {e}"
+                response = getattr(e, "response", None)
+                if is_retryable_status(getattr(response, "status_code", None)) and attempt < max_retries - 1:
+                    self._wait_http_retry(
+                        attempt,
+                        context="内容审核备用翻译",
+                        response=response,
+                    )
+                    continue
+                break
             except Exception as e:
                 self._inc_stat("api_requests_failed")
                 self._log_api_request_event(
@@ -3969,7 +4194,7 @@ JSON 顶层字段：
                     locals().get("request_started", time.time()),
                     "request_error",
                     attempt=attempt,
-                    max_retries=2,
+                    max_retries=max_retries,
                     provider=provider,
                     model=fallback["model"],
                     url=fallback["api_url"],
@@ -3979,14 +4204,18 @@ JSON 顶层字段：
                     error=e,
                 )
                 last_error = str(e)
-                logger.warning("内容审核备用翻译失败 (尝试 %s/2): %s", attempt + 1, e)
+                logger.warning("内容审核备用翻译失败 (尝试 %s/%s): %s", attempt + 1, max_retries, e)
+                if isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)) and attempt < max_retries - 1:
+                    self._wait_http_retry(attempt, context="内容审核备用翻译")
+                    continue
+                break
         logger.warning("内容审核备用翻译未成功: %s", last_error or "未知错误")
         return None
 
     def _call_deepseek_single(
         self,
         text: str,
-        max_retries: int = 3,
+        max_retries: int = 4,
         text_separator: Optional[str] = None,
         prev_text: Optional[str] = None,
         next_text: Optional[str] = None,
@@ -4114,17 +4343,13 @@ JSON 顶层字段：
                     response_text=getattr(resp, "text", ""),
                 )
 
-                if resp.status_code == 429:
-                    self._inc_stat("api_requests_failed")
-                    self._record_dynamic_limit_event("HTTP 429", kind="rate")
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
-                    logger.warning(f"API 限流，等待 {wait_time:.1f} 秒后重试...")
-                    if self.cancel_event.wait(wait_time):
-                        raise RuntimeError("翻译已取消")
+                if self._retry_transient_response(
+                    resp, attempt, max_retries, context="单条翻译"
+                ):
                     continue
                 if resp.status_code == 502:
                     self._inc_stat("api_requests_failed")
-                    raise FastFailError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
+                    raise FastFailError("翻译失败: HTTP 502 Bad Gateway（重试已用尽）")
 
                 resp.raise_for_status()
                 data = resp.json()
@@ -4249,6 +4474,8 @@ JSON 顶层字段：
                     if fallback_result is not None:
                         return fallback_result
                     break
+                if not is_retryable_status(getattr(getattr(e, "response", None), "status_code", None)):
+                    break
             except (json.JSONDecodeError, KeyError, IndexError) as e:
                 self._inc_stat("api_requests_failed")
                 last_error = f"API 响应格式错误: {e}"
@@ -4262,16 +4489,14 @@ JSON 顶层字段：
                 logger.error(f"未知错误: {e}")
 
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt + random.uniform(0, 1)
-                if self.cancel_event.wait(wait_time):
-                    raise RuntimeError("翻译已取消")
+                self._wait_http_retry(attempt, context="单条翻译")
 
         raise RuntimeError(f"翻译失败: {last_error}")
 
     def _call_deepseek(
         self,
         text: str,
-        max_retries: int = 3,
+        max_retries: int = 4,
         text_separator: Optional[str] = None,
         prev_text: Optional[str] = None,
         next_text: Optional[str] = None,
@@ -4286,7 +4511,7 @@ JSON 顶层字段：
     def _call_deepseek_batch_json(
         self,
         texts: List[str],
-        max_retries: int = 2,
+        max_retries: int = 4,
         prev_text: Optional[str] = None,
         next_text: Optional[str] = None,
         item_contexts: Optional[List[Tuple[Optional[str], Optional[str]]]] = None,
@@ -4344,17 +4569,15 @@ JSON 顶层字段：
             payload["response_format"] = {"type": "json_object"}
 
         def retry_or_fail(reason: str, finish_reason: Optional[str] = None, raw_content: str = "") -> Optional[BatchJsonResult]:
-            """Retry malformed batch JSON once more; after max retries, let caller fall back to single translation."""
+            """Retry malformed batch JSON, then let the caller fall back to single translation."""
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt + random.uniform(0, 1)
                 logger.info(
                     "%s，准备重试批量 JSON (%s/%s)",
                     reason,
                     attempt + 1,
                     max_retries,
                 )
-                if self.cancel_event.wait(wait_time):
-                    raise RuntimeError("翻译已取消")
+                self._wait_http_retry(attempt, context="批量 JSON 格式修复")
                 return None
             return BatchJsonResult(
                 translations=None,
@@ -4390,16 +4613,13 @@ JSON 顶层字段：
                     source_text=numbered,
                     response_text=getattr(resp, "text", ""),
                 )
-                if resp.status_code == 429:
-                    self._inc_stat("api_requests_failed")
-                    self._record_dynamic_limit_event("批量 JSON HTTP 429", kind="rate")
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
-                    if self.cancel_event.wait(wait_time):
-                        raise RuntimeError("翻译已取消")
+                if self._retry_transient_response(
+                    resp, attempt, max_retries, context="批量 JSON 翻译"
+                ):
                     continue
                 if resp.status_code == 502:
                     self._inc_stat("api_requests_failed")
-                    raise FastFailError("翻译失败: HTTP 502 Bad Gateway（已按配置直接中断）")
+                    raise FastFailError("翻译失败: HTTP 502 Bad Gateway（重试已用尽）")
                 resp.raise_for_status()
                 data = resp.json()
                 self._accumulate_usage_tokens(data)
@@ -4565,9 +4785,7 @@ JSON 顶层字段：
                 )
                 logger.warning(f"批量翻译请求超时 (尝试 {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
-                    if self.cancel_event.wait(wait_time):
-                        raise RuntimeError("翻译已取消")
+                    self._wait_http_retry(attempt, context="批量 JSON 翻译")
                     continue
                 return BatchJsonResult(
                     translations=None, missing_indices=list(range(len(texts))),
@@ -4608,10 +4826,17 @@ JSON 顶层字段：
                     )
                 else:
                     logger.warning(f"批量翻译请求失败 (尝试 {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
-                    if self.cancel_event.wait(wait_time):
-                        raise RuntimeError("翻译已取消")
+                should_retry = (
+                    not isinstance(e, requests.exceptions.HTTPError)
+                    or is_retryable_status(getattr(getattr(e, "response", None), "status_code", None))
+                )
+                if should_retry and attempt < max_retries - 1:
+                    response = getattr(e, "response", None)
+                    self._wait_http_retry(
+                        attempt,
+                        context="批量 JSON 翻译",
+                        response=response,
+                    )
                     continue
                 return BatchJsonResult(
                     translations=None, missing_indices=list(range(len(texts))),
@@ -4688,7 +4913,7 @@ JSON 顶层字段：
             chunk = selected[start:start + effective_batch_size]
             result = self._call_glossary_extraction_json(
                 chunk,
-                max_retries=2,
+                max_retries=4,
                 extraction_mode=mode,
             )
             batch_terms = list(result.new_terms or []) if result else []
@@ -6033,5 +6258,8 @@ JSON 顶层字段：
                 executor.close()
             self.request_cancel(close_session=True)
             self.flush_cache()
+            cache_db = getattr(self, "_cache_db", None)
+            if cache_db is not None:
+                cache_db.close()
         except Exception:
             pass

@@ -236,11 +236,14 @@ Policy meanings:
 Default cache path:
 
 ```text
-~/.epub_translator/cache.json
+~/.epub_translator/cache.db
 ```
 
 Behavior:
 
+- Model, cross-model text, and manual caches share an indexed SQLite database using WAL mode, so startup no longer loads the complete cache into memory.
+- On first use, `cache.json`, `text_cache.json`, and `manual_cache.json` are migrated idempotently. The original JSON files are retained and never deleted automatically.
+- Ordinary entries use batched transactions; manual translations are persisted immediately. Ordinary entries unused for two years are pruned, while manual and verified text entries are retained.
 - **Pause** keeps completed translations and allows resume.
 - **Stop** ends the current task and clears the current UI runtime state.
 - Cached text is reused on the next run and does not call the API again.

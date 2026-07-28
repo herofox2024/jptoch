@@ -19,7 +19,7 @@ Dialog {
 
         Label {
             Layout.fillWidth: true
-            text: "将清理当前源文件对应的翻译缓存，包括所有模型下的 cache.json 条目和跨模型 text_cache.json 条目。"
+            text: "将清理当前源文件对应的 SQLite 翻译缓存，包括所有模型缓存、跨模型文本缓存和人工译文缓存。旧 JSON 迁移文件不会被删除。"
             color: AppPalette.textColor
             wrapMode: Text.WordWrap
         }
