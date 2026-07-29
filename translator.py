@@ -17,6 +17,7 @@ import translation_quality as tq
 from glossary_store import normalize_glossary_payload as gs_normalize_glossary_payload
 from glossary_store import merge_glossaries as gs_merge_glossaries
 from glossary_store import clean_new_terms as gs_clean_new_terms
+from glossary_store import normalize_aliases as gs_normalize_aliases
 from glossary_store import glossary_prompt_payload as gs_glossary_prompt_payload
 from glossary_store import select_glossary_entries as gs_select_glossary_entries
 from glossary_store import build_glossary_text as gs_build_glossary_text
@@ -2697,7 +2698,7 @@ class JaZhTranslator:
                         if not isinstance(item, dict):
                             continue
                         category = str(item.get("category", "")).strip()
-                        if category and category not in {"Person", "Location"}:
+                        if category and category not in {"Person", "Location", "Creature"}:
                             continue
                         if not category:
                             item = {**item, "category": "Person"}
@@ -3655,8 +3656,8 @@ JSON 顶层字段：
 
         if mode == "lite":
             prompt += (
-                "\n\n提取模式：精简模式。只提取人物名和地名；"
-                "不要提取普通名词、道具、组织、技能、注音、片假名噪声或说明性文字。"
+                "\n\n提取模式：精简模式。只提取人物名、地名和命名宠物/动物角色；"
+                "不要提取普通名词、普通动物、道具、组织、技能、注音、片假名噪声或说明性文字。"
             )
         else:
             prompt += (
@@ -3666,7 +3667,8 @@ JSON 顶层字段：
 
         prompt += (
             "\n\n输出要求：只输出 JSON 对象，顶层字段仅允许 new_terms。"
-            "new_terms 的每个元素格式为 {\"src\":\"原词\",\"dst\":\"译词\",\"category\":\"分类\"}。"
+            "new_terms 的每个元素格式为 {\"src\":\"原词\",\"dst\":\"译词\",\"category\":\"分类\",\"aliases\":[]}。"
+            "aliases 只填写输入中明确出现的同一术语其他译法，禁止凭空编造。"
             "不要输出解释、前后缀说明或代码块外文字。"
         )
         return prompt.rstrip()
@@ -4584,7 +4586,7 @@ JSON 顶层字段：
             cleaned = [
                 term
                 for term in cleaned
-                if str(term.get("category", "")).strip() in {"Person", "Location"}
+                if str(term.get("category", "")).strip() in {"Person", "Location", "Creature"}
             ]
         logger.info(
             "术语预提取完成: mode=%s, text_count=%s, char_count=%s, raw_terms=%s, cleaned_terms=%s",
@@ -4615,6 +4617,9 @@ JSON 顶层字段：
             policy = gs_normalize_policy(term.get("policy", ""))
             if policy:
                 entry["policy"] = policy
+            aliases = gs_normalize_aliases(term.get("aliases"))
+            if aliases:
+                entry["aliases"] = [alias for alias in aliases if alias not in {src, dst}]
             normalized_by_category[category].append(entry)
 
         return {

@@ -337,11 +337,21 @@ def clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
         "creature": "Creature", "生物": "Creature", "怪物": "Creature", "宠物": "Creature",
     }
     cleaned: List[Dict[str, Any]] = []
-    seen = set()
+    by_source: Dict[str, Dict[str, Any]] = {}
+
+    def normalize_source_boundary(value: str) -> str:
+        """Remove a detached Japanese particle accidentally captured with a name."""
+        value = re.sub(r"^[\s\u3000]+|[\s\u3000]+$", "", value)
+        # Do not strip hiragana names such as はるか; require kanji/katakana next.
+        return re.sub(
+            r"^(?:は|が|を|に|へ|と|も|の|や|で)\s*[、,、:：]?\s*(?=[\u3400-\u4dbf\u4e00-\u9fff\u30a0-\u30ff])",
+            "",
+            value,
+        ).strip()
     for item in raw_terms:
         if not isinstance(item, dict):
             continue
-        src = str(item.get("src", item.get("original", ""))).strip()
+        src = normalize_source_boundary(str(item.get("src", item.get("original", ""))).strip())
         dst = str(item.get("dst", item.get("translation", ""))).strip()
         raw_category = item.get("category", item.get("cat", ""))
         info = str(item.get("info", "")).strip()
@@ -356,16 +366,26 @@ def clean_new_terms(raw_terms: List[dict]) -> List[Dict[str, Any]]:
         if raw_category:
             normalized = str(raw_category).lower().strip()
             category = category_map.get(normalized, raw_category if raw_category in DEFAULT_GLOSSARY_CATEGORIES else "Item")
-        key = (src, dst)
-        if key in seen:
-            continue
-        seen.add(key)
         cleaned_item = {"src": src, "dst": dst, "category": category, "info": info, "source": source}
         if policy:
             cleaned_item["policy"] = policy
         aliases = [alias for alias in aliases if alias not in {src, dst}]
         if aliases:
             cleaned_item["aliases"] = aliases
+        existing = by_source.get(src)
+        if existing is not None:
+            merged_aliases = normalize_aliases(existing.get("aliases"))
+            for alias in [dst, *aliases]:
+                if alias not in {src, existing.get("dst", "")} and alias not in merged_aliases:
+                    merged_aliases.append(alias)
+            if merged_aliases:
+                existing["aliases"] = merged_aliases
+            if category == "Creature" and existing.get("category") != "Creature":
+                existing["category"] = "Creature"
+            elif existing.get("category") == "Item" and category != "Item":
+                existing["category"] = category
+            continue
+        by_source[src] = cleaned_item
         cleaned.append(cleaned_item)
     return cleaned
 
