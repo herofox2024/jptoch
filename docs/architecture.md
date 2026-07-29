@@ -40,6 +40,7 @@ helpers that do not depend on QML state are separated:
 | `experimental/qml_v4/backend/output_naming.py` | EPUB filename and translated TOC title normalization |
 | `experimental/qml_v4/backend/translation_reports.py` | Duration estimates, residue reports and quality reports |
 | `experimental/qml_v4/backend/bridge_workers.py` | Character estimate, cache cleanup and connection-test workers |
+| `experimental/qml_v4/backend/config_schema.py` | Typed, bounded validation for disk, preset and QML settings |
 
 Compatibility wrappers remain in `translate_bridge.py` for maintained imports. The primary
 translation worker still lives beside the bridge because it currently updates task history through
@@ -63,6 +64,7 @@ bridge callbacks; it should move only after those callbacks become an explicit p
 - Keep response parsing independent from network clients.
 - Preserve exports from `translator.py` until all maintained entry points use the new modules.
 - Add direct module tests before replacing a compatibility wrapper.
+- Validate persisted and imported settings before they reach bridge fields or translator constructors.
 
 ## Version Ownership
 

@@ -26,6 +26,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .config_schema import validate_config
+
 logger = logging.getLogger(__name__)
 
 # 全局容器单例
@@ -88,7 +90,12 @@ class ServiceContainer:
 
     @config.setter
     def config(self, value: Dict[str, Any]):
-        self._config = value
+        validation = validate_config(value)
+        self._config = validation.values
+        for issue in validation.issues:
+            logger.warning("服务配置校验修正: %s - %s", issue.key, issue.message)
+        if validation.unknown_keys:
+            logger.info("服务配置忽略未知字段: %s", ", ".join(validation.unknown_keys))
 
     @property
     def translator(self) -> Optional[Any]:
@@ -135,7 +142,7 @@ class ServiceContainer:
             # 加载配置
             if config_path is None:
                 config_path = str(self._data_dir / "config.json")
-            self._config = self._load_json(config_path) or {}
+            self.config = self._load_json(config_path) or {}
             logger.info(f"配置已加载: {config_path}")
 
             # SQLite cache is queried lazily by the translator. Keep startup memory flat.

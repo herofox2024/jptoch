@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 
 import translation_quality as tq
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
+from .config_schema import validate_config
 
 logger = logging.getLogger(__name__)
 
@@ -713,6 +714,10 @@ class ConfigBridge(QObject):
             return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            defaults = {key: getattr(self, f"_{key}", None) for key in _CONFIG_KEYS}
+            validation = validate_config(data, defaults=defaults, allowed_keys=_CONFIG_KEYS)
+            data = validation.values
+            self._log_config_validation(validation, "加载")
             for key in _CONFIG_KEYS:
                 if key in data:
                     setattr(self, f"_{key}", data[key])
@@ -776,7 +781,16 @@ class ConfigBridge(QObject):
             val = getattr(self, f"_{key}", None)
             if val is not None:
                 data[key] = val
-        return json.dumps(data, indent=2, ensure_ascii=False)
+        validation = validate_config(data, defaults=data, allowed_keys=_CONFIG_KEYS)
+        self._log_config_validation(validation, "保存")
+        return json.dumps(validation.values, indent=2, ensure_ascii=False)
+
+    @staticmethod
+    def _log_config_validation(validation, context: str) -> None:
+        for issue in validation.issues:
+            logger.warning("配置校验修正[%s]: %s - %s", context, issue.key, issue.message)
+        if validation.unknown_keys:
+            logger.info("配置校验忽略未知字段[%s]: %s", context, ", ".join(validation.unknown_keys))
 
     @Slot(str, result="QVariantMap")
     def getProviderDefaults(self, provider: str):
@@ -836,6 +850,10 @@ class ConfigBridge(QObject):
         return preset.get("values", {})
 
     def _apply_config_values(self, values: Dict[str, Any]) -> bool:
+        current = {key: getattr(self, f"_{key}", None) for key in _CONFIG_KEYS}
+        validation = validate_config(values, defaults=current, allowed_keys=_CONFIG_KEYS)
+        self._log_config_validation(validation, "应用")
+        values = validation.values
         signal_by_key = {
             "api_key": self._apiKeyChanged,
             "provider": self._providerChanged,
@@ -1439,6 +1457,7 @@ class ConfigBridge(QObject):
     def maxWorkers(self) -> int: return self._max_workers
     @maxWorkers.setter
     def maxWorkers(self, val: int):
+        val = validate_config({"max_workers": val}, defaults={"max_workers": self._max_workers}).values["max_workers"]
         if val != self._max_workers:
             self._max_workers = val; self._emit_changed(self._maxWorkersChanged)
 
@@ -1446,6 +1465,7 @@ class ConfigBridge(QObject):
     def batchSize(self) -> int: return self._batch_size
     @batchSize.setter
     def batchSize(self, val: int):
+        val = validate_config({"batch_size": val}, defaults={"batch_size": self._batch_size}).values["batch_size"]
         if val != self._batch_size:
             self._batch_size = val; self._emit_changed(self._batchSizeChanged)
 
@@ -1453,6 +1473,7 @@ class ConfigBridge(QObject):
     def maxBatchLength(self) -> int: return self._max_batch_length
     @maxBatchLength.setter
     def maxBatchLength(self, val: int):
+        val = validate_config({"max_batch_length": val}, defaults={"max_batch_length": self._max_batch_length}).values["max_batch_length"]
         if val != self._max_batch_length:
             self._max_batch_length = val; self._emit_changed(self._maxBatchLengthChanged)
 
@@ -1460,6 +1481,7 @@ class ConfigBridge(QObject):
     def maxTextSizeForBatch(self) -> int: return self._max_text_size_for_batch
     @maxTextSizeForBatch.setter
     def maxTextSizeForBatch(self, val: int):
+        val = validate_config({"max_text_size_for_batch": val}, defaults={"max_text_size_for_batch": self._max_text_size_for_batch}).values["max_text_size_for_batch"]
         if val != self._max_text_size_for_batch:
             self._max_text_size_for_batch = val; self._emit_changed(self._maxTextSizeForBatchChanged)
 
@@ -1467,6 +1489,7 @@ class ConfigBridge(QObject):
     def apiTimeout(self) -> int: return self._api_timeout
     @apiTimeout.setter
     def apiTimeout(self, val: int):
+        val = validate_config({"api_timeout": val}, defaults={"api_timeout": self._api_timeout}).values["api_timeout"]
         if val != self._api_timeout:
             self._api_timeout = val; self._emit_changed(self._apiTimeoutChanged)
 
