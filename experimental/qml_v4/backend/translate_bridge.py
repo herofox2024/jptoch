@@ -4,7 +4,6 @@
 """
 
 import os
-import math
 import json
 import logging
 import threading
@@ -24,6 +23,28 @@ from backend.task_history import (
     normalize_failed_blocks,
     sanitize_config,
 )
+from backend.bridge_workers import (
+    ClearBookCacheWorker as _ClearBookCacheWorker,
+    EstimateWorker as _EstimateWorker,
+    TestConnectionWorker as _TestWorker,
+    collect_translatable_texts as _collect_translatable_texts,
+)
+from backend.output_naming import (
+    FILENAME_EXPLANATION_MARKERS as _OUTPUT_FILENAME_MARKERS,
+    clean_translated_filename_candidate as _clean_filename,
+    clean_translated_toc_title as _clean_toc_title,
+    looks_like_model_refusal as _is_model_refusal,
+    sanitize_filename as _sanitize_output_filename,
+    source_title_for_filename as _source_output_title,
+    strip_model_explanation_notes as _strip_output_notes,
+    unique_epub_path as _next_epub_path,
+)
+from backend.translation_reports import (
+    build_quality_self_check_report as _build_quality_report,
+    estimate_translation_duration as _estimate_duration,
+    format_duration as _display_duration,
+    write_japanese_residue_report as _write_residue_report,
+)
 
 CANCELLED_RESULT = "__CANCELLED__"
 STOPPED_RESULT = "__STOPPED__"
@@ -31,80 +52,8 @@ logger = logging.getLogger(__name__)
 
 JAPANESE_RESIDUE_POLICIES = {"strict", "balanced", "lenient"}
 
-_FILENAME_EXPLANATION_MARKERS = (
-    "或依意译",
-    "意译处理",
-    "没有更多信息",
-    "没更多信息",
-    "暂无更多信息",
-    "暂无信息",
-    "这里保留",
-    "此处保留",
-    "可译为",
-    "也可译作",
-    "翻译为",
-    "译作",
-    "直译",
-    "音译",
-    "合适名",
-    "说明",
-    "注：",
-    "注:",
-)
-
-_TOC_EXPLANATION_MARKERS = _FILENAME_EXPLANATION_MARKERS + (
-    "简写",
-    "简称",
-    "希腊神话",
-    "神话中",
-    "之女",
-    "意为",
-    "意思是",
-    "指的是",
-    "源自",
-    "来自",
-    "出处",
-    "典故",
-    "可理解为",
-    "补充",
-    "背景",
-    "炫耀",
-    "射杀",
-    "化作",
-    "永远流动",
-)
-
-_TOC_TRAILING_AUTHOR_NAMES = (
-    "恒川光太郎",
-    "坂东真砂子",
-    "宇佐美诚",
-    "宇佐美まこと",
-    "小林泰三",
-    "竹本健治",
-    "小松左京",
-    "平山梦明",
-    "服部麻由美",
-)
-
-
 def _sanitize_filename(name):
-    invalid = '<>:"/\\\\|?*'
-    cleaned = ''.join('_' if c in invalid or ord(c) < 32 else c for c in name)
-    cleaned = ' '.join(cleaned.split()).strip(' ._')
-    if cleaned.lower().endswith('.epub'):
-        cleaned = cleaned[:-5].strip(' ._')
-    cleaned = cleaned[:120].strip(' ._')
-    if not cleaned:
-        return ''
-    reserved = {'CON','PRN','AUX','NUL','CONIN$','CONOUT$'}
-    reserved |= {f'COM{i}' for i in range(1,10)} | {f'LPT{i}' for i in range(1,10)}
-    if cleaned.split('.', 1)[0].upper() in reserved:
-        cleaned = cleaned + '_'
-    return cleaned
-
-
-def _residue_report_dir() -> Path:
-    return Path.home() / ".epub_translator" / "residue_reports"
+    return _sanitize_output_filename(name)
 
 
 def _write_japanese_residue_report(
@@ -114,280 +63,49 @@ def _write_japanese_residue_report(
     blocked_total: int,
     scan: Any,
 ) -> str:
-    report_dir = _residue_report_dir()
-    report_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    base = _sanitize_filename(Path(output_path or "translation").stem) or "translation"
-    report_path = report_dir / f"{stamp}-{base}-japanese-residue.json"
-    text_report_path = report_dir / f"{stamp}-{base}-japanese-residue.txt"
-    payload = {
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "output_path": output_path,
-        "policy": policy,
-        "text_report_path": str(text_report_path),
-        "blocking_total": int(getattr(scan, "blocking_total", 0)),
-        "hard_blocking_total": int(getattr(scan, "hard_blocking_total", 0)),
-        "high_risk_total": int(getattr(scan, "high_risk_total", 0)),
-        "medium_risk_total": int(getattr(scan, "medium_risk_total", 0)),
-        "low_risk_total": int(getattr(scan, "low_risk_total", 0)),
-        "weak_total": int(getattr(scan, "weak_total", 0)),
-        "blocked_total": int(blocked_total),
-        "blocking_samples": list(getattr(scan, "blocking_samples", []) or []),
-        "hard_blocking_samples": list(getattr(scan, "hard_blocking_samples", []) or []),
-        "high_risk_samples": list(getattr(scan, "high_risk_samples", []) or []),
-        "medium_risk_samples": list(getattr(scan, "medium_risk_samples", []) or []),
-        "low_risk_samples": list(getattr(scan, "low_risk_samples", []) or []),
-        "weak_samples": list(getattr(scan, "weak_samples", []) or []),
-        "structured_samples": list(getattr(scan, "structured_samples", []) or []),
-        "risk_legend": {
-            "high": "likely untranslated Japanese sentence or long kana residue; always blocks except lenient mode",
-            "medium": "short mixed residue that still needs translation; blocks in strict/balanced mode",
-            "low": "title/name/term-like residue; strict blocks, balanced allows with report",
-            "weak": "tiny kana noise; warning only",
-        },
-    }
-    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    lines = [
-        "EPUB Japanese Residue Report",
-        f"created_at: {payload['created_at']}",
-        f"output_path: {output_path}",
-        f"policy: {policy}",
-        f"blocked_total: {blocked_total}",
-        "",
-        "Totals",
-        f"- high: {payload['high_risk_total']}",
-        f"- medium: {payload['medium_risk_total']}",
-        f"- low: {payload['low_risk_total']}",
-        f"- weak: {payload['weak_total']}",
-        "",
-        "Recommended handling",
-        "- high: switch model or retranslate failed blocks before saving.",
-        "- medium: add a known katakana repair term if it is a term; otherwise retranslate.",
-        "- low: balanced mode can save with this report; strict mode blocks it.",
-        "- weak: warning only.",
-        "",
-    ]
-    for title, key in (
-        ("High risk samples", "high_risk_samples"),
-        ("Medium risk samples", "medium_risk_samples"),
-        ("Low risk samples", "low_risk_samples"),
-        ("Weak samples", "weak_samples"),
-    ):
-        lines.append(title)
-        samples = payload.get(key) or []
-        if not samples:
-            lines.append("- none")
-        else:
-            lines.extend(f"- {sample}" for sample in samples)
-        lines.append("")
-    text_report_path.write_text("\n".join(lines), encoding="utf-8")
-    return str(report_path)
+    return _write_residue_report(
+        output_path=output_path,
+        policy=policy,
+        blocked_total=blocked_total,
+        scan=scan,
+    )
 
 
 def _strip_model_explanation_notes(text, markers):
-    value = str(text or "").strip()
-    if not value:
-        return ""
-
-    # Remove model notes such as "（或依意译处理...这里保留...）" while keeping
-    # normal book-title/author parentheses.
-    changed = True
-    while changed:
-        changed = False
-        for left, right in (("（", "）"), ("(", ")"), ("【", "】"), ("[", "]")):
-            start = value.find(left)
-            while start != -1:
-                depth = 1
-                end = start + 1
-                while end < len(value) and depth > 0:
-                    if value.startswith(left, end):
-                        depth += 1
-                        end += len(left)
-                        continue
-                    if value.startswith(right, end):
-                        depth -= 1
-                        if depth == 0:
-                            break
-                        end += len(right)
-                        continue
-                    end += 1
-                if end == -1:
-                    break
-                if depth > 0:
-                    break
-                segment = value[start + 1:end]
-                if any(marker in segment for marker in markers):
-                    value = value[:start] + value[end + 1:]
-                    changed = True
-                    start = value.find(left, max(0, start - 1))
-                    continue
-                start = value.find(left, end + 1)
-
-    value = value.replace(" _ ", " ").replace("_", " ")
-    value = " ".join(value.split())
-    for mark in ("，)", "、)", "(，", "(、", "，）", "、）", "（，", "（、"):
-        value = value.replace(mark, mark[-1] if mark[0] in "，、" else mark[0])
-    value = value.replace(" ,", ",").replace(" ，", "，").replace(" 、", "、")
-    return value.strip(" ._+-＋，、")
+    return _strip_output_notes(text, markers)
 
 
 def _strip_filename_explanations(text):
-    return _strip_model_explanation_notes(text, _FILENAME_EXPLANATION_MARKERS)
+    return _strip_output_notes(text, _OUTPUT_FILENAME_MARKERS)
 
 
 def _clean_translated_filename_candidate(candidate):
-    if _looks_like_model_refusal(candidate):
-        return ""
-    cleaned = _strip_filename_explanations(candidate)
-    if not cleaned:
-        return ""
-    # A filename candidate that still contains kana is not a translated Chinese
-    # title. Do not silently rename the output to a mostly-Japanese title.
-    if tq.has_japanese_residue(cleaned):
-        return ""
-    if any(marker in cleaned for marker in _FILENAME_EXPLANATION_MARKERS):
-        return ""
-    return _sanitize_filename(cleaned)
+    return _clean_filename(candidate)
 
 
 def _clean_translated_toc_title(candidate):
-    if _looks_like_model_refusal(candidate):
-        return ""
-    value = str(candidate or "").strip()
-    for marker in ("【前文", "【后文", "[前文", "[后文"):
-        index = value.find(marker)
-        if index > 0:
-            value = value[:index].strip()
-
-    for prefix in ("【待翻译文本】", "【待翻译标题】", "[待翻译文本]", "[待翻译标题]"):
-        if value.startswith(prefix):
-            value = value[len(prefix):].strip()
-
-    cleaned = _strip_model_explanation_notes(value, _TOC_EXPLANATION_MARKERS)
-    if not cleaned:
-        return ""
-
-    if any(marker in value for marker in _TOC_EXPLANATION_MARKERS):
-        for author in _TOC_TRAILING_AUTHOR_NAMES:
-            if cleaned.endswith(author) and len(cleaned) > len(author):
-                cleaned = cleaned[: -len(author)].strip()
-                break
-
-    for prefix in ("译文：", "译文:", "翻译：", "翻译:", "标题：", "标题:"):
-        if cleaned.startswith(prefix):
-            cleaned = cleaned[len(prefix):].strip()
-
-    for suffix in ("等内容", "等说明", "的说明", "的解释"):
-        if cleaned.endswith(suffix):
-            cleaned = cleaned[: -len(suffix)].strip(" ，,、")
-
-    # If explanatory prose survived outside brackets, keep only the title-like
-    # prefix. TOC entries should be short labels, not encyclopedia notes.
-    for marker in _TOC_EXPLANATION_MARKERS:
-        index = cleaned.find(marker)
-        if index > 0:
-            prefix = cleaned[:index].rstrip(" ，,、；;：:-—（(")
-            if prefix:
-                cleaned = prefix
-                break
-
-    return cleaned.strip(" ._+-＋，、")
+    return _clean_toc_title(candidate)
 
 
 def _looks_like_model_refusal(text):
-    value = str(text or "").strip().lower()
-    if not value:
-        return True
-
-    hard_markers = (
-        "请提供具体的日文段落",
-        "请提供具体的日文",
-        "不是需要翻译的日文内容",
-        "并非需要翻译的日文内容",
-        "书名或文件名称",
-        "似乎是书名",
-        "无法按照要求翻译",
-        "无法翻译该内容",
-        "不能翻译该内容",
-        "please provide the japanese",
-        "please provide specific japanese",
-        "not a japanese text",
-        "not text to translate",
-    )
-    if any(marker in value for marker in hard_markers):
-        return True
-
-    apology_markers = ("抱歉", "对不起", "sorry", "apologize")
-    task_markers = ("请提供", "无法", "不能", "不是", "并非", "文本", "内容", "翻译", "provide", "cannot", "can't", "unable")
-    if any(marker in value for marker in apology_markers) and any(marker in value for marker in task_markers):
-        return True
-
-    sentence_marks = sum(value.count(ch) for ch in "。！？!?")
-    meta_words = ("文本", "内容", "翻译", "提供", "段落", "句子", "文件", "text", "content", "translate", "provide")
-    return sentence_marks >= 2 and any(word in value for word in meta_words)
+    return _is_model_refusal(text)
 
 def _is_usable_translated_filename(candidate):
     return bool(_clean_translated_filename_candidate(candidate))
 
 def _source_title_for_filename(stem):
-    value = str(stem or "").strip()
-    if not value:
-        return ""
-    for marker in ("+(", "＋("):
-        if marker in value:
-            value = value.split(marker, 1)[0]
-            break
-    return value.strip(" ._+-＋")
+    return _source_output_title(stem)
 
 def _unique_epub_path(path):
-    from pathlib import Path
-    import time
-    p = Path(path)
-    if not p.exists():
-        return p
-    for index in range(2, 1000):
-        candidate = p.with_name(f'{p.stem}_{index}{p.suffix}')
-        if not candidate.exists():
-            return candidate
-    return p.with_name(f'{p.stem}_{int(time.time())}{p.suffix}')
+    return _next_epub_path(path)
 
 
 def _format_duration(seconds):
-    seconds = max(0, int(math.ceil(seconds)))
-    if seconds < 60:
-        return "不足 1 分钟" if seconds < 30 else f"约 {seconds} 秒"
-    minutes = int(math.ceil(seconds / 60))
-    if minutes < 60:
-        return f"约 {minutes} 分钟"
-    hours = minutes // 60
-    remain_minutes = minutes % 60
-    if remain_minutes:
-        return f"约 {hours} 小时 {remain_minutes} 分钟"
-    return f"约 {hours} 小时"
+    return _display_duration(seconds)
 
 
 def _estimate_translation_duration(total_chars, total_texts, cfg):
-    provider = str(cfg.get("provider", "") or "").lower()
-    provider_profile = {
-        "deepseek": {"batch_seconds": 2.0, "chars_per_second": 120.0},
-        "doubao": {"batch_seconds": 2.5, "chars_per_second": 90.0},
-        "glm": {"batch_seconds": 4.0, "chars_per_second": 35.0},
-        "gemini": {"batch_seconds": 6.0, "chars_per_second": 30.0},
-        "wenxin": {"batch_seconds": 4.0, "chars_per_second": 45.0},
-        "sakura": {"batch_seconds": 1.5, "chars_per_second": 80.0},
-        "hymt2": {"batch_seconds": 4.0, "chars_per_second": 35.0},
-        "custom": {"batch_seconds": 3.0, "chars_per_second": 60.0},
-    }
-    profile = provider_profile.get(provider, provider_profile["custom"])
-    batch_size = max(1, int(cfg.get("batch_size") or 1))
-    max_workers = max(1, int(cfg.get("max_workers") or 1))
-    estimated_batches = max(1, math.ceil(max(1, total_texts) / batch_size))
-    active_workers = min(max_workers, estimated_batches)
-    effective_workers = 1.0 + max(0, active_workers - 1) * 0.65
-    batch_seconds = estimated_batches * profile["batch_seconds"] / effective_workers
-    char_seconds = max(1, total_chars) / max(1.0, profile["chars_per_second"] * effective_workers)
-    overhead_seconds = max(10.0, total_texts * 0.02)
-    return max(batch_seconds, char_seconds) + overhead_seconds
+    return _estimate_duration(total_chars, total_texts, cfg)
 
 
 def _preextract_glossary_profiles(
@@ -580,66 +298,16 @@ def _preextract_glossary_profiles(
 
 
 def _build_quality_self_check_report(translator, cfg, proofread_style, total_texts, total_chars, elapsed, weak_residue_total, final_out):
-    stats = translator.get_stats() if translator else {}
-    api_total = int(stats.get("api_requests_total", 0))
-    api_failed = int(stats.get("api_requests_failed", 0))
-    dynamic_events = int(stats.get("dynamic_limit_events", 0))
-    batch_parse_fail = int(stats.get("batch_json_parse_fail", 0))
-    batch_lenient = int(stats.get("batch_json_lenient_success", 0))
-    proofread_suspicious = int(stats.get("proofread_suspicious", 0))
-    proofread_fixed = int(stats.get("proofread_fixed", 0))
-    proofread_rejected = int(stats.get("proofread_rejected", 0))
-    quality_retranslate = int(stats.get("quality_retranslate", 0))
-    tokens_total = int(stats.get("tokens_total", 0))
-
-    warnings = []
-    suggestions = []
-    if weak_residue_total:
-        warnings.append(f"发现 {weak_residue_total} 处弱日文残留，已提示但不阻塞保存。")
-        suggestions.append("抽查弱残留样例；只有确认必须保留的片段才加入白名单。")
-    if api_failed:
-        warnings.append(f"API 失败/异常次数 {api_failed} 次。")
-        suggestions.append("免费模型建议降低并发和批量；如果连续触发限流，切换付费模型或稍后恢复续译。")
-    if dynamic_events:
-        warnings.append(f"动态限流/格式降级触发 {dynamic_events} 次。")
-    if batch_parse_fail:
-        warnings.append(f"批量 JSON 解析失败 {batch_parse_fail} 次，宽松解析成功 {batch_lenient} 次。")
-        suggestions.append("如果 JSON 失败频繁，降低批量大小或对免费模型使用 batch_size=1。")
-    if proofread_rejected:
-        warnings.append(f"校对结果因疑似错误术语注入被拒绝 {proofread_rejected} 次。")
-        suggestions.append("检查术语表中多义词，优先标为“仅供参考”或“上下文命中”。")
-    if not bool(cfg.get("enable_proofread", False)):
-        warnings.append("译后校对未启用，本次未做日文残留/术语一致性 AI 校对。")
-        suggestions.append("正式出书建议启用译后校对，免费模型可使用低并发低批量。")
-
-    status = "通过" if not warnings else "有提醒"
-    style_text = getattr(proofread_style, "display_text", "") or "未识别"
-    metrics = [
-        f"输出文件: {final_out}",
-        f"文本块: {total_texts}",
-        f"总字符: {total_chars}",
-        f"耗时: {_format_duration(elapsed)}",
-        f"Prompt 风格: {style_text}",
-        f"API 请求: {api_total}",
-        f"Token: {tokens_total if tokens_total > 0 else '--'}",
-        f"可疑译文: {proofread_suspicious}",
-        f"校对修复: {proofread_fixed}",
-        f"重译次数: {quality_retranslate}",
-    ]
-    if not suggestions:
-        suggestions.append("本次没有发现明显流程风险；如修改 Prompt 或术语策略后需要重译，请先清理当前 EPUB 缓存。")
-    summary = (
-        f"本次翻译完成，质量自检结果：{status}。"
-        f"校对发现 {proofread_suspicious} 条可疑译文，修复 {proofread_fixed} 条。"
+    return _build_quality_report(
+        translator,
+        cfg,
+        proofread_style,
+        total_texts,
+        total_chars,
+        elapsed,
+        weak_residue_total,
+        final_out,
     )
-    return {
-        "status": status,
-        "summary": summary,
-        "metricsText": "\n".join(metrics),
-        "warningsText": "\n".join(f"- {item}" for item in warnings) if warnings else "未发现需要阻塞保存的问题。",
-        "suggestionsText": "\n".join(f"- {item}" for item in suggestions),
-        "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
 
 
 class _TranslateWorker(QObject):
@@ -1039,93 +707,6 @@ class _TranslateWorker(QObject):
             self.failed.emit(f"{e}\n{traceback.format_exc()}")
 
 
-class _EstimateWorker(QObject):
-    finished = Signal(str, int)
-    failed = Signal(str, str)
-
-    def __init__(self, path: str):
-        super().__init__()
-        self._path = path
-
-    def run(self):
-        try:
-            from epub_io import load_book, iter_text_nodes, extract_toc_titles, extract_visible_text
-
-            book = load_book(self._path)
-            all_texts = []
-            for _, _, tags in iter_text_nodes(book):
-                for tag in tags:
-                    text = extract_visible_text(tag)
-                    if text:
-                        all_texts.append(text)
-            all_texts.extend(extract_toc_titles(book))
-            total = sum(len(t) for t in all_texts)
-            self.finished.emit(self._path, total)
-        except Exception as e:
-            self.failed.emit(self._path, str(e))
-
-
-def _collect_translatable_texts(epub_path: str):
-    from epub_io import load_book, iter_text_nodes, extract_toc_titles, extract_visible_text
-    from text_utils import is_translatable
-
-    book = load_book(epub_path)
-    texts = []
-    for _, _, tags in iter_text_nodes(book):
-        for tag in tags:
-            anchors = tag.find_all("a")
-            if len(anchors) > 1:
-                for node in tag.find_all(string=True):
-                    raw = str(node).strip()
-                    if is_translatable(raw):
-                        texts.append(raw)
-                continue
-            text = extract_visible_text(tag)
-            if is_translatable(text):
-                texts.append(text)
-    texts.extend(extract_toc_titles(book))
-    return texts
-
-
-class _ClearBookCacheWorker(QObject):
-    finished = Signal(int, int)
-    failed = Signal(str)
-
-    def __init__(self, config: dict):
-        super().__init__()
-        self._config = config
-
-    def run(self):
-        try:
-            from translator import JaZhTranslator
-
-            cfg = self._config
-            texts = _collect_translatable_texts(cfg["inp"])
-            translator = JaZhTranslator(
-                api_key=cfg.get("api_key") or "cache-clear",
-                provider=cfg.get("provider") or "deepseek",
-                api_url=cfg.get("api_url") or None,
-                model=cfg.get("model") or None,
-                max_workers=1,
-                batch_size=1,
-                max_batch_length=cfg.get("max_batch_length", 800),
-                max_text_size_for_batch=cfg.get("max_text_size_for_batch", 200),
-                api_timeout=cfg.get("api_timeout", 120),
-                enable_glossary=False,
-                hymt2_generation_mode=cfg.get("hymt2_generation_mode", "stable"),
-                hymt2_prompt_mode=cfg.get("hymt2_prompt_mode", "official"),
-                hymt2_runtime_mode=cfg.get("hymt2_runtime_mode", "cpu"),
-            )
-            removed = translator.clear_cache_for_texts(
-                texts,
-                include_text_cache=True,
-                all_models=True,
-            )
-            self.finished.emit(removed, len(set(str(text or "").strip() for text in texts if str(text or "").strip())))
-        except Exception as e:
-            self.failed.emit(str(e))
-
-
 class _RetranslateFailedBlocksWorker(QObject):
     finished = Signal("QVariantMap")
     failed = Signal(str)
@@ -1499,49 +1080,6 @@ class _GlossaryPostApplyWorker(QObject):
             logger.exception("术语后处理异常")
             self.errorDetail.emit(traceback.format_exc())
             self.failed.emit(str(exc))
-
-
-class _TestWorker(QObject):
-    result = Signal(str)
-
-    def __init__(self, api_key, api_url, model, timeout):
-        super().__init__()
-        self._api_key = api_key
-        self._api_url = api_url
-        self._model = model
-        self._timeout = timeout
-
-    def run(self):
-        import requests
-
-        try:
-            headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": self._model,
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 10,
-                "temperature": 0.1,
-            }
-            resp = requests.post(self._api_url, headers=headers, json=payload, timeout=int(self._timeout) if self._timeout else 15)
-            if resp.status_code == 200:
-                self.result.emit(f"连接成功 ({resp.status_code}) — 模型: {self._model}")
-            else:
-                body = resp.text[:200]
-                self.result.emit(f"失败: HTTP {resp.status_code} — {body}")
-        except requests.exceptions.Timeout:
-            self.result.emit(f"失败: 连接超时 ({self._timeout}秒)")
-        except requests.exceptions.ConnectionError as e:
-            message = str(e)
-            if "10061" in message or "Connection refused" in message or "actively refused" in message:
-                self.result.emit(
-                    "失败: 本地服务未启动或端口未监听。"
-                    "请在下方 Hy-MT2 本地模型区域选择 llama-server 后点击“启动本地服务”，"
-                    "或确认外部 llama-server 正在监听当前 API URL。"
-                )
-            else:
-                self.result.emit(f"失败: 网络连接失败 — {message[:240]}")
-        except Exception as e:
-            self.result.emit(f"失败: {e}")
 
 
 class TranslateBridge(QObject):

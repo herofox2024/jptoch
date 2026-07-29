@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -14,7 +14,7 @@
 **Language:** [简体中文](README.md) | [English](README_EN.md)
 
 **当前主力版本：QML/V4.1**  
-**稳定回退版：Qt V3.2.1**
+**归档回退版：Qt V3.2.1**
 
 </div>
 
@@ -45,8 +45,8 @@
 | 版本 | 入口 | 状态 | 说明 |
 |------|------|------|------|
 | QML/V4.1 | `experimental/qml_v4/main.py` | 当前主力版本 | P0-P3 架构改造 + 性能优化 |
-| Qt V3.2.1 | `main_qt.py` | 稳定回退版 | 进入维护模式，只修 P0/P1 严重问题 |
-| Tk 旧版 | `app.py` | 冻结兼容 | 仅保留兼容测试或阻断性修复 |
+| Qt V3.2.1 | `archived/qt_v3/main_qt.py` | 归档回退版 | 仅修安全、数据丢失和启动阻断问题 |
+| Tk 旧版 | `archived/tk_v1/app.py` | 冻结归档 | 仅保留兼容测试和源码参考 |
 
 说明：`experimental/qml_v4/` 是历史目录名。V4.1 阶段暂不改目录，避免影响已有打包脚本、安装脚本和用户路径。
 
@@ -106,20 +106,20 @@ pip install -r experimental/qml_v4/requirements.txt
 python experimental/qml_v4/main.py
 ```
 
-### 方式三：运行稳定回退版 Qt V3.2.1
+### 方式三：运行归档回退版 Qt V3.2.1
 
 ```powershell
 pip install -r requirements.txt
-python main_qt.py
+python archived/qt_v3/main_qt.py
 ```
 
 ### 方式四：历史 Tk 入口
 
 ```powershell
-python app.py
+python archived/tk_v1/app.py
 ```
 
-Tk 入口已冻结，不建议日常使用。
+旧 UI 已集中归档，不参与默认打包和发布。维护规则见 [`archived/README.md`](archived/README.md)。
 
 ---
 
@@ -339,9 +339,9 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 │  │  └─ service_container.py  # 服务容器依赖注入（P1 新增）
 │  ├─ assets/                  # V4 图标资源
 │  └─ EPUBTranslator*.spec     # PyInstaller 打包配置
-├─ ui/qt_app.py                # Qt V3.2.1 回退版 UI
-├─ main_qt.py                  # Qt V3.2.1 启动入口
-├─ app.py                      # Tk 历史兼容入口，冻结维护
+├─ archived/                   # 旧 UI 与历史打包配置
+│  ├─ qt_v3/                   # Qt V3.2.1 归档回退版
+│  └─ tk_v1/                   # Tk 历史兼容入口
 ├─ translator.py               # 翻译核心：API、批处理、缓存、术语、校对
 ├─ epub_io.py                  # EPUB 读取、写入、目录和排版兼容
 ├─ style_detector.py           # 小说类型和叙事风格本地识别
@@ -353,6 +353,8 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 ```
 
 ### 架构概览
+
+详细模块边界、线程模型和兼容规则见 [架构文档](docs/architecture.md)。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -661,8 +663,8 @@ python -m pytest -q
 
 ### Qt V3.2.1
 
-- 作为稳定回退版保留。
-- 已进入维护模式，仅修 P0/P1 严重问题。
+- 已迁入 `archived/qt_v3/`，作为手动归档回退版保留。
+- 仅修安全、数据丢失和启动阻断问题。
 - 保留 API 配置、术语表、缓存、暂停恢复、状态监控等成熟功能。
 
 ### 历史版本摘要

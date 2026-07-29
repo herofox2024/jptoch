@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -10,19 +9,10 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
-try:
-    import httpx
-except Exception:  # pragma: no cover - optional speed-up dependency
-    httpx = None
-try:
-    import json_repair
-except Exception:  # pragma: no cover - optional dependency
-    json_repair = None
 import translation_quality as tq
 from glossary_store import normalize_glossary_payload as gs_normalize_glossary_payload
 from glossary_store import merge_glossaries as gs_merge_glossaries
@@ -63,6 +53,20 @@ from translation_cache import (
 )
 from translation_http import is_retryable_status, retry_delay
 from translation_cache_db import SQLiteCacheMapping, TranslationCacheDB, cache_db_path_for
+from translation_async_http import (
+    HTTPX_AVAILABLE,
+    AsyncHttpJsonExecutor as _AsyncHttpJsonExecutor,
+    HttpxResponseAdapter as _HttpxResponseAdapter,
+)
+from translation_json_parser import extract_json_object, extract_lenient_indexed_items
+from translation_batching import smart_batch_task_keys, smart_batch_texts, smart_split_text
+from translation_models import (
+    BatchJsonResult,
+    ContentModerationError,
+    FastFailError,
+    SingleChunkResult,
+    TranslationIncompleteError,
+)
 
 try:
     from backend import request_log as qml_request_log
@@ -71,28 +75,6 @@ except Exception:  # pragma: no cover - non-QML entry points can run without it
         from experimental.qml_v4.backend import request_log as qml_request_log
     except Exception:  # pragma: no cover
         qml_request_log = None
-
-
-# ---------------------------------------------------------------------------
-# 结果数据类：用于 _call_deepseek_single / _call_deepseek_batch_json 返回
-# ---------------------------------------------------------------------------
-@dataclass
-class SingleChunkResult:
-    """单条翻译 API 调用结果"""
-    content: str
-    finish_reason: Optional[str] = None   # "stop", "length", or None
-    is_truncated: bool = False
-
-
-@dataclass
-class BatchJsonResult:
-    """批量 JSON 翻译 API 调用结果（支持部分成功）"""
-    translations: Optional[List[Optional[str]]] = None  # None=全部失败; 有 None 槽=部分成功
-    new_terms: Optional[List[Dict[str, Any]]] = None
-    missing_indices: List[int] = field(default_factory=list)
-    finish_reason: Optional[str] = None
-    is_truncated: bool = False
-    raw_content: str = ""
 
 
 GLOSSARY_EXTRACTION_MODES = {"novel", "lite"}
@@ -133,249 +115,6 @@ WENXIN_MODEL = provider_default_model("wenxin")
 LONGCAT_API_URL = provider_default_url("longcat")
 LONGCAT_MODEL = provider_default_model("longcat")
 DEFAULT_TEXT_SEPARATOR = "\n---SPLIT---\n"
-
-
-class _HttpxResponseAdapter:
-    """Small adapter exposing the requests.Response subset used by this module."""
-
-    def __init__(
-        self,
-        status_code: int,
-        text: str,
-        url: str,
-        json_data: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-    ):
-        self.status_code = int(status_code)
-        self.text = text or ""
-        self.url = url or ""
-        self._json_data = json_data
-        self.headers = headers or {}
-
-    def json(self) -> Dict[str, Any]:
-        if self._json_data is not None:
-            return self._json_data
-        return json.loads(self.text or "{}")
-
-    def raise_for_status(self) -> None:
-        if self.status_code < 400:
-            return
-        raise requests.exceptions.HTTPError(
-            f"{self.status_code} Error for url: {self.url}",
-            response=self,
-        )
-
-
-class _AsyncHttpJsonExecutor:
-    """Run OpenAI-compatible JSON POST calls through one httpx.AsyncClient pool."""
-
-    def __init__(self, max_connections: int):
-        if httpx is None:
-            raise RuntimeError("httpx is not available")
-        self._max_connections = max(1, int(max_connections or 1))
-        self._loop = asyncio.new_event_loop()
-        self._ready = threading.Event()
-        self._closed = threading.Event()
-        self._client = None
-        self._thread = threading.Thread(target=self._run_loop, name="translator-httpx", daemon=True)
-        self._thread.start()
-        self._ready.wait(timeout=5)
-
-    def _run_loop(self) -> None:
-        asyncio.set_event_loop(self._loop)
-        limits = httpx.Limits(
-            max_connections=self._max_connections * 2,
-            max_keepalive_connections=self._max_connections,
-        )
-        self._client = httpx.AsyncClient(limits=limits, trust_env=True)
-        self._ready.set()
-        self._loop.run_forever()
-
-    async def _post(self, url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: int) -> _HttpxResponseAdapter:
-        assert self._client is not None
-        try:
-            resp = await self._client.post(url, headers=headers, json=payload, timeout=float(timeout))
-            text = resp.text or ""
-            try:
-                json_data = resp.json()
-            except Exception:
-                json_data = None
-            return _HttpxResponseAdapter(resp.status_code, text, str(resp.url), json_data, dict(resp.headers))
-        except httpx.TimeoutException as exc:
-            raise requests.exceptions.Timeout(str(exc)) from exc
-        except httpx.ConnectError as exc:
-            raise requests.exceptions.ConnectionError(str(exc)) from exc
-        except httpx.HTTPError as exc:
-            raise requests.exceptions.RequestException(str(exc)) from exc
-
-    def post(self, url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: int) -> _HttpxResponseAdapter:
-        if self._closed.is_set():
-            raise requests.exceptions.ConnectionError("async http executor is closed")
-        future = asyncio.run_coroutine_threadsafe(
-            self._post(url, headers, payload, timeout),
-            self._loop,
-        )
-        return future.result(timeout=max(float(timeout) + 10.0, 15.0))
-
-    def close(self) -> None:
-        if self._closed.is_set():
-            return
-        self._closed.set()
-
-        async def _close_client():
-            if self._client is not None:
-                await self._client.aclose()
-
-        try:
-            future = asyncio.run_coroutine_threadsafe(_close_client(), self._loop)
-            future.result(timeout=5)
-        except Exception:
-            pass
-        try:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        except Exception:
-            pass
-
-
-class FastFailError(RuntimeError):
-    """用于标识应立即中断流程的不可恢复错误（如明确配置的 HTTP 502）。"""
-
-
-class ContentModerationError(RuntimeError):
-    """Raised when an upstream provider rejects the batch because its content
-    moderation filter flags one or more source texts. Unlike FastFailError this
-    does NOT abort the whole pipeline — callers should split the batch and retry
-    each item on its own so only the offending text is lost."""
-
-    def __init__(self, message: str, offending_indices: Optional[List[int]] = None):
-        super().__init__(message)
-        self.offending_indices = list(offending_indices or [])
-
-
-class TranslationIncompleteError(RuntimeError):
-    """Raised when some texts could not be safely translated."""
-
-    def __init__(
-        self,
-        failed_texts: Optional[List[str]] = None,
-        residue_texts: Optional[List[str]] = None,
-        partial_results: Optional[Dict[str, str]] = None,
-        failed_details: Optional[List[Dict[str, Any]]] = None,
-        residue_details: Optional[List[Dict[str, Any]]] = None,
-    ):
-        self.failed_texts = list(dict.fromkeys(failed_texts or []))
-        self.residue_texts = list(dict.fromkeys(residue_texts or []))
-        self.partial_results = dict(partial_results or {})
-        self.failed_details = self._normalize_failed_details(failed_details, self.failed_texts)
-        self.residue_details = self._normalize_residue_details(residue_details, self.residue_texts)
-        message = (
-            f"翻译未完成：{len(self.failed_texts)} 条未成功翻译，"
-            f"{len(self.residue_texts)} 条疑似仍有日文残留。"
-            "已保留成功译文缓存，请降低并发/批量或切换模型后恢复续译。"
-        )
-        super().__init__(message)
-
-    @staticmethod
-    def _snippet(text: Any, limit: int = 220) -> str:
-        text = re.sub(r"\s+", " ", str(text or "")).strip()
-        if len(text) <= limit:
-            return text
-        return text[:limit].rstrip() + "..."
-
-    @classmethod
-    def _normalize_failed_details(
-        cls,
-        details: Optional[List[Dict[str, Any]]],
-        fallback_texts: List[str],
-    ) -> List[Dict[str, str]]:
-        normalized: List[Dict[str, str]] = []
-        seen = set()
-        for item in details or []:
-            if not isinstance(item, dict):
-                continue
-            text = str(item.get("text") or item.get("original") or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(
-                {
-                    "text": text,
-                    "reason": str(item.get("reason") or "未返回安全译文"),
-                }
-            )
-        for text in fallback_texts:
-            if text not in seen:
-                seen.add(text)
-                normalized.append({"text": text, "reason": "未返回安全译文"})
-        return normalized
-
-    @classmethod
-    def _normalize_residue_details(
-        cls,
-        details: Optional[List[Dict[str, Any]]],
-        fallback_texts: List[str],
-    ) -> List[Dict[str, Any]]:
-        normalized: List[Dict[str, Any]] = []
-        seen = set()
-        for item in details or []:
-            if not isinstance(item, dict):
-                continue
-            original = str(item.get("original") or item.get("text") or "").strip()
-            if not original or original in seen:
-                continue
-            fragments = item.get("fragments") or []
-            if isinstance(fragments, str):
-                fragments = [fragments]
-            fragments = [str(fragment).strip() for fragment in fragments if str(fragment).strip()]
-            seen.add(original)
-            normalized.append(
-                {
-                    "original": original,
-                    "translated": str(item.get("translated") or ""),
-                    "fragments": list(dict.fromkeys(fragments)),
-                    "reason": str(item.get("reason") or "译文疑似仍有日文残留"),
-                }
-            )
-        for text in fallback_texts:
-            if text not in seen:
-                seen.add(text)
-                normalized.append(
-                    {
-                        "original": text,
-                        "translated": "",
-                        "fragments": [],
-                        "reason": "译文疑似仍有日文残留",
-                    }
-                )
-        return normalized
-
-    def format_diagnostics(self, max_items: int = 5) -> str:
-        """Format actionable diagnostics for logs and UI error panels."""
-        lines = [
-            (
-                f"翻译未完成诊断：未成功翻译 {len(self.failed_texts)} 条，"
-                f"疑似日文残留 {len(self.residue_texts)} 条。"
-            )
-        ]
-        if self.failed_details:
-            lines.append("[失败样例]")
-            for index, detail in enumerate(self.failed_details[:max_items], 1):
-                lines.append(f"{index}. 原文: {self._snippet(detail.get('text'))}")
-                lines.append(f"   原因: {self._snippet(detail.get('reason'), 120)}")
-        if self.residue_details:
-            lines.append("[日文残留样例]")
-            for index, detail in enumerate(self.residue_details[:max_items], 1):
-                fragments = detail.get("fragments") or []
-                fragment_text = "、".join(fragments[:8]) if fragments else "未知片段"
-                lines.append(f"{index}. 残留片段: {self._snippet(fragment_text, 160)}")
-                lines.append(f"   原文: {self._snippet(detail.get('original'))}")
-                translated = self._snippet(detail.get("translated"))
-                if translated:
-                    lines.append(f"   译文: {translated}")
-                reason = self._snippet(detail.get("reason"), 120)
-                if reason:
-                    lines.append(f"   原因: {reason}")
-        return "\n".join(lines)
 
 
 def get_data_dir() -> Path:
@@ -1143,7 +882,7 @@ class JaZhTranslator:
         self._provider_rate_requests: deque[float] = deque()
         self._provider_rate_tokens: deque[Tuple[float, int]] = deque()
         self._async_http_executor = None
-        if httpx is not None and self.provider in self.FAST_BATCH_PROVIDERS:
+        if HTTPX_AVAILABLE and self.provider in self.FAST_BATCH_PROVIDERS:
             try:
                 self._async_http_executor = _AsyncHttpJsonExecutor(self.max_workers)
                 logger.info("批量 JSON 已启用 httpx 异步连接池: provider=%s, max_connections=%s", self.provider, self.max_workers)
@@ -1208,7 +947,7 @@ class JaZhTranslator:
             "translate_context_cache_tasks": 0,
             "translate_elapsed_ms": 0,
             "translate_fast_batch_mode": 0,
-            "async_httpx_available": 1 if httpx is not None else 0,
+            "async_httpx_available": 1 if HTTPX_AVAILABLE else 0,
             "async_httpx_requests": 0,
         }
         logger.info(
@@ -1375,155 +1114,11 @@ class JaZhTranslator:
 
     @staticmethod
     def _extract_json_object(raw: str, prefer_new_terms: bool = False) -> Optional[dict]:
-        """从模型返回中提取 JSON，兼容对象、数组、代码块与前后说明文字。"""
-        if not raw:
-            return None
-        text = raw.strip()
-
-        def looks_like_translation_list(value: Any) -> bool:
-            if not isinstance(value, list) or not value:
-                return False
-            for item in value[:3]:
-                if isinstance(item, str):
-                    return True
-                if isinstance(item, dict) and (
-                    any(key in item for key in ("zh", "translation", "translated", "text", "cn", "中文", "dst", "revised"))
-                    or any(key in item for key in ("idx", "index", "id"))
-                ):
-                    return True
-            return False
-
-        def looks_like_glossary_terms_list(value: Any) -> bool:
-            if not isinstance(value, list) or not value:
-                return False
-            for item in value[:3]:
-                if isinstance(item, dict) and any(
-                    key in item for key in ("src", "original", "dst", "translation", "category", "policy", "info")
-                ):
-                    return True
-            return False
-
-        def coerce(value: Any, allow_list: bool = True) -> Optional[dict]:
-            if isinstance(value, dict):
-                return value
-            if allow_list and prefer_new_terms and looks_like_glossary_terms_list(value):
-                return {"new_terms": value}
-            if allow_list and looks_like_translation_list(value):
-                return {"translations": value, "new_terms": []}
-            return None
-
-        def is_batch_container(value: Optional[dict]) -> bool:
-            return isinstance(value, dict) and any(key in value for key in ("translations", "items", "new_terms"))
-
-        def parse_candidate(candidate: str) -> Optional[dict]:
-            candidate = (candidate or "").strip()
-            if not candidate:
-                return None
-            try:
-                parsed = json.loads(candidate)
-                coerced = coerce(parsed, allow_list=True)
-                if coerced is not None:
-                    return coerced
-            except (json.JSONDecodeError, ValueError):
-                if json_repair is not None:
-                    try:
-                        parsed = json_repair.loads(candidate)
-                        coerced = coerce(parsed, allow_list=True)
-                        if coerced is not None:
-                            return coerced
-                    except Exception:
-                        pass
-            decoder = json.JSONDecoder()
-            fallback = None
-            for match in re.finditer(r"[\{\[]", candidate):
-                try:
-                    parsed, _ = decoder.raw_decode(candidate[match.start():])
-                except (json.JSONDecodeError, ValueError):
-                    if json_repair is not None:
-                        try:
-                            parsed = json_repair.loads(candidate[match.start():])
-                        except Exception:
-                            continue
-                    else:
-                        continue
-                allow_list = True
-                if isinstance(parsed, list):
-                    prefix = candidate[max(0, match.start() - 40):match.start()]
-                    allow_list = match.start() == 0 or bool(
-                        re.search(r'"(?:translations|items)"\s*:\s*$', prefix)
-                    )
-                coerced = coerce(parsed, allow_list=allow_list)
-                if is_batch_container(coerced):
-                    return coerced
-                if fallback is None:
-                    fallback = coerced
-            return fallback if is_batch_container(fallback) else None
-
-        parsed = parse_candidate(text)
-        if parsed is not None:
-            return parsed
-
-        for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE):
-            parsed = parse_candidate(match.group(1))
-            if parsed is not None:
-                return parsed
-        return None
+        return extract_json_object(raw, prefer_new_terms=prefer_new_terms)
 
     @staticmethod
     def _extract_lenient_indexed_items(raw: str, value_keys: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Best-effort parser for model outputs that look like JSON but contain unescaped quotes."""
-        if not raw:
-            return []
-        text = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
-        text = re.sub(r"\s*```$", "", text).strip()
-        value_keys = value_keys or ["zh", "translation", "translated", "text", "cn", "中文", "dst", "revised"]
-        idx_matches = list(re.finditer(r'"(?:idx|index|id)"\s*:\s*"?(\d+)"?', text))
-        if not idx_matches:
-            return []
-
-        def extract_value(chunk: str) -> Optional[str]:
-            key_pattern = "|".join(re.escape(key) for key in value_keys)
-            key_match = re.search(rf'"(?:{key_pattern})"\s*:', chunk)
-            if not key_match:
-                return None
-            pos = key_match.end()
-            while pos < len(chunk) and chunk[pos].isspace():
-                pos += 1
-            if pos >= len(chunk):
-                return None
-            if chunk[pos] == '"':
-                start = pos + 1
-                tail = chunk[start:]
-                end_match = re.search(
-                    r'"\s*(?:,\s*"(?:idx|index|id|new_terms|src|dst|category)"\s*:|\}\s*,?\s*(?:\{|\]|,?\s*"new_terms"|$))',
-                    tail,
-                    flags=re.DOTALL,
-                )
-                if end_match:
-                    value = tail[:end_match.start()]
-                else:
-                    last_quote = tail.rfind('"')
-                    value = tail[:last_quote] if last_quote >= 0 else tail
-            else:
-                end_match = re.search(r"\s*(?:,\s*\"|\}\s*,?\s*(?:\{|\]|$))", chunk[pos:], flags=re.DOTALL)
-                value = chunk[pos:pos + end_match.start()] if end_match else chunk[pos:]
-            value = value.strip()
-            if not value:
-                return None
-            return value.replace('\\"', '"').replace("\\n", "\n")
-
-        items: List[Dict[str, Any]] = []
-        for pos, match in enumerate(idx_matches):
-            idx = int(match.group(1))
-            chunk_start = text.rfind("{", 0, match.start())
-            if chunk_start < 0:
-                chunk_start = match.start()
-            next_start = idx_matches[pos + 1].start() if pos + 1 < len(idx_matches) else len(text)
-            chunk = text[chunk_start:next_start]
-            value = extract_value(chunk)
-            if value is not None:
-                items.append({"idx": idx, "zh": value})
-        return items
+        return extract_lenient_indexed_items(raw, value_keys=value_keys)
 
     @staticmethod
     def _response_snippet(raw: str, limit: int = 240) -> str:
@@ -5083,56 +4678,7 @@ JSON 顶层字段：
 
     @staticmethod
     def _smart_split_text(text: str, chunk_size: int) -> List[str]:
-        """按段落+句子优先切分，尽量避免生硬按字符截断。"""
-        text = text.strip()
-        if not text:
-            return []
-        if len(text) <= chunk_size:
-            return [text]
-
-        paragraphs = [p for p in text.split("\n") if p]
-        chunks: List[str] = []
-        current = ""
-
-        def flush_current():
-            nonlocal current
-            if current:
-                chunks.append(current)
-                current = ""
-
-        for para in paragraphs:
-            if len(para) > chunk_size:
-                sentences = re.split(r"(?<=[。！？!?…])", para)
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if not sentence:
-                        continue
-
-                    if len(sentence) > chunk_size:
-                        flush_current()
-                        for i in range(0, len(sentence), chunk_size):
-                            chunks.append(sentence[i:i + chunk_size])
-                        continue
-
-                    if not current:
-                        current = sentence
-                    elif len(current) + 1 + len(sentence) <= chunk_size:
-                        current += "\n" + sentence
-                    else:
-                        flush_current()
-                        current = sentence
-                continue
-
-            if not current:
-                current = para
-            elif len(current) + 1 + len(para) <= chunk_size:
-                current += "\n" + para
-            else:
-                flush_current()
-                current = para
-
-        flush_current()
-        return chunks
+        return smart_split_text(text, chunk_size)
 
     def translate(self, text: str, chunk_size: Optional[int] = None) -> str:
         """翻译文本，支持缓存和长文本分块"""
@@ -5182,75 +4728,14 @@ JSON 顶层字段：
 
     # ---- Phase 1-①: 智能分批 ----
     def _smart_batch(self, texts: List[str], effective_batch_size: int) -> List[List[str]]:
-        """
-        按文本长度分三档智能分批：
-        - 短文本（≤30字）：大 batch 合并（2x batch_size），减少 API 调用
-        - 中文本（30~200字）：正常 batch_size 合并
-        - 长文本（>200字）：单条处理，避免 JSON 格式解析失败
-        """
-        short = []
-        medium = []
-        long = []
-
         long_threshold = max(self.SMART_BATCH_LONG, int(getattr(self, "max_text_size_for_batch", self.SMART_BATCH_LONG) or self.SMART_BATCH_LONG))
-
-        for text in texts:
-            text_len = len(text)
-            if text_len <= self.SMART_BATCH_SHORT:
-                short.append(text)
-            elif text_len <= long_threshold:
-                medium.append(text)
-            else:
-                long.append(text)
-
-        batches = []
-
-        # 短文本：大 batch（2x），按字符总量限制
-        short_batch_size = min(effective_batch_size * 2, 20)
-        current = []
-        current_len = 0
-        for text in short:
-            if len(current) < short_batch_size and current_len + len(text) < self.max_batch_length * 2:
-                current.append(text)
-                current_len += len(text)
-            else:
-                if current:
-                    batches.append(current)
-                current = [text]
-                current_len = len(text)
-        if current:
-            batches.append(current)
-
-        # 中文本：正常 batch_size
-        current = []
-        current_len = 0
-        for text in medium:
-            if len(current) < effective_batch_size and current_len + len(text) < self.max_batch_length:
-                current.append(text)
-                current_len += len(text)
-            else:
-                if current:
-                    batches.append(current)
-                current = [text]
-                current_len = len(text)
-        if current:
-            batches.append(current)
-
-        # 长文本：每条单独处理
-        for text in long:
-            batches.append([text])
-
-        # 统计
-        short_count = len([b for b in batches if b and len(b[0]) <= self.SMART_BATCH_SHORT])
-        medium_count = len([b for b in batches if b and self.SMART_BATCH_SHORT < len(b[0]) <= long_threshold])
-        long_count = len([b for b in batches if b and len(b[0]) > long_threshold])
-        logger.info(
-            f"智能分批: 短文本 {len(short)}→{short_count}批, "
-            f"中文本 {len(medium)}→{medium_count}批, "
-            f"长文本 {len(long)}→{long_count}批"
+        return smart_batch_texts(
+            texts,
+            effective_batch_size,
+            short_threshold=self.SMART_BATCH_SHORT,
+            long_threshold=long_threshold,
+            max_batch_length=self.max_batch_length,
         )
-
-        return batches
 
     def _smart_batch_task_keys(
         self,
@@ -5259,67 +4744,28 @@ JSON 顶层字段：
         effective_batch_size: int,
         fast_mode: bool = False,
     ) -> List[List[str]]:
-        """Smart-batch internal task keys while measuring the real source text length."""
-        short: List[str] = []
-        medium: List[str] = []
-        long: List[str] = []
         long_threshold = max(
             self.SMART_BATCH_LONG,
             int(getattr(self, "max_text_size_for_batch", self.SMART_BATCH_LONG) or self.SMART_BATCH_LONG),
         )
         if fast_mode:
             long_threshold = max(long_threshold, self.FAST_BATCH_LONG_THRESHOLD)
-
-        for key in task_keys:
-            text_len = len(task_texts.get(key, ""))
-            if text_len <= self.SMART_BATCH_SHORT:
-                short.append(key)
-            elif text_len <= long_threshold:
-                medium.append(key)
-            else:
-                long.append(key)
-
-        batches: List[List[str]] = []
-
-        def flush_group(keys: List[str], max_items: int, max_chars: int) -> None:
-            current: List[str] = []
-            current_len = 0
-            for key in keys:
-                text_len = len(task_texts.get(key, ""))
-                if current and (len(current) >= max_items or current_len + text_len >= max_chars):
-                    batches.append(current)
-                    current = []
-                    current_len = 0
-                current.append(key)
-                current_len += text_len
-            if current:
-                batches.append(current)
-
-        if fast_mode:
-            max_items = min(max(effective_batch_size, 1), self._fast_batch_max_items_for_provider())
-            max_chars = max(int(getattr(self, "max_batch_length", 0) or 0), self.FAST_BATCH_MAX_CHARS)
-            short_max_items = max_items if self.provider == "longcat" else min(max_items * 2, 32)
-            flush_group(short, short_max_items, max_chars * 2)
-            flush_group(medium, max_items, max_chars)
-        else:
-            flush_group(short, min(effective_batch_size * 2, 20), self.max_batch_length * 2)
-            flush_group(medium, effective_batch_size, self.max_batch_length)
-        for key in long:
-            batches.append([key])
-
-        short_count = len([b for b in batches if b and len(task_texts.get(b[0], "")) <= self.SMART_BATCH_SHORT])
-        medium_count = len([
-            b for b in batches
-            if b and self.SMART_BATCH_SHORT < len(task_texts.get(b[0], "")) <= long_threshold
-        ])
-        long_count = len([b for b in batches if b and len(task_texts.get(b[0], "")) > long_threshold])
-        logger.info(
-            f"智能分批: 短文本 {len(short)}→{short_count}批, "
-            f"中文本 {len(medium)}→{medium_count}批, "
-            f"长文本 {len(long)}→{long_count}批"
-            + ("，大书快速模式已启用" if fast_mode else "")
+        return smart_batch_task_keys(
+            task_keys,
+            task_texts,
+            effective_batch_size,
+            short_threshold=self.SMART_BATCH_SHORT,
+            long_threshold=long_threshold,
+            max_batch_length=self.max_batch_length,
+            fast_mode=fast_mode,
+            fast_max_items=(
+                self._fast_batch_max_items_for_provider()
+                if fast_mode
+                else effective_batch_size
+            ),
+            fast_max_chars=self.FAST_BATCH_MAX_CHARS,
+            provider=self.provider,
         )
-        return batches
 
     def translate_batch(
         self,

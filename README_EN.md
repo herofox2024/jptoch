@@ -14,7 +14,7 @@ An LLM-powered desktop tool for translating Japanese EPUB books into Simplified 
 **Language:** [简体中文](README.md) | [English](README_EN.md)
 
 **Current mainline:** QML/V4.1  
-**Stable fallback:** Qt V3.2.1
+**Archived fallback:** Qt V3.2.1
 
 </div>
 
@@ -44,8 +44,8 @@ An LLM-powered desktop tool for translating Japanese EPUB books into Simplified 
 | Version | Entry Point | Status | Notes |
 |---|---|---|---|
 | QML/V4.1 | `experimental/qml_v4/main.py` | Current mainline | Main desktop version with architecture and performance upgrades |
-| Qt V3.2.1 | `main_qt.py` | Stable fallback | Maintenance mode, only P0/P1 issues are expected to be fixed |
-| Tk legacy | `app.py` | Frozen compatibility | Kept for compatibility tests and blocking fixes only |
+| Qt V3.2.1 | `archived/qt_v3/main_qt.py` | Archived fallback | Security, data-loss, and startup-blocker fixes only |
+| Tk legacy | `archived/tk_v1/app.py` | Frozen archive | Kept for compatibility tests and source reference |
 
 `experimental/qml_v4/` is a historical directory name. It is still used in V4.1 to avoid breaking existing packaging scripts, installer paths, and user workflows.
 
@@ -92,20 +92,20 @@ pip install -r experimental/qml_v4/requirements.txt
 python experimental/qml_v4/main.py
 ```
 
-### Option 3: Run the stable Qt V3.2.1 fallback
+### Option 3: Run the archived Qt V3.2.1 fallback
 
 ```powershell
 pip install -r requirements.txt
-python main_qt.py
+python archived/qt_v3/main_qt.py
 ```
 
 ### Option 4: Run the frozen Tk legacy entry
 
 ```powershell
-python app.py
+python archived/tk_v1/app.py
 ```
 
-The Tk entry is frozen and is not recommended for daily use.
+Legacy UIs are archived and excluded from default packages and releases. See [`archived/README.md`](archived/README.md).
 
 ---
 
@@ -268,9 +268,9 @@ Log path:
 │  ├─ backend/                 # Python-QML bridge layer
 │  ├─ assets/                  # V4 icon assets
 │  └─ EPUBTranslator*.spec     # PyInstaller specs
-├─ ui/qt_app.py                # Qt V3.2.1 fallback UI
-├─ main_qt.py                  # Qt V3.2.1 entry point
-├─ app.py                      # Frozen Tk legacy entry
+├─ archived/                   # Legacy UIs and historical packaging files
+│  ├─ qt_v3/                   # Archived Qt V3.2.1 fallback
+│  └─ tk_v1/                   # Frozen Tk compatibility UI
 ├─ translator.py               # Core translation engine
 ├─ epub_io.py                  # EPUB reading, writing, TOC and layout handling
 ├─ style_detector.py           # Local novel genre/tone detection
@@ -417,8 +417,8 @@ Check:
 
 ### Qt V3.2.1
 
-- Kept as the stable fallback.
-- Maintenance mode: only severe P0/P1 issues are expected to be fixed.
+- Moved to `archived/qt_v3/` as a manual archived fallback.
+- Security, data-loss, and startup-blocker fixes only.
 - Retains mature API configuration, glossary, cache, pause/resume, and monitoring features.
 
 ### Historical Summary

@@ -1,14 +1,21 @@
 """
-Tkinter UI (已冻结)
+Tkinter UI（已归档）
 
 此文件为旧版 Tk 界面，自 2026-05 起：
 - 不再新增功能，仅接受阻断性 bug 修复
-- 主入口已切换为 Qt UI (main_qt.py)
-- 新功能开发请修改 ui/qt_app.py
+- 主入口为 QML/V4：experimental/qml_v4/main.py
+- 新功能开发请修改 experimental/qml_v4/
 
 启动方式（仅用于兼容测试）：
-    python app.py
+    python archived/tk_v1/app.py
 """
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import logging
 import os
 import threading

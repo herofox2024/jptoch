@@ -11,6 +11,7 @@ build/
 dist/
 *.spec
 !experimental/qml_v4/*.spec
+!archived/**/*.spec
 experimental/qml_v4/_build_version_info.txt
 
 # 环境配置
