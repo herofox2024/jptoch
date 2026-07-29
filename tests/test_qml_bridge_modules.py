@@ -56,6 +56,10 @@ def test_quality_report_is_independent_from_qml_bridge():
                 "proofread_suspicious": 2,
                 "proofread_fixed": 2,
                 "tokens_total": 800,
+                "adaptive_latency_ms": 3200,
+                "adaptive_request_batch_size": 4,
+                "adaptive_adjust_up": 1,
+                "adaptive_adjust_down": 2,
             }
 
     class Style:
@@ -73,6 +77,9 @@ def test_quality_report_is_independent_from_qml_bridge():
     )
     assert report["status"] == "通过"
     assert "API 请求: 12" in report["metricsText"]
+    assert "自适应平均延迟: 3200 ms" in report["metricsText"]
+    assert "自适应请求批量: 4" in report["metricsText"]
+    assert "自适应升档/降档: 1/2" in report["metricsText"]
     assert "校对发现 2 条可疑译文，修复 2 条" in report["summary"]
 
 

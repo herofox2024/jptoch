@@ -136,6 +136,10 @@ def build_quality_self_check_report(
     api_total = int(stats.get("api_requests_total", 0))
     api_failed = int(stats.get("api_requests_failed", 0))
     dynamic_events = int(stats.get("dynamic_limit_events", 0))
+    adaptive_latency_ms = int(stats.get("adaptive_latency_ms", 0))
+    adaptive_request_batch_size = int(stats.get("adaptive_request_batch_size", 0))
+    adaptive_adjust_up = int(stats.get("adaptive_adjust_up", 0))
+    adaptive_adjust_down = int(stats.get("adaptive_adjust_down", 0))
     batch_parse_fail = int(stats.get("batch_json_parse_fail", 0))
     batch_lenient = int(stats.get("batch_json_lenient_success", 0))
     proofread_suspicious = int(stats.get("proofread_suspicious", 0))
@@ -171,6 +175,9 @@ def build_quality_self_check_report(
         f"耗时: {format_duration(elapsed)}", f"Prompt 风格: {style_text}", f"API 请求: {api_total}",
         f"Token: {tokens_total if tokens_total > 0 else '--'}", f"可疑译文: {proofread_suspicious}",
         f"校对修复: {proofread_fixed}", f"重译次数: {quality_retranslate}",
+        f"自适应平均延迟: {adaptive_latency_ms} ms" if adaptive_latency_ms else "自适应平均延迟: --",
+        f"自适应请求批量: {adaptive_request_batch_size if adaptive_request_batch_size else '--'}",
+        f"自适应升档/降档: {adaptive_adjust_up}/{adaptive_adjust_down}",
     ]
     if not suggestions:
         suggestions.append("本次没有发现明显流程风险；如修改 Prompt 或术语策略后需要重译，请先清理当前 EPUB 缓存。")

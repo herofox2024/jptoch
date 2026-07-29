@@ -21,6 +21,7 @@ The implementation is split by responsibility:
 | `translation_async_http.py` | Optional reusable `httpx` async connection pool |
 | `translation_http.py` | Retry classification, exponential delay and `Retry-After` parsing |
 | `translation_batching.py` | Text splitting and length-aware batch grouping |
+| `translation_adaptive.py` | Rolling-latency batch/concurrency pressure controller |
 | `provider_registry.py` | Provider defaults and endpoint normalization |
 | `provider_client.py` | Provider payload and HTTP response helpers |
 | `translation_cache_db.py` | Indexed SQLite model, text and manual caches |
@@ -48,6 +49,9 @@ bridge callbacks; it should move only after those callbacks become an explicit p
 
 - EPUB translation runs in a QML worker `QThread`.
 - Batch requests use a bounded `ThreadPoolExecutor`.
+- New work is submitted incrementally, so latency/error-based runtime limits apply to later batches
+  without recreating the executor. Error downgrades are immediate; successful requests need a stable
+  rolling window before limits recover.
 - Providers eligible for fast batch mode can use one reusable `httpx.AsyncClient` hosted by a
   dedicated event-loop thread.
 - SQLite uses WAL mode and buffered writes; explicit checkpoints run at task boundaries.

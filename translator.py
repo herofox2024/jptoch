@@ -60,6 +60,7 @@ from translation_async_http import (
 )
 from translation_json_parser import extract_json_object, extract_lenient_indexed_items
 from translation_batching import smart_batch_task_keys, smart_batch_texts, smart_split_text
+from translation_adaptive import AdaptiveRequestController
 from translation_models import (
     BatchJsonResult,
     ContentModerationError,
@@ -871,9 +872,11 @@ class JaZhTranslator:
         self._dynamic_limit_lock = threading.RLock()
         self._dynamic_max_workers = max(1, int(max_workers or 1))
         self._dynamic_batch_size = max(1, int(batch_size or 1))
+        self._dynamic_batch_ceiling = self._dynamic_batch_size
         self._dynamic_backoff_until = 0.0
         self._dynamic_limit_events = 0
         self._dynamic_success_count = 0
+        self._adaptive_request_controller = AdaptiveRequestController()
         self._proofread_auth_failed = False
         self.cancel_event = cancel_event or threading.Event()
         # 连接池大小与并发数匹配，避免 "Connection pool is full" 警告
@@ -937,6 +940,11 @@ class JaZhTranslator:
             "rate_limit_events": 0,
             "dynamic_limit_workers": self._dynamic_max_workers,
             "dynamic_limit_batch_size": self._dynamic_batch_size,
+            "adaptive_samples": 0,
+            "adaptive_latency_ms": 0,
+            "adaptive_request_batch_size": 0,
+            "adaptive_adjust_up": 0,
+            "adaptive_adjust_down": 0,
             "proofread_batch_requests": 0,
             "proofread_batch_success": 0,
             "proofread_batch_lenient_success": 0,
@@ -1287,6 +1295,11 @@ class JaZhTranslator:
             self._dynamic_max_workers = max(1, int(getattr(self, "max_workers", 1) or 1))
         if not hasattr(self, "_dynamic_batch_size"):
             self._dynamic_batch_size = max(1, int(getattr(self, "batch_size", 1) or 1))
+        if not hasattr(self, "_dynamic_batch_ceiling"):
+            self._dynamic_batch_ceiling = max(
+                int(self._dynamic_batch_size),
+                max(1, int(getattr(self, "batch_size", 1) or 1)),
+            )
         if not hasattr(self, "_dynamic_backoff_until"):
             self._dynamic_backoff_until = 0.0
         if not hasattr(self, "_dynamic_limit_events"):
@@ -1295,6 +1308,8 @@ class JaZhTranslator:
             self._dynamic_success_count = 0
         if not hasattr(self, "_dynamic_format_failures"):
             self._dynamic_format_failures = 0
+        if not hasattr(self, "_adaptive_request_controller"):
+            self._adaptive_request_controller = AdaptiveRequestController()
 
     @staticmethod
     def _scale_limit(value: int, factor: float) -> int:
@@ -1345,12 +1360,15 @@ class JaZhTranslator:
                 time.time() + backoff_seconds + random.uniform(0, 0.5),
             )
             self._dynamic_success_count = 0
+            self._adaptive_request_controller.record_failure()
 
         self._inc_stat("dynamic_limit_events")
         if kind in {"rate", "timeout"}:
             self._inc_stat("rate_limit_events")
         self._set_stat("dynamic_limit_workers", self._current_dynamic_workers())
         self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
+        self._set_stat("adaptive_samples", 0)
+        self._set_stat("adaptive_latency_ms", 0)
         event_label = "API 动态格式降级触发" if kind == "format" else "API 动态限流触发"
         logger.warning(
             "%s: %s；运行时并发 %s→%s，批量 %s→%s",
@@ -1362,31 +1380,60 @@ class JaZhTranslator:
             self._current_dynamic_batch_size(),
         )
 
-    def _record_api_success_event(self) -> None:
-        """Slowly recover dynamic limits after a stable success streak."""
+    def _record_api_success_event(
+        self,
+        elapsed_seconds: Optional[float] = None,
+        batch_size: int = 1,
+        context: str = "",
+    ) -> None:
+        """Adapt runtime pressure from timed main-translation successes."""
         self._ensure_dynamic_limiter()
-        with self._dynamic_limit_lock:
-            if time.time() < float(self._dynamic_backoff_until):
-                return
-            base_workers = max(1, int(getattr(self, "max_workers", 1) or 1))
-            base_batch = max(1, int(getattr(self, "batch_size", 1) or 1))
-            if self._dynamic_max_workers >= base_workers and self._dynamic_batch_size >= base_batch:
-                return
-            self._dynamic_success_count += 1
-            if self._dynamic_success_count < 20:
-                return
-            self._dynamic_success_count = 0
-            self._dynamic_max_workers = min(base_workers, int(self._dynamic_max_workers) + 1)
-            self._dynamic_batch_size = min(base_batch, int(self._dynamic_batch_size) + 1)
-            self._dynamic_format_failures = max(0, int(getattr(self, "_dynamic_format_failures", 0)) - 1)
+        if elapsed_seconds is not None and context in {"translate_single", "translate_batch"}:
+            with self._dynamic_limit_lock:
+                old_workers = max(1, int(self._dynamic_max_workers))
+                old_batch = max(1, int(self._dynamic_batch_size))
+                base_workers = max(1, int(getattr(self, "max_workers", 1) or 1))
+                base_batch = max(1, int(self._dynamic_batch_ceiling))
+                timeout = max(1.0, float(getattr(self, "API_TIMEOUT", 120) or 120))
+                slow_threshold = min(45.0, max(15.0, timeout * 0.25))
+                decision = self._adaptive_request_controller.observe_success(
+                    elapsed_seconds,
+                    current_workers=old_workers,
+                    current_batch_size=old_batch,
+                    max_workers=base_workers,
+                    max_batch_size=base_batch,
+                    slow_threshold_seconds=slow_threshold,
+                    request_batch_size=batch_size,
+                )
+                self._dynamic_max_workers = decision.workers
+                self._dynamic_batch_size = decision.batch_size
+                if decision.action != "none":
+                    self._dynamic_success_count = 0
+                    self._dynamic_format_failures = max(
+                        0, int(getattr(self, "_dynamic_format_failures", 0)) - 1
+                    )
 
-        self._set_stat("dynamic_limit_workers", self._current_dynamic_workers())
-        self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
-        logger.info(
-            "API 动态限流恢复: 运行时并发=%s，批量=%s",
-            self._current_dynamic_workers(),
-            self._current_dynamic_batch_size(),
-        )
+            self._set_stat("adaptive_samples", decision.sample_count)
+            self._set_stat("adaptive_latency_ms", decision.average_latency_ms)
+            self._set_stat("adaptive_request_batch_size", decision.average_request_batch_size)
+            self._set_stat("dynamic_limit_workers", decision.workers)
+            self._set_stat("dynamic_limit_batch_size", decision.batch_size)
+            if decision.action != "none":
+                self._inc_stat(f"adaptive_adjust_{decision.action}")
+                logger.info(
+                    "API 自适应调节: action=%s, context=%s, request_batch=%s, "
+                    "avg_latency_ms=%s, samples=%s, 运行时并发 %s→%s，批量 %s→%s",
+                    decision.action,
+                    context,
+                    max(1, int(batch_size or 1)),
+                    decision.average_latency_ms,
+                    decision.sample_count,
+                    old_workers,
+                    decision.workers,
+                    old_batch,
+                    decision.batch_size,
+                )
+            return
 
     def _wait_dynamic_backoff(self) -> None:
         self._ensure_dynamic_limiter()
@@ -3961,7 +4008,11 @@ JSON 顶层字段：
                     raise KeyError("API 响应缺少 content 字段")
 
                 content = content.strip()
-                self._record_api_success_event()
+                self._record_api_success_event(
+                    time.time() - request_started,
+                    batch_size=1,
+                    context="translate_single",
+                )
                 finish_reason = self._get_finish_reason(data)
                 is_truncated = finish_reason == "length"
 
@@ -4353,7 +4404,11 @@ JSON 顶层字段：
                     raw_terms = []
 
                 if valid_indices:
-                    self._record_api_success_event()
+                    self._record_api_success_event(
+                        time.time() - request_started,
+                        batch_size=len(texts),
+                        context="translate_batch",
+                    )
                 return BatchJsonResult(
                     translations=out,
                     new_terms=raw_terms,
@@ -4808,6 +4863,7 @@ JSON 顶层字段：
             )
             with self._dynamic_limit_lock:
                 self._dynamic_batch_size = max(int(self._dynamic_batch_size), effective_batch_size)
+                self._dynamic_batch_ceiling = max(int(self._dynamic_batch_ceiling), effective_batch_size)
             self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
             self._set_stat("translate_fast_batch_mode", 1)
             logger.info(
