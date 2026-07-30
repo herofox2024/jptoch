@@ -261,6 +261,7 @@ def _preextract_glossary_profiles(
     terms = extracted.get("glossary") if isinstance(extracted, dict) else {}
     candidate_count = int(extracted.get("text_count") or 0) if isinstance(extracted, dict) else 0
     char_count = int(extracted.get("char_count") or 0) if isinstance(extracted, dict) else 0
+    moderation_skipped = int(extracted.get("moderation_skipped") or 0) if isinstance(extracted, dict) else 0
     has_terms = bool(
         isinstance(terms, dict)
         and any(isinstance(entries, list) and entries for entries in terms.values())
@@ -283,6 +284,10 @@ def _preextract_glossary_profiles(
     profile_ids = list(dict.fromkeys(profile_ids))
     if profile_ids:
         message = f"术语提取完成: {len(profile_ids)} 个 profile，候选文本 {candidate_count} 条"
+        if moderation_skipped:
+            message += f"，内容审核跳过 {moderation_skipped} 条"
+    elif moderation_skipped:
+        message = f"术语提取完成，内容审核跳过 {moderation_skipped} 条，没有生成可保存的术语候选"
     else:
         message = "术语提取完成，但没有生成可保存的术语候选"
     _emit_status(message)
@@ -293,6 +298,7 @@ def _preextract_glossary_profiles(
         "profiles": profiles,
         "text_count": candidate_count,
         "char_count": char_count,
+        "moderation_skipped": moderation_skipped,
         "term_count": sum(len(entries) for entries in terms.values()) if isinstance(terms, dict) else 0,
     }
 
@@ -874,6 +880,7 @@ class _GlossaryBooksExtractionWorker(QObject):
             text_count = 0
             char_count = 0
             term_count = 0
+            moderation_skipped = 0
             self.progressChanged.emit(0, total_books)
 
             for index, input_path in enumerate(source_paths):
@@ -913,6 +920,7 @@ class _GlossaryBooksExtractionWorker(QObject):
                     text_count += int(result.get("text_count") or 0)
                     char_count += int(result.get("char_count") or 0)
                     term_count += int(result.get("term_count") or 0)
+                    moderation_skipped += int(result.get("moderation_skipped") or 0)
                 except Exception as exc:
                     logger.exception("批量提取术语失败: %s", input_path)
                     failed_books.append({"path": input_path, "book_name": source_book, "error": str(exc)})
@@ -931,10 +939,16 @@ class _GlossaryBooksExtractionWorker(QObject):
             )
             if failed_books:
                 message += f"，失败 {len(failed_books)} 本"
+            if moderation_skipped:
+                message += f"，内容审核跳过 {moderation_skipped} 条"
             self.finished.emit(
                 {
-                    "ok": bool(profile_ids),
-                    "message": message if profile_ids else "批量术语提取完成，但没有生成可保存的术语候选",
+                    "ok": bool(book_results),
+                    "message": message if profile_ids else (
+                        f"批量术语提取完成，内容审核跳过 {moderation_skipped} 条，没有生成可保存的术语候选"
+                        if moderation_skipped
+                        else "批量术语提取完成，但没有生成可保存的术语候选"
+                    ),
                     "profile_ids": profile_ids,
                     "profiles": profiles,
                     "books": book_results,
@@ -945,6 +959,7 @@ class _GlossaryBooksExtractionWorker(QObject):
                     "text_count": text_count,
                     "char_count": char_count,
                     "term_count": term_count,
+                    "moderation_skipped": moderation_skipped,
                 }
             )
         except Exception as exc:

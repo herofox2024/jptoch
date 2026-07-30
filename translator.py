@@ -4557,18 +4557,56 @@ JSON 顶层字段：
         effective_batch_size = max(1, min(int(batch_size or self.batch_size or 1), 12))
         mode = self._normalize_glossary_extraction_mode(extraction_mode or self.glossary_extraction_mode)
         raw_terms: List[Dict[str, Any]] = []
+        moderation_skipped = 0
         total_batches = (len(selected) + effective_batch_size - 1) // effective_batch_size
         for batch_index in range(total_batches):
             if self.cancel_event.is_set():
                 raise RuntimeError("术语预提取已取消")
             start = batch_index * effective_batch_size
             chunk = selected[start:start + effective_batch_size]
-            result = self._call_glossary_extraction_json(
-                chunk,
-                max_retries=4,
-                extraction_mode=mode,
-            )
-            batch_terms = list(result.new_terms or []) if result else []
+            try:
+                result = self._call_glossary_extraction_json(
+                    chunk,
+                    max_retries=4,
+                    extraction_mode=mode,
+                )
+                batch_terms = list(result.new_terms or []) if result else []
+            except ContentModerationError:
+                batch_terms = []
+                if len(chunk) > 1:
+                    logger.warning(
+                        "术语提取批次被内容审核拦截，拆分单条重试: batch=%s/%s, texts=%s",
+                        batch_index + 1,
+                        total_batches,
+                        len(chunk),
+                    )
+                    for item_index, item in enumerate(chunk, start=1):
+                        if self.cancel_event.is_set():
+                            raise RuntimeError("术语预提取已取消")
+                        try:
+                            item_result = self._call_glossary_extraction_json(
+                                [item],
+                                max_retries=1,
+                                extraction_mode=mode,
+                            )
+                        except ContentModerationError:
+                            moderation_skipped += 1
+                            logger.warning(
+                                "术语提取单条被审核跳过: batch=%s/%s, item=%s",
+                                batch_index + 1,
+                                total_batches,
+                                item_index,
+                            )
+                            continue
+                        if item_result:
+                            batch_terms.extend(list(item_result.new_terms or []))
+                else:
+                    moderation_skipped += 1
+                    logger.warning(
+                        "术语提取单条被审核跳过: batch=%s/%s, item=1",
+                        batch_index + 1,
+                        total_batches,
+                    )
             raw_terms.extend(batch_terms)
             logger.info(
                 "术语预提取批次: %s/%s, mode=%s, texts=%s, raw_terms=%s",
@@ -4589,12 +4627,13 @@ JSON 顶层字段：
                 if str(term.get("category", "")).strip() in {"Person", "Location", "Creature"}
             ]
         logger.info(
-            "术语预提取完成: mode=%s, text_count=%s, char_count=%s, raw_terms=%s, cleaned_terms=%s",
+            "术语预提取完成: mode=%s, text_count=%s, char_count=%s, raw_terms=%s, cleaned_terms=%s, moderation_skipped=%s",
             mode,
             len(selected),
             char_total,
             len(raw_terms),
             len(cleaned),
+            moderation_skipped,
         )
         normalized_by_category = {cat: [] for cat in self.glossary_categories}
         seen = set()
@@ -4627,6 +4666,7 @@ JSON 顶层字段：
             "glossary": normalized_by_category,
             "text_count": len(selected),
             "char_count": char_total,
+            "moderation_skipped": moderation_skipped,
         }
 
 
