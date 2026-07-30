@@ -47,6 +47,13 @@ def test_schema_rejects_unknown_enum_and_non_http_url():
     assert result.unknown_keys == ("future_setting",)
 
 
+def test_schema_accepts_all_qml_theme_registry_values():
+    for theme in ("light", "dark", "glass"):
+        result = validate_config({"theme": theme})
+        assert result.values["theme"] == theme
+        assert result.issues == ()
+
+
 def test_config_bridge_repairs_corrupt_persisted_values(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(config_bridge, "_data_dir", lambda: tmp_path)
     (tmp_path / config_bridge.CONFIG_FILE_NAME).write_text(

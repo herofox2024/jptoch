@@ -1641,5 +1641,6 @@ class ConfigBridge(QObject):
     def theme(self) -> str: return self._theme
     @theme.setter
     def theme(self, val: str):
+        val = validate_config({"theme": val}, defaults={"theme": self._theme}).values["theme"]
         if val != self._theme:
             self._theme = val; self._emit_changed(self._themeChanged)

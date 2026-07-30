@@ -83,7 +83,7 @@ ENUM_VALUES = {
     "direction": {"zh"},
     "proofread_genre": {"auto", "general", "mystery", "historical_mystery", "scifi", "fantasy"},
     "proofread_tone": {"auto", "neutral", "light", "literary"},
-    "theme": {"light", "dark", "system"},
+    "theme": {"light", "dark", "glass"},
     "hymt2_generation_mode": {"stable", "official"},
     "hymt2_prompt_mode": {"official", "project"},
     "hymt2_runtime_mode": {"cpu", "gpu"},
@@ -241,4 +241,3 @@ def validate_config(
             issues.append(ConfigIssue("max_text_size_for_batch", "不能大于批量总长度，已自动限制"))
 
     return ConfigValidationResult(values, tuple(issues), unknown)
-
