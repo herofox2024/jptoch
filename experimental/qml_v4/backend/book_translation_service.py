@@ -153,7 +153,7 @@ def _clean_node_translation(
     if not translated:
         return translated
     tag_name = str(getattr(tag, "name", "") or "").lower()
-    is_heading = tag_name in {"h1", "h2", "h3"}
+    is_heading = tag_name in {"h1", "h2", "h3", "h4", "h5", "h6"}
     if mode in ("single_anchor", "multi_anchor") or original in toc_title_set or is_heading:
         cleaned = clean_title(translated)
         if cleaned:

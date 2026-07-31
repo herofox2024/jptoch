@@ -14,7 +14,7 @@ from ebooklib import epub, ITEM_DOCUMENT
 
 logger = logging.getLogger(__name__)
 
-TARGET_TAGS = ["p", "h1", "h2", "h3", "li", "blockquote"]
+TARGET_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"]
 DOCUMENT_MEDIA_TYPES = {"application/xhtml+xml", "text/html"}
 BODY_FALLBACK_MIN_CHARS = 200
 TOC_LINK_MIN_COUNT = 3

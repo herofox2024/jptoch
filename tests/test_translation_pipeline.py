@@ -1215,6 +1215,42 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(tags[0].get("href"), "content_1.html#toc-001")
         self.assertEqual(extract_visible_text(tags[2]), "\u524d\u53e3\u4e0a")
 
+    def test_iter_text_nodes_extracts_lower_level_headings(self):
+        html = """
+        <html><body>
+          <h4><a href="toc.xhtml#afterword">解説──扉をひらく、物語</a></h4>
+          <h5>著者プロフィール</h5>
+          <h6>参考文献</h6>
+        </body></html>
+        """
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+        tags = docs[0][2]
+
+        self.assertEqual([tag.name for tag in tags], ["h4", "h5", "h6"])
+        self.assertEqual(
+            [extract_visible_text(tag) for tag in tags],
+            ["解説──扉をひらく、物語", "著者プロフィール", "参考文献"],
+        )
+
+    def test_apply_translations_cleans_h4_heading(self):
+        html = """
+        <html><body>
+          <h4><a href="toc.xhtml#profile">著者プロフィール</a></h4>
+        </body></html>
+        """
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+        plan = build_book_text_plan(docs, [])
+
+        apply_translations_to_book(
+            plan,
+            {"著者プロフィール": "作者简介（Author Profile）"},
+            ["作者简介（Author Profile）"],
+            lambda value: value.split("（", 1)[0],
+            lambda _value: False,
+        )
+
+        self.assertEqual(extract_visible_text(docs[0][1].find("h4")), "作者简介")
+
     def test_detect_novel_style_handles_light_mystery(self):
         result = detect_novel_style(
             title="女学生探偵シリーズ",
