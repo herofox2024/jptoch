@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import copy
+import logging
 import threading
 import time
 import uuid
@@ -22,10 +24,22 @@ HISTORY_FILE_NAME = "translation_task_history.json"
 DEFAULT_HISTORY_LIMIT = 80
 DEFAULT_FAILURE_BLOCK_LIMIT = 200
 MAX_PERSISTED_TEXT_CHARS = 4000
+DETAILED_TASK_STATUSES = {
+    "running",
+    "pausing",
+    "paused",
+    "cancelling",
+    "stopping",
+    "failed",
+    "partial",
+}
 SENSITIVE_CONFIG_KEYS = {
     "api_key",
     "proofread_api_key",
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 def data_dir() -> Path:
@@ -238,11 +252,35 @@ class TranslationTaskHistoryStore:
         self.path = path or history_path()
         self.limit = max(1, int(limit or DEFAULT_HISTORY_LIMIT))
         self._lock = threading.RLock()
+        self._records_cache: Optional[List[Dict[str, Any]]] = None
+        self._cache_mtime_ns: Optional[int] = None
+
+    @staticmethod
+    def _compact_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        compacted = copy.deepcopy(list(records or []))
+        for record in compacted:
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("status") or "").strip().lower() in DETAILED_TASK_STATUSES:
+                continue
+            subtasks = record.pop("subtasks", None)
+            if isinstance(subtasks, list):
+                record["subtask_count"] = len(subtasks)
+            record.pop("failed_blocks", None)
+        return compacted
 
     def load(self) -> List[Dict[str, Any]]:
         with self._lock:
             if not self.path.exists():
+                self._records_cache = []
+                self._cache_mtime_ns = None
                 return []
+            try:
+                mtime_ns = self.path.stat().st_mtime_ns
+            except OSError:
+                mtime_ns = None
+            if self._records_cache is not None and self._cache_mtime_ns == mtime_ns:
+                return copy.deepcopy(self._records_cache)
             try:
                 payload = json.loads(self.path.read_text(encoding="utf-8-sig"))
             except Exception:
@@ -257,20 +295,44 @@ class TranslationTaskHistoryStore:
             for record in records:
                 if isinstance(record, dict) and record.get("task_id"):
                     normalized.append(dict(record))
-            return normalized[-self.limit :]
+            normalized = normalized[-self.limit :]
+            self._records_cache = copy.deepcopy(normalized)
+            self._cache_mtime_ns = mtime_ns
+            return copy.deepcopy(normalized)
 
     def save(self, records: List[Dict[str, Any]]) -> None:
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            trimmed = list(records or [])[-self.limit :]
+            trimmed = self._compact_records(list(records or [])[-self.limit :])
             payload = {
                 "version": 2,
                 "updated_at": now_ts(),
                 "tasks": trimmed,
             }
+            try:
+                previous_size = self.path.stat().st_size
+            except OSError:
+                previous_size = 0
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.write_text(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
             tmp.replace(self.path)
+            try:
+                current_stat = self.path.stat()
+                current_size = current_stat.st_size
+                self._cache_mtime_ns = current_stat.st_mtime_ns
+            except OSError:
+                current_size = 0
+                self._cache_mtime_ns = None
+            self._records_cache = copy.deepcopy(trimmed)
+            if previous_size >= 5 * 1024 * 1024 and current_size < previous_size * 0.8:
+                logger.info(
+                    "翻译任务历史已压缩: %.1f MB -> %.1f MB",
+                    previous_size / (1024 * 1024),
+                    current_size / (1024 * 1024),
+                )
 
     def _find_or_create(self, records: List[Dict[str, Any]], task_id: str) -> Dict[str, Any]:
         for record in records:
@@ -487,9 +549,12 @@ class TranslationTaskHistoryStore:
     @staticmethod
     def _summary_record(record: Mapping[str, Any]) -> Dict[str, Any]:
         result = dict(record or {})
-        subtasks = result.pop("subtasks", [])
-        if isinstance(subtasks, list):
+        had_subtasks = "subtasks" in result
+        subtasks = result.pop("subtasks", None)
+        if had_subtasks and isinstance(subtasks, list):
             result["subtask_count"] = len(subtasks)
+        else:
+            result.setdefault("subtask_count", int(result.get("total_texts") or 0))
         return result
 
     def list_recent(self, limit: int = 20) -> List[Dict[str, Any]]:

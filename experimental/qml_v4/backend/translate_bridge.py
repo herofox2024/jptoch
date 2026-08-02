@@ -1098,8 +1098,8 @@ class _GlossaryPostApplyWorker(QObject):
 
 
 class TranslateBridge(QObject):
-    TASK_SUCCESS_FLUSH_SIZE = 50
-    TASK_SUCCESS_FLUSH_INTERVAL = 5.0
+    TASK_SUCCESS_FLUSH_SIZE = 100
+    TASK_SUCCESS_FLUSH_INTERVAL = 10.0
 
 
     progressChanged = Signal(int, int, int)
@@ -1152,6 +1152,7 @@ class TranslateBridge(QObject):
         self._current_task_id = ""
         self._resume_task_id = ""
         self._last_task_history_update_ts = 0.0
+        self._task_progress_snapshot = {}
         self._task_success_lock = threading.RLock()
         self._pending_task_successes: List[Tuple[str, str]] = []
         self._last_task_success_flush_ts = 0.0
@@ -1224,7 +1225,9 @@ class TranslateBridge(QObject):
         if not task_id:
             return {}
         try:
-            record = self._task_history.upsert(task_id, changes)
+            payload = dict(self._task_progress_snapshot)
+            payload.update(dict(changes or {}))
+            record = self._task_history.upsert(task_id, payload)
             self.translationTaskHistoryChanged.emit()
             return record
         except Exception as exc:
@@ -1235,6 +1238,7 @@ class TranslateBridge(QObject):
         self._current_task_id = self._resume_task_id or make_task_id()
         self._resume_task_id = ""
         self._last_task_history_update_ts = 0.0
+        self._task_progress_snapshot = {}
         with self._task_success_lock:
             self._pending_task_successes = []
             self._last_task_success_flush_ts = time.time()
@@ -1327,20 +1331,13 @@ class TranslateBridge(QObject):
     def _record_translation_task_progress(self, completed, total, total_chars):
         if not self._current_task_id:
             return
-        now = time.time()
-        if completed < total and now - self._last_task_history_update_ts < 3.0:
-            return
-        self._last_task_history_update_ts = now
         progress = float(completed) / float(total) if total > 0 else 0.0
-        self._update_translation_task_history(
-            {
-                "status": "running",
-                "completed_texts": int(completed),
-                "total_texts": int(total),
-                "total_chars": int(total_chars),
-                "progress": round(progress, 4),
-            }
-        )
+        self._task_progress_snapshot = {
+            "completed_texts": int(completed),
+            "total_texts": int(total),
+            "total_chars": int(total_chars),
+            "progress": round(progress, 4),
+        }
 
     def _record_translation_task_failures(self, exc):
         if not self._current_task_id:

@@ -186,3 +186,34 @@ def test_list_recent_returns_subtask_summary_only(tmp_path: Path):
     assert "subtasks" not in row
     assert row["subtask_count"] == 2
     assert row["total_texts"] == 2
+
+
+def test_terminal_tasks_drop_subtask_payload_but_keep_summary(tmp_path: Path):
+    path = tmp_path / "history.json"
+    store = TranslationTaskHistoryStore(path=path, limit=5)
+    task_id = make_task_id()
+    store.upsert(task_id, {"status": "running"})
+    store.initialize_subtasks(task_id, ["原文一", "原文二"])
+    store.mark_subtask_success(task_id, "原文一", "译文一")
+
+    store.upsert(task_id, {"status": "completed"})
+    record = store.latest()
+
+    assert record["status"] == "completed"
+    assert "subtasks" not in record
+    assert record["subtask_count"] == 2
+    assert store.list_recent(1)[0]["subtask_count"] == 2
+    assert "译文一" not in path.read_text(encoding="utf-8")
+
+
+def test_recoverable_tasks_keep_subtasks_for_resume(tmp_path: Path):
+    store = TranslationTaskHistoryStore(path=tmp_path / "history.json", limit=5)
+    task_id = make_task_id()
+    store.upsert(task_id, {"status": "running"})
+    store.initialize_subtasks(task_id, ["原文"])
+    store.mark_subtask_success(task_id, "原文", "译文")
+    store.upsert(task_id, {"status": "paused"})
+
+    record = store.latest()
+    assert record["subtasks"][0]["translation"] == "译文"
+    assert store.latest_unfinished()["task_id"] == task_id
