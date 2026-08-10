@@ -163,6 +163,36 @@ def test_mark_blocks_success_clears_failed_blocks(tmp_path: Path):
     assert record["subtasks"][0]["translation"] == "fixed translation"
 
 
+def test_record_recovery_results_persists_attempt_metadata(tmp_path: Path):
+    store = TranslationTaskHistoryStore(path=tmp_path / "history.json", limit=5)
+    task_id = make_task_id()
+    source = "failed source"
+    store.upsert(task_id, {"status": "failed"})
+    store.initialize_subtasks(task_id, [source])
+    store.upsert(
+        task_id,
+        {"failed_blocks": [{"kind": "failed", "text": source, "reason": "empty"}]},
+    )
+
+    result = store.record_recovery_results(
+        task_id,
+        {
+            source: {
+                "attempts": 2,
+                "action": "RETRANSLATE",
+                "status": "needs_review",
+                "reason": "still incomplete",
+            }
+        },
+    )
+    record = result["record"]
+
+    assert result["changed"] == 2
+    assert record["failed_blocks"][0]["recovery_attempts"] == 2
+    assert record["failed_blocks"][0]["recovery_status"] == "needs_review"
+    assert record["subtasks"][0]["recovery_action"] == "RETRANSLATE"
+
+
 def test_latest_unfinished_ignores_cancelled_tasks(tmp_path: Path):
     store = TranslationTaskHistoryStore(path=tmp_path / "history.json", limit=5)
     cancelled_id = make_task_id()

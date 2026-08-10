@@ -734,9 +734,13 @@ class _RetranslateFailedBlocksWorker(QObject):
     def run(self):
         try:
             from translator import JaZhTranslator, TranslationIncompleteError
+            from translation_models import RecoveryAction, RecoveryIssue
+            from backend.recovery_agent import RecoveryAgent
+            from backend.recovery_executor import RecoveryExecutor
 
             cfg = self._config
             sources = []
+            recovery_blocks = []
             skipped = 0
             for block in self._blocks:
                 if not isinstance(block, dict):
@@ -744,11 +748,14 @@ class _RetranslateFailedBlocksWorker(QObject):
                     continue
                 source = self._block_source(block)
                 if source:
-                    sources.append(source)
+                    if isinstance(block.get("recovery_decision"), dict) and isinstance(block.get("recovery_issue"), dict):
+                        recovery_blocks.append((source, block))
+                    else:
+                        sources.append(source)
                 else:
                     skipped += 1
             sources = list(dict.fromkeys(sources))
-            if not sources:
+            if not sources and not recovery_blocks:
                 self.finished.emit(
                     {
                         "ok": False,
@@ -762,7 +769,8 @@ class _RetranslateFailedBlocksWorker(QObject):
                 )
                 return
 
-            self.statusChanged.emit(f"开始重译失败块: {len(sources)} 条")
+            total_sources = len(sources) + len(recovery_blocks)
+            self.statusChanged.emit(f"开始重译失败块: {total_sources} 条")
             translator = JaZhTranslator(
                 api_key=cfg.get("api_key") or "",
                 provider=cfg.get("provider") or "deepseek",
@@ -793,26 +801,94 @@ class _RetranslateFailedBlocksWorker(QObject):
             )
 
             translations: Dict[str, str] = {}
+            recovery_results: Dict[str, Dict[str, Any]] = {}
             failed = 0
-            try:
-                batch_results = translator.translate_batch(sources, batch_size=1)
-                translations.update(
-                    {
-                        str(src): str(dst)
-                        for src, dst in dict(batch_results or {}).items()
-                        if str(src or "").strip() and str(dst or "").strip()
-                    }
+            if sources:
+                try:
+                    batch_results = translator.translate_batch(sources, batch_size=1)
+                    translations.update(
+                        {
+                            str(src): str(dst)
+                            for src, dst in dict(batch_results or {}).items()
+                            if str(src or "").strip() and str(dst or "").strip()
+                        }
+                    )
+                except TranslationIncompleteError as exc:
+                    translations.update(
+                        {
+                            str(src): str(dst)
+                            for src, dst in dict(getattr(exc, "partial_results", {}) or {}).items()
+                            if str(src or "").strip() and str(dst or "").strip()
+                        }
+                    )
+                    failed = len(getattr(exc, "failed_texts", []) or []) + len(getattr(exc, "residue_texts", []) or [])
+                    logger.warning("失败块重译部分完成: %s", exc)
+
+            if recovery_blocks:
+                fallback_provider = str(
+                    cfg.get("recovery_fallback_provider") or cfg.get("proofread_provider") or ""
+                ).strip()
+                fallback_model = str(
+                    cfg.get("recovery_fallback_model") or cfg.get("proofread_model") or ""
+                ).strip()
+                fallback_api_url = str(
+                    cfg.get("recovery_fallback_api_url") or cfg.get("proofread_api_url") or ""
+                ).strip()
+                fallback_api_key = str(
+                    cfg.get("recovery_fallback_api_key") or cfg.get("proofread_api_key") or ""
+                ).strip()
+                agent = RecoveryAgent(
+                    provider=str(cfg.get("provider") or ""),
+                    model=str(cfg.get("model") or ""),
+                    fallback_provider=fallback_provider,
+                    fallback_model=fallback_model,
+                    enabled=True,
                 )
-            except TranslationIncompleteError as exc:
-                translations.update(
-                    {
-                        str(src): str(dst)
-                        for src, dst in dict(getattr(exc, "partial_results", {}) or {}).items()
-                        if str(src or "").strip() and str(dst or "").strip()
-                    }
-                )
-                failed = len(getattr(exc, "failed_texts", []) or []) + len(getattr(exc, "residue_texts", []) or [])
-                logger.warning("失败块重译部分完成: %s", exc)
+                executor = RecoveryExecutor(max_attempts=int(cfg.get("recovery_max_attempts") or 2))
+                fallback_translator = None
+                for source, block in recovery_blocks:
+                    issue_payload = dict(block.get("recovery_issue") or {})
+                    issue_payload.setdefault("original", source)
+                    issue_payload.setdefault("provider", str(cfg.get("provider") or ""))
+                    issue_payload.setdefault("model", str(cfg.get("model") or ""))
+                    issue_payload.setdefault("attempts", int(block.get("recovery_attempts") or 0))
+                    issue = RecoveryIssue.from_dict(issue_payload)
+                    decision = agent.parse_response(dict(block.get("recovery_decision") or {}), issue)
+                    if (
+                        decision.action == RecoveryAction.USE_FALLBACK_PROVIDER.value
+                        and fallback_translator is None
+                        and fallback_provider
+                        and fallback_model
+                        and fallback_api_url
+                        and (fallback_provider not in API_KEY_REQUIRED_PROVIDERS or fallback_api_key)
+                    ):
+                        fallback_translator = JaZhTranslator(
+                            api_key=fallback_api_key or "sk-local",
+                            provider=fallback_provider,
+                            api_url=fallback_api_url,
+                            model=fallback_model,
+                            max_workers=1,
+                            batch_size=1,
+                            api_timeout=cfg.get("api_timeout", 120),
+                            cancel_event=self._cancel_event,
+                            extract_glossary=False,
+                            enable_glossary=bool(cfg.get("enable_glossary", True)),
+                            enable_thinking=False,
+                            enable_proofread=False,
+                            allow_text_cache_reuse=True,
+                            prompt_extra_instruction=cfg.get("prompt_extra_instruction", ""),
+                        )
+                    execution = executor.execute(
+                        issue,
+                        decision,
+                        translator,
+                        fallback_translator=fallback_translator,
+                    )
+                    recovery_results[source] = execution.to_dict()
+                    if execution.status == "success" and execution.translation:
+                        translations[source] = execution.translation
+                    else:
+                        failed += 1
 
             safe_translations: Dict[str, str] = {}
             for src, dst in translations.items():
@@ -823,16 +899,18 @@ class _RetranslateFailedBlocksWorker(QObject):
             translations = safe_translations
 
             success = len(translations)
-            failed = max(failed, len(sources) - success)
+            failed = max(failed, total_sources - success)
+            recovery_success = sum(1 for item in recovery_results.values() if item.get("status") == "success")
             self.finished.emit(
                 {
                     "ok": success > 0,
-                    "message": f"失败块重译完成: 成功 {success}/{len(sources)}，失败 {failed}，跳过 {skipped}",
-                    "total": len(sources),
+                    "message": f"失败块重译完成: 成功 {success}/{total_sources}，失败 {failed}，跳过 {skipped}，恢复执行成功 {recovery_success}",
+                    "total": total_sources,
                     "success": success,
                     "failed": failed,
                     "skipped": skipped,
                     "translations": translations,
+                    "recovery_results": recovery_results,
                 }
             )
         except Exception as exc:
@@ -1995,6 +2073,9 @@ class TranslateBridge(QObject):
             record = self._task_history.latest()
             task_id = str(record.get("task_id", "") if isinstance(record, dict) else "")
             if task_id and translations:
+                recovery_results = dict(payload.get("recovery_results") or {})
+                if recovery_results:
+                    self._task_history.record_recovery_results(task_id, recovery_results)
                 update = self._task_history.mark_blocks_success(task_id, translations)
                 remaining = int(update.get("remaining_blocks") or 0)
                 status = "paused" if remaining else "partial"
@@ -2006,6 +2087,42 @@ class TranslateBridge(QObject):
                             **dict((update.get("record") or {}).get("failure_summary") or {}),
                             "block_count": remaining,
                         },
+                        "recovery_summary": {
+                            "attempted": len(payload.get("recovery_results") or {}),
+                            "success": sum(
+                                1
+                                for item in (payload.get("recovery_results") or {}).values()
+                                if isinstance(item, dict) and item.get("status") == "success"
+                            ),
+                            "needs_review": sum(
+                                1
+                                for item in (payload.get("recovery_results") or {}).values()
+                                if isinstance(item, dict) and item.get("status") == "needs_review"
+                            ),
+                            "results": dict(payload.get("recovery_results") or {}),
+                        },
+                    },
+                )
+                self.translationTaskHistoryChanged.emit()
+            elif task_id and payload.get("recovery_results"):
+                recovery_results = dict(payload.get("recovery_results") or {})
+                self._task_history.record_recovery_results(
+                    task_id,
+                    recovery_results,
+                )
+                self._task_history.upsert(
+                    task_id,
+                    {
+                        "recovery_summary": {
+                            "attempted": len(recovery_results),
+                            "success": 0,
+                            "needs_review": sum(
+                                1
+                                for item in recovery_results.values()
+                                if isinstance(item, dict) and item.get("status") == "needs_review"
+                            ),
+                            "results": recovery_results,
+                        }
                     },
                 )
                 self.translationTaskHistoryChanged.emit()

@@ -18,7 +18,8 @@ from translator import (
 )
 from experimental.qml_v4.backend.recovery_agent import RecoveryAgent
 from experimental.qml_v4.backend.recovery_classifier import classify_failed_detail, classify_recovery_issue
-from translation_models import RecoveryAction, RecoveryDecision, RecoveryIssue, RecoveryIssueType
+from experimental.qml_v4.backend.recovery_executor import RecoveryExecutor
+from translation_models import RecoveryAction, RecoveryDecision, RecoveryExecutionResult, RecoveryIssue, RecoveryIssueType
 
 
 class TranslationArchitectureTests(unittest.TestCase):
@@ -170,6 +171,64 @@ class TranslationArchitectureTests(unittest.TestCase):
         assert calls == []
         assert isinstance(decision, RecoveryDecision)
         assert decision.action == RecoveryAction.REQUIRE_USER_REVIEW.value
+
+    def test_recovery_executor_retranslates_one_block_and_limits_attempts(self):
+        class FakeTranslator:
+            def __init__(self):
+                self.calls = []
+
+            def translate_batch(self, texts, **kwargs):
+                self.calls.append((list(texts), kwargs))
+                return {texts[0]: "安全译文"}
+
+            @staticmethod
+            def _is_incomplete_translation(_source, translation):
+                return not bool(translation)
+
+        issue = RecoveryIssue(
+            issue_type=RecoveryIssueType.EMPTY_RESPONSE.value,
+            original="原文",
+            attempts=0,
+        )
+        decision = RecoveryDecision(
+            action=RecoveryAction.RETRANSLATE.value,
+            confidence=0.95,
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        translator = FakeTranslator()
+        result = RecoveryExecutor(max_attempts=2).execute(issue, decision, translator)
+        blocked = RecoveryExecutor(max_attempts=2).execute(
+            RecoveryIssue(**{**issue.__dict__, "attempts": 2}), decision, translator
+        )
+
+        assert isinstance(result, RecoveryExecutionResult)
+        assert result.status == "success"
+        assert result.translation == "安全译文"
+        assert translator.calls == [(["原文"], {"batch_size": 1})]
+        assert blocked.status == "needs_review"
+        assert "最大恢复次数" in blocked.reason
+
+    def test_recovery_executor_applies_deterministic_repair_without_api(self):
+        class FakeTranslator:
+            @staticmethod
+            def _is_incomplete_translation(_source, translation):
+                return "でも" in translation
+
+        issue = RecoveryIssue(
+            issue_type=RecoveryIssueType.JAPANESE_RESIDUE_MEDIUM.value,
+            original="原文",
+            translation="为了阿清，我でも想回到江户。",
+        )
+        decision = RecoveryDecision(
+            action=RecoveryAction.APPLY_TERM_REPAIR.value,
+            confidence=0.95,
+        )
+
+        result = RecoveryExecutor().execute(issue, decision, FakeTranslator())
+
+        assert result.status == "success"
+        assert "でも" not in result.translation
 
     def test_json_parser_handles_fenced_object_and_translation_array(self):
         fenced = '说明\n```json\n{"translations":[{"idx":0,"zh":"她笑了。"}]}\n```'

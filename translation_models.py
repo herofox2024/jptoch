@@ -136,6 +136,26 @@ class RecoveryDecision:
         }
 
 
+@dataclass(frozen=True)
+class RecoveryExecutionResult:
+    """Side-effect-free result returned by a recovery executor."""
+
+    status: str
+    action: str
+    translation: str = ""
+    reason: str = ""
+    attempts: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "action": self.action,
+            "translation": self.translation,
+            "reason": self.reason,
+            "attempts": int(self.attempts or 0),
+        }
+
+
 class FastFailError(RuntimeError):
     """An unrecoverable request/configuration failure."""
 

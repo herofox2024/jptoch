@@ -496,6 +496,41 @@ class TranslationTaskHistoryStore:
                 "record": dict(record),
             }
 
+    def record_recovery_results(self, task_id: str, results: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+        """Persist bounded recovery metadata for failed blocks and subtasks."""
+
+        normalized = {
+            text_hash(source): {
+                "recovery_attempts": max(0, int((result or {}).get("attempts") or 0)),
+                "recovery_action": _compact_text((result or {}).get("action") or "", 80),
+                "recovery_status": _compact_text((result or {}).get("status") or "", 80),
+                "recovery_reason": _compact_text((result or {}).get("reason") or "", 300),
+            }
+            for source, result in dict(results or {}).items()
+            if str(source or "").strip() and isinstance(result, Mapping)
+        }
+        if not normalized:
+            return {"changed": 0, "record": {}}
+
+        with self._lock:
+            records = self.load()
+            record = self._find_or_create(records, task_id)
+            changed = 0
+            for collection_name in ("failed_blocks", "subtasks"):
+                for item in record.get(collection_name, []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    source = item.get("text") if collection_name == "failed_blocks" else item.get("source")
+                    metadata = normalized.get(text_hash(source))
+                    if not metadata:
+                        continue
+                    item.update(metadata)
+                    changed += 1
+            if changed:
+                record["updated_at"] = now_ts()
+                self.save(records)
+            return {"changed": changed, "record": dict(record)}
+
     def mark_subtasks_problem(self, task_id: str, blocks: List[Mapping[str, Any]]) -> Dict[str, Any]:
         now = now_ts()
         with self._lock:
