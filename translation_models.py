@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
@@ -31,6 +32,108 @@ class BatchJsonResult:
     finish_reason: Optional[str] = None
     is_truncated: bool = False
     raw_content: str = ""
+
+
+class RecoveryIssueType(str, Enum):
+    """Stable issue identifiers for the optional recovery workflow."""
+
+    EMPTY_RESPONSE = "EMPTY_RESPONSE"
+    CONTENT_MODERATION = "CONTENT_MODERATION"
+    JAPANESE_RESIDUE_HIGH = "JAPANESE_RESIDUE_HIGH"
+    JAPANESE_RESIDUE_MEDIUM = "JAPANESE_RESIDUE_MEDIUM"
+    JAPANESE_RESIDUE_LOW = "JAPANESE_RESIDUE_LOW"
+    JSON_PARSE_ERROR = "JSON_PARSE_ERROR"
+    GLOSSARY_CONFLICT = "GLOSSARY_CONFLICT"
+    TIMEOUT = "TIMEOUT"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+
+
+class RecoveryAction(str, Enum):
+    """Actions that a later recovery executor may safely implement."""
+
+    RETRANSLATE = "RETRANSLATE"
+    USE_FALLBACK_PROVIDER = "USE_FALLBACK_PROVIDER"
+    APPLY_TERM_REPAIR = "APPLY_TERM_REPAIR"
+    REMOVE_FURIGANA = "REMOVE_FURIGANA"
+    PRESERVE_QUOTED_JAPANESE = "PRESERVE_QUOTED_JAPANESE"
+    ALLOW_LOW_RISK = "ALLOW_LOW_RISK"
+    REQUIRE_USER_REVIEW = "REQUIRE_USER_REVIEW"
+    ABORT = "ABORT"
+
+
+@dataclass(frozen=True)
+class RecoveryIssue:
+    """Normalized, serializable input for a future recovery decision."""
+
+    issue_type: str
+    original: str = ""
+    translation: str = ""
+    fragments: List[str] = field(default_factory=list)
+    provider: str = ""
+    model: str = ""
+    attempts: int = 0
+    context_before: str = ""
+    context_after: str = ""
+    reason: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        issue_type = self.issue_type.value if isinstance(self.issue_type, Enum) else str(self.issue_type)
+        return {
+            "issue_type": issue_type,
+            "original": self.original,
+            "translation": self.translation,
+            "fragments": list(self.fragments),
+            "provider": self.provider,
+            "model": self.model,
+            "attempts": int(self.attempts or 0),
+            "context_before": self.context_before,
+            "context_after": self.context_after,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "RecoveryIssue":
+        data = dict(payload or {})
+        fragments = data.get("fragments") or []
+        if isinstance(fragments, str):
+            fragments = [fragments]
+        return cls(
+            issue_type=str(data.get("issue_type") or RecoveryIssueType.PROVIDER_ERROR.value),
+            original=str(data.get("original") or ""),
+            translation=str(data.get("translation") or ""),
+            fragments=list(dict.fromkeys(str(item).strip() for item in fragments if str(item).strip())),
+            provider=str(data.get("provider") or ""),
+            model=str(data.get("model") or ""),
+            attempts=max(0, int(data.get("attempts") or 0)),
+            context_before=str(data.get("context_before") or ""),
+            context_after=str(data.get("context_after") or ""),
+            reason=str(data.get("reason") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class RecoveryDecision:
+    """Validated action returned by the recovery decision stage."""
+
+    action: str
+    reason: str = ""
+    confidence: float = 0.0
+    provider: str = ""
+    model: str = ""
+    prompt_preset: str = ""
+    replacement: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        action = self.action.value if isinstance(self.action, Enum) else str(self.action)
+        return {
+            "action": action,
+            "reason": self.reason,
+            "confidence": round(max(0.0, min(1.0, float(self.confidence or 0.0))), 4),
+            "provider": self.provider,
+            "model": self.model,
+            "prompt_preset": self.prompt_preset,
+            "replacement": self.replacement,
+        }
 
 
 class FastFailError(RuntimeError):

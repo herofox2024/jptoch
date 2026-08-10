@@ -16,6 +16,9 @@ from translator import (
     SingleChunkResult,
     TranslationIncompleteError,
 )
+from experimental.qml_v4.backend.recovery_agent import RecoveryAgent
+from experimental.qml_v4.backend.recovery_classifier import classify_failed_detail, classify_recovery_issue
+from translation_models import RecoveryAction, RecoveryDecision, RecoveryIssue, RecoveryIssueType
 
 
 class TranslationArchitectureTests(unittest.TestCase):
@@ -25,6 +28,148 @@ class TranslationArchitectureTests(unittest.TestCase):
         self.assertIs(FastFailError, translation_models.FastFailError)
         self.assertIs(ContentModerationError, translation_models.ContentModerationError)
         self.assertIs(TranslationIncompleteError, translation_models.TranslationIncompleteError)
+
+    def test_recovery_issue_has_stable_model_selected_fields(self):
+        issue = classify_recovery_issue(
+            original="她は笑った。",
+            translation="她笑了でも。",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            attempts=2,
+            context_before="上一段",
+            context_after="下一段",
+        )
+
+        assert isinstance(issue, RecoveryIssue)
+        assert issue.issue_type == RecoveryIssueType.JAPANESE_RESIDUE_MEDIUM.value
+        assert issue.to_dict()["provider"] == "deepseek"
+        assert issue.to_dict()["model"] == "deepseek-v4-flash"
+        assert issue.to_dict()["attempts"] == 2
+        assert RecoveryIssue.from_dict(issue.to_dict()) == issue
+
+    def test_recovery_classifier_prioritizes_transport_and_format_errors(self):
+        moderation = classify_recovery_issue(
+            original="敏感原文",
+            reason="security_audit_fail",
+            provider="longcat",
+            model="LongCat-2.0",
+        )
+        timeout = classify_recovery_issue(original="原文", reason="read timed out")
+        parse_error = classify_recovery_issue(original="原文", error=ValueError("invalid JSON"))
+        glossary = classify_recovery_issue(original="原文", reason="术语不一致")
+
+        assert moderation.issue_type == RecoveryIssueType.CONTENT_MODERATION.value
+        assert timeout.issue_type == RecoveryIssueType.TIMEOUT.value
+        assert parse_error.issue_type == RecoveryIssueType.JSON_PARSE_ERROR.value
+        assert glossary.issue_type == RecoveryIssueType.GLOSSARY_CONFLICT.value
+
+    def test_recovery_classifier_converts_residue_detail(self):
+        issue = classify_failed_detail(
+            {
+                "original": "她笑了。",
+                "translated": "她笑了でも。",
+                "fragments": ["でも"],
+                "reason": "译文疑似仍有日文残留",
+            },
+            provider="longcat",
+            model="LongCat-2.0",
+        )
+
+        assert issue.issue_type == RecoveryIssueType.JAPANESE_RESIDUE_MEDIUM.value
+        assert issue.fragments == ["でも"]
+
+    def test_recovery_agent_routes_to_issue_model_and_contains_no_api_key(self):
+        issue = RecoveryIssue(
+            issue_type=RecoveryIssueType.JAPANESE_RESIDUE_MEDIUM.value,
+            original="原文",
+            translation="译文でも",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        request = RecoveryAgent().build_request(issue)
+
+        assert request["provider"] == "deepseek"
+        assert request["model"] == "deepseek-v4-flash"
+        assert "api_key" not in request
+        assert "deepseek-v4-flash" not in request["messages"][0]["content"]
+        assert "原文" in request["messages"][1]["content"]
+
+    def test_recovery_agent_rejects_invalid_or_unsafe_decisions(self):
+        issue = RecoveryIssue(
+            issue_type=RecoveryIssueType.JAPANESE_RESIDUE_HIGH.value,
+            provider="longcat",
+            model="LongCat-2.0",
+        )
+        agent = RecoveryAgent(enabled=True, min_confidence=0.85)
+
+        invalid = agent.parse_response('{"action":"run_code","confidence":1}', issue)
+        low_confidence = agent.parse_response(
+            '{"action":"RETRANSLATE","confidence":0.2,"provider":"longcat","model":"LongCat-2.0"}',
+            issue,
+        )
+
+        assert invalid.action == RecoveryAction.REQUIRE_USER_REVIEW.value
+        assert low_confidence.action == RecoveryAction.REQUIRE_USER_REVIEW.value
+
+    def test_recovery_agent_only_allows_configured_fallback_model(self):
+        issue = RecoveryIssue(
+            issue_type=RecoveryIssueType.JAPANESE_RESIDUE_MEDIUM.value,
+            provider="longcat",
+            model="LongCat-2.0",
+        )
+        agent = RecoveryAgent(
+            enabled=True,
+            fallback_provider="deepseek",
+            fallback_model="deepseek-v4-flash",
+        )
+        unsafe = agent.parse_response(
+            '{"action":"USE_FALLBACK_PROVIDER","confidence":0.95,"provider":"glm","model":"glm-4-flash"}',
+            issue,
+        )
+        safe = agent.parse_response(
+            '{"action":"USE_FALLBACK_PROVIDER","confidence":0.95,"provider":"deepseek","model":"deepseek-v4-flash"}',
+            issue,
+        )
+
+        assert unsafe.action == RecoveryAction.REQUIRE_USER_REVIEW.value
+        assert safe.action == RecoveryAction.USE_FALLBACK_PROVIDER.value
+
+    def test_recovery_agent_calls_executor_once_and_blocks_moderation_retry(self):
+        calls = []
+
+        def executor(request):
+            calls.append(request)
+            return {
+                "action": "RETRANSLATE",
+                "reason": "retry",
+                "confidence": 0.99,
+                "provider": "longcat",
+                "model": "LongCat-2.0",
+            }
+
+        issue = RecoveryIssue(
+            issue_type=RecoveryIssueType.CONTENT_MODERATION.value,
+            original="原文",
+            provider="longcat",
+            model="LongCat-2.0",
+        )
+        decision = RecoveryAgent(enabled=True, request_executor=executor).decide(issue)
+
+        assert len(calls) == 1
+        assert decision.action == RecoveryAction.REQUIRE_USER_REVIEW.value
+        assert "内容审核" in decision.reason
+
+    def test_disabled_recovery_agent_never_calls_executor(self):
+        calls = []
+        issue = RecoveryIssue(issue_type=RecoveryIssueType.EMPTY_RESPONSE.value)
+        decision = RecoveryAgent(
+            enabled=False,
+            request_executor=lambda request: calls.append(request),
+        ).decide(issue)
+
+        assert calls == []
+        assert isinstance(decision, RecoveryDecision)
+        assert decision.action == RecoveryAction.REQUIRE_USER_REVIEW.value
 
     def test_json_parser_handles_fenced_object_and_translation_array(self):
         fenced = '说明\n```json\n{"translations":[{"idx":0,"zh":"她笑了。"}]}\n```'
