@@ -504,97 +504,6 @@ Page {
 
             }
 
-                GroupBox {
-                    title: "智能失败恢复"
-                    Layout.fillWidth: true
-
-                    ColumnLayout {
-                        width: parent.width
-                        spacing: AppStyle.spacingMedium
-
-                        CheckBox {
-                            text: "启用智能失败恢复（默认关闭）"
-                            checked: cfg ? cfg.enableRecoveryAgent : false
-                            onToggled: if (cfg) cfg.enableRecoveryAgent = checked
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: "仅生成失败块恢复建议，不会自动修改 EPUB。高风险残留、内容审核和谜题中的日文引用仍需人工确认。"
-                            color: AppPalette.mutedText
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: AppStyle.fontSmall
-                        }
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: 2
-                            columnSpacing: 12
-                            rowSpacing: 8
-                            enabled: cfg ? cfg.enableRecoveryAgent : false
-                            Label { text: "最低执行置信度" }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Slider {
-                                    id: recoveryConfidenceSlider
-                                    Layout.fillWidth: true
-                                    from: 0.50; to: 1.00; stepSize: 0.05
-                                    value: cfg ? cfg.recoveryMinConfidence : 0.85
-                                    onMoved: if (cfg) cfg.recoveryMinConfidence = value
-                                }
-                                Label { text: Math.round((recoveryConfidenceSlider.value || 0.85) * 100) + "%" }
-                            }
-                            Label { text: "单块最大恢复次数" }
-                            SpinBox {
-                                from: 1; to: 5
-                                value: cfg ? cfg.recoveryMaxAttempts : 2
-                                onValueModified: if (cfg) cfg.recoveryMaxAttempts = value
-                            }
-                            Label { text: "备用模型 Provider" }
-                            ComboBox {
-                                id: recoveryProviderCombo
-                                Layout.fillWidth: true
-                                model: ["不使用", "DeepSeek", "LongCat", "Hy-MT2", "自定义"]
-                                property var providerValues: ["", "deepseek", "longcat", "hymt2", "custom"]
-                                currentIndex: Math.max(0, providerValues.indexOf(cfg ? cfg.recoveryFallbackProvider : ""))
-                                onActivated: function(index) {
-                                    if (!cfg) return
-                                    var provider = providerValues[index] || ""
-                                    cfg.recoveryFallbackProvider = provider
-                                    if (provider === "") {
-                                        cfg.recoveryFallbackApiUrl = ""; cfg.recoveryFallbackModel = ""
-                                    } else {
-                                        var defaults = cfg.getProviderDefaults(provider)
-                                        cfg.recoveryFallbackApiUrl = defaults.url || ""
-                                        cfg.recoveryFallbackModel = defaults.model || ""
-                                    }
-                                }
-                            }
-                            Label { text: "备用 Base URL" }
-                            TextField {
-                                Layout.fillWidth: true
-                                text: cfg ? cfg.recoveryFallbackApiUrl : ""
-                                placeholderText: "留空表示不使用备用模型"
-                                selectByMouse: true
-                                onTextChanged: if (cfg) cfg.recoveryFallbackApiUrl = text
-                            }
-                            Label { text: "备用模型名" }
-                            TextField {
-                                Layout.fillWidth: true
-                                text: cfg ? cfg.recoveryFallbackModel : ""
-                                selectByMouse: true
-                                onTextChanged: if (cfg) cfg.recoveryFallbackModel = text
-                            }
-                            Label { text: "备用 API Key" }
-                            TextField {
-                                Layout.fillWidth: true
-                                echoMode: TextInput.Password
-                                text: cfg ? cfg.recoveryFallbackApiKey : ""
-                                selectByMouse: true
-                                onTextChanged: if (cfg) cfg.recoveryFallbackApiKey = text
-                            }
-                        }
-                    }
-                }
-
             SettingsPane {
                 GroupBox {
                     title: "阅读方向"
@@ -951,6 +860,107 @@ Page {
                             color: AppPalette.amberColor
                             wrapMode: Text.WordWrap
                             font.pixelSize: AppStyle.fontSmall
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: "智能失败恢复"
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: AppStyle.spacingMedium
+
+                        CheckBox {
+                            text: "启用智能失败恢复（默认关闭）"
+                            checked: cfg ? cfg.enableRecoveryAgent : false
+                            onToggled: if (cfg) cfg.enableRecoveryAgent = checked
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "仅生成失败块恢复建议，不会自动修改 EPUB。高风险残留、内容审核和谜题中的日文引用仍需人工确认。"
+                            color: AppPalette.mutedText
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: AppStyle.fontSmall
+                        }
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 12
+                            rowSpacing: 8
+                            enabled: cfg ? cfg.enableRecoveryAgent : false
+
+                            Label { text: "最低执行置信度" }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Slider {
+                                    id: recoveryConfidenceSlider
+                                    Layout.fillWidth: true
+                                    from: 0.50
+                                    to: 1.00
+                                    stepSize: 0.05
+                                    value: cfg ? cfg.recoveryMinConfidence : 0.85
+                                    onMoved: if (cfg) cfg.recoveryMinConfidence = value
+                                }
+                                Label { text: Math.round((recoveryConfidenceSlider.value || 0.85) * 100) + "%" }
+                            }
+
+                            Label { text: "单块最大恢复次数" }
+                            SpinBox {
+                                from: 1
+                                to: 5
+                                value: cfg ? cfg.recoveryMaxAttempts : 2
+                                onValueModified: if (cfg) cfg.recoveryMaxAttempts = value
+                            }
+
+                            Label { text: "备用模型 Provider" }
+                            ComboBox {
+                                id: recoveryProviderCombo
+                                Layout.fillWidth: true
+                                model: ["不使用", "DeepSeek", "LongCat", "Hy-MT2", "自定义"]
+                                property var providerValues: ["", "deepseek", "longcat", "hymt2", "custom"]
+                                currentIndex: Math.max(0, providerValues.indexOf(cfg ? cfg.recoveryFallbackProvider : ""))
+                                onActivated: function(index) {
+                                    if (!cfg) return
+                                    var provider = providerValues[index] || ""
+                                    cfg.recoveryFallbackProvider = provider
+                                    if (provider === "") {
+                                        cfg.recoveryFallbackApiUrl = ""
+                                        cfg.recoveryFallbackModel = ""
+                                    } else {
+                                        var defaults = cfg.getProviderDefaults(provider)
+                                        cfg.recoveryFallbackApiUrl = defaults.url || ""
+                                        cfg.recoveryFallbackModel = defaults.model || ""
+                                    }
+                                }
+                            }
+
+                            Label { text: "备用 Base URL" }
+                            TextField {
+                                Layout.fillWidth: true
+                                text: cfg ? cfg.recoveryFallbackApiUrl : ""
+                                placeholderText: "留空表示不使用备用模型"
+                                selectByMouse: true
+                                onTextChanged: if (cfg) cfg.recoveryFallbackApiUrl = text
+                            }
+
+                            Label { text: "备用模型名" }
+                            TextField {
+                                Layout.fillWidth: true
+                                text: cfg ? cfg.recoveryFallbackModel : ""
+                                selectByMouse: true
+                                onTextChanged: if (cfg) cfg.recoveryFallbackModel = text
+                            }
+
+                            Label { text: "备用 API Key" }
+                            TextField {
+                                Layout.fillWidth: true
+                                echoMode: TextInput.Password
+                                text: cfg ? cfg.recoveryFallbackApiKey : ""
+                                selectByMouse: true
+                                onTextChanged: if (cfg) cfg.recoveryFallbackApiKey = text
+                            }
                         }
                     }
                 }
