@@ -887,6 +887,7 @@ Page {
 
     Dialog {
         id: failedBlocksDialog
+        onOpened: taskPage.analyzeFailedBlocks()
         title: "失败块 / 日文残留"
         modal: true
         width: Math.max(760, Math.min(1040, taskPage.width - 48))
@@ -910,6 +911,12 @@ Page {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: AppStyle.spacingSmall
+
+                Button {
+                    text: "生成恢复建议"
+                    enabled: !taskPage.busy && taskPage.latestFailedBlocks.length > 0
+                    onClicked: taskPage.analyzeFailedBlocks()
+                }
 
                 ComboBox {
                     Layout.preferredWidth: 116
@@ -962,13 +969,16 @@ Page {
 
                     delegate: Rectangle {
                         width: ListView.view.width
-                        height: taskPage.width > 900 ? 34 : 48
+                        height: taskPage.width > 900 ? 60 : 78
                         radius: AppPalette.radiusSmall
                         color: AppPalette.surfaceRaised
                         border.color: AppPalette.lineColor
 
                         RowLayout {
-                            anchors.fill: parent
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            height: 32
                             anchors.leftMargin: 8
                             anchors.rightMargin: 6
                             spacing: AppStyle.spacingSmall
@@ -995,6 +1005,27 @@ Page {
                                 enabled: !taskPage.busy
                                 onClicked: taskPage.openManualEdit(modelData.text || "", modelData.translation || "")
                             }
+                        }
+
+                        Label {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            anchors.bottomMargin: 5
+                            text: {
+                                var issue = modelData.recovery_issue || {}
+                                var decision = modelData.recovery_decision || {}
+                                var attempts = Number(modelData.recovery_attempts || 0)
+                                return (issue.issue_type || "未分类") + " | " +
+                                       (decision.action || "未分析") + " | " +
+                                       (modelData.recovery_recommendation || "等待人工确认") +
+                                       " | 已尝试 " + attempts + " 次"
+                            }
+                            color: modelData.recovery_status === "success" ? AppPalette.successColor : AppPalette.mutedText
+                            font.pixelSize: AppStyle.fontTiny
+                            elide: Text.ElideRight
                         }
                     }
                 }
@@ -1233,6 +1264,12 @@ Page {
         if (!taskPage.tbridge || !taskPage.tbridge.retranslateLatestFailedBlocks) return
         var mode = taskPage.failedBlockProviderModeIndex === 1 ? "proofread" : "current"
         taskPage.tbridge.retranslateLatestFailedBlocks(cfg, mode, 50)
+    }
+
+    function analyzeFailedBlocks() {
+        if (!taskPage.tbridge || !taskPage.tbridge.analyzeLatestFailedBlocks) return
+        var result = taskPage.tbridge.analyzeLatestFailedBlocks(cfg, 50)
+        if (result && result.ok) taskPage.latestFailedBlocks = result.items || []
     }
 
     function taskStatusLabel(status) {

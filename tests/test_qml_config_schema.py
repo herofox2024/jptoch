@@ -54,6 +54,31 @@ def test_schema_accepts_all_qml_theme_registry_values():
         assert result.issues == ()
 
 
+def test_schema_validates_recovery_settings_and_provider():
+    result = validate_config({
+        "enable_recovery_agent": "true",
+        "recovery_min_confidence": "1.5",
+        "recovery_max_attempts": 99,
+        "recovery_fallback_provider": "longcat",
+        "recovery_fallback_api_url": "https://api.longcat.chat/openai/v1/chat/completions",
+    })
+
+    assert result.values["enable_recovery_agent"] is True
+    assert result.values["recovery_min_confidence"] == 1.0
+    assert result.values["recovery_max_attempts"] == 5
+    assert result.values["recovery_fallback_provider"] == "longcat"
+    assert result.values["recovery_fallback_api_url"].startswith("https://")
+
+
+def test_config_bridge_exposes_recovery_defaults(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(config_bridge, "_data_dir", lambda: tmp_path)
+    cfg = ConfigBridge()
+    assert cfg.enableRecoveryAgent is False
+    assert cfg.recoveryMinConfidence == 0.85
+    assert cfg.recoveryMaxAttempts == 2
+    assert cfg.recoveryFallbackProvider == ""
+
+
 def test_config_bridge_repairs_corrupt_persisted_values(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(config_bridge, "_data_dir", lambda: tmp_path)
     (tmp_path / config_bridge.CONFIG_FILE_NAME).write_text(

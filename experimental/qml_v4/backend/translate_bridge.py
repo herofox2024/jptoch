@@ -1590,6 +1590,13 @@ class TranslateBridge(QObject):
             "hymt2_prompt_mode": getattr(cfg, "hymt2PromptMode", "official"),
             "hymt2_runtime_mode": getattr(cfg, "hymt2RuntimeMode", "cpu"),
             "japanese_residue_policy": getattr(cfg, "japaneseResiduePolicy", "balanced"),
+            "enable_recovery_agent": getattr(cfg, "enableRecoveryAgent", False),
+            "recovery_min_confidence": getattr(cfg, "recoveryMinConfidence", 0.85),
+            "recovery_max_attempts": getattr(cfg, "recoveryMaxAttempts", 2),
+            "recovery_fallback_provider": getattr(cfg, "recoveryFallbackProvider", ""),
+            "recovery_fallback_api_key": getattr(cfg, "recoveryFallbackApiKey", ""),
+            "recovery_fallback_api_url": getattr(cfg, "recoveryFallbackApiUrl", ""),
+            "recovery_fallback_model": getattr(cfg, "recoveryFallbackModel", ""),
         }
 
     @Slot("QVariant")
@@ -1985,6 +1992,64 @@ class TranslateBridge(QObject):
             logger.warning("读取最近失败文本块失败: %s", exc)
             return []
 
+    @Slot("QVariant", int, result="QVariantMap")
+    def analyzeLatestFailedBlocks(self, cfg=None, limit: int = 20):
+        """Classify failed blocks and persist a user-confirmation suggestion."""
+        try:
+            from backend.recovery_classifier import classify_recovery_issue
+            from translation_models import RecoveryAction
+            record = self._task_history.latest()
+            task_id = str(record.get("task_id") or "") if isinstance(record, dict) else ""
+            blocks = record.get("failed_blocks", []) if isinstance(record, dict) else []
+            blocks = blocks if isinstance(blocks, list) else []
+            limit = max(1, min(int(limit or 20), 200))
+            selected = []
+            for original in blocks:
+                if not isinstance(original, dict):
+                    continue
+                block = dict(original)
+                issue = classify_recovery_issue(
+                    original=block.get("text") or "",
+                    translation=block.get("translation") or "",
+                    reason=block.get("reason") or "",
+                    fragments=block.get("fragments") or [],
+                    provider=(record or {}).get("provider", "") if isinstance(record, dict) else "",
+                    model=(record or {}).get("model", "") if isinstance(record, dict) else "",
+                    attempts=int(block.get("recovery_attempts") or 0),
+                )
+                issue_value = issue.issue_type
+                if issue_value in {"CONTENT_MODERATION", "JAPANESE_RESIDUE_HIGH"}:
+                    action, reason = RecoveryAction.REQUIRE_USER_REVIEW.value, "高风险内容需要人工确认"
+                elif issue_value == "JAPANESE_RESIDUE_LOW":
+                    action, reason = RecoveryAction.ALLOW_LOW_RISK.value, "低风险残留，可由用户确认放行"
+                elif issue_value == "JAPANESE_RESIDUE_MEDIUM":
+                    action, reason = RecoveryAction.RETRANSLATE.value, "建议单块重译后再次质检"
+                elif issue_value in {"TIMEOUT", "EMPTY_RESPONSE", "JSON_PARSE_ERROR", "PROVIDER_ERROR"}:
+                    action, reason = RecoveryAction.RETRANSLATE.value, "建议降低负载后单块重译"
+                else:
+                    action, reason = RecoveryAction.REQUIRE_USER_REVIEW.value, "建议人工检查后决定处理方式"
+                block["recovery_issue"] = issue.to_dict()
+                block["recovery_decision"] = {"action": action, "reason": reason, "confidence": 1.0,
+                                               "provider": issue.provider, "model": issue.model,
+                                               "prompt_preset": "failed_block_repair"}
+                block["recovery_recommendation"] = reason
+                selected.append(block)
+                if len(selected) >= limit:
+                    break
+            if task_id and selected:
+                selected_by_text = {str(item.get("text") or ""): item for item in selected}
+                updated_blocks = [selected_by_text.get(str(item.get("text") or ""), dict(item))
+                                  if isinstance(item, dict) else item for item in blocks]
+                self._task_history.upsert(task_id, {"failed_blocks": updated_blocks})
+                self.translationTaskHistoryChanged.emit()
+            enabled = bool(getattr(cfg, "enableRecoveryAgent", False)) if cfg is not None else False
+            return {"ok": True, "task_id": task_id, "enabled": enabled, "total": len(selected),
+                    "items": selected,
+                    "message": "已生成恢复建议，请确认后执行" if selected else "当前没有可分析的失败块"}
+        except Exception as exc:
+            logger.warning("分析失败块恢复建议失败: %s", exc, exc_info=True)
+            return {"ok": False, "total": 0, "items": [], "message": str(exc)}
+
     def _latest_failed_blocks_for_retranslate(self, limit: int = 50):
         record = self._task_history.latest()
         task_id = str(record.get("task_id", "") if isinstance(record, dict) else "")
@@ -2378,6 +2443,12 @@ class TranslateBridge(QObject):
             "hymt2_prompt_mode": "hymt2PromptMode",
             "hymt2_runtime_mode": "hymt2RuntimeMode",
             "japanese_residue_policy": "japaneseResiduePolicy",
+            "enable_recovery_agent": "enableRecoveryAgent",
+            "recovery_min_confidence": "recoveryMinConfidence",
+            "recovery_max_attempts": "recoveryMaxAttempts",
+            "recovery_fallback_provider": "recoveryFallbackProvider",
+            "recovery_fallback_api_url": "recoveryFallbackApiUrl",
+            "recovery_fallback_model": "recoveryFallbackModel",
         }
         for source_key, attr in mapping.items():
             if source_key not in values:

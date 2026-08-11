@@ -50,6 +50,13 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
     "hymt2_prompt_mode": "official",
     "hymt2_runtime_mode": "cpu",
     "japanese_residue_policy": "balanced",
+    "enable_recovery_agent": False,
+    "recovery_min_confidence": 0.85,
+    "recovery_max_attempts": 2,
+    "recovery_fallback_provider": "",
+    "recovery_fallback_api_key": "",
+    "recovery_fallback_api_url": "",
+    "recovery_fallback_model": "",
 }
 
 INT_RANGES = {
@@ -58,6 +65,11 @@ INT_RANGES = {
     "max_batch_length": (100, 50_000),
     "max_text_size_for_batch": (20, 10_000),
     "api_timeout": (10, 1_800),
+    "recovery_max_attempts": (1, 5),
+}
+
+FLOAT_RANGES = {
+    "recovery_min_confidence": (0.0, 1.0),
 }
 
 BOOL_KEYS = {
@@ -74,6 +86,7 @@ BOOL_KEYS = {
     "allow_text_cache_reuse",
     "enable_prompt_examples",
     "enable_notice_page",
+    "enable_recovery_agent",
 }
 
 ENUM_VALUES = {
@@ -88,15 +101,17 @@ ENUM_VALUES = {
     "hymt2_prompt_mode": {"official", "project"},
     "hymt2_runtime_mode": {"cpu", "gpu"},
     "japanese_residue_policy": {"strict", "balanced", "lenient"},
+    "recovery_fallback_provider": {"", "deepseek", "doubao", "sakura", "gemini", "glm", "wenxin", "longcat", "hymt2", "custom"},
 }
 
-URL_KEYS = {"api_url", "proofread_api_url"}
+URL_KEYS = {"api_url", "proofread_api_url", "recovery_fallback_api_url"}
 LIST_KEYS = {"selected_glossary_profile_ids"}
 LONG_TEXT_LIMITS = {
     "inp": 32_767,
     "out": 32_767,
     "api_key": 8_192,
     "proofread_api_key": 8_192,
+    "recovery_fallback_api_key": 8_192,
     "prompt_extra_instruction": 20_000,
     "notice_page_text": 20_000,
 }
@@ -206,6 +221,20 @@ def validate_config(
                 issues.append(ConfigIssue(key, "整数值无效，已回退默认值"))
             else:
                 lower, upper = INT_RANGES[key]
+                bounded = max(lower, min(upper, value))
+                if bounded != value:
+                    issues.append(ConfigIssue(key, f"超出允许范围 {lower}-{upper}，已自动限制"))
+                value = bounded
+        elif key in FLOAT_RANGES:
+            try:
+                value = float(raw_value)
+                ok = True
+            except (TypeError, ValueError):
+                value, ok = fallback, False
+            if not ok:
+                issues.append(ConfigIssue(key, "浮点值无效，已回退默认值"))
+            else:
+                lower, upper = FLOAT_RANGES[key]
                 bounded = max(lower, min(upper, value))
                 if bounded != value:
                     issues.append(ConfigIssue(key, f"超出允许范围 {lower}-{upper}，已自动限制"))

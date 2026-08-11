@@ -392,8 +392,10 @@ PRESET_CONFIG_KEYS = {
     "series_glossary_name", "book_glossary_name", "selected_glossary_profile_ids", "glossary_extraction_mode",
     "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
     "japanese_residue_policy",
+    "enable_recovery_agent", "recovery_min_confidence", "recovery_max_attempts",
+    "recovery_fallback_provider", "recovery_fallback_api_key", "recovery_fallback_api_url", "recovery_fallback_model",
 }
-PRESET_SECRET_KEYS = {"api_key", "proofread_api_key"}
+PRESET_SECRET_KEYS = {"api_key", "proofread_api_key", "recovery_fallback_api_key"}
 PRESET_CATEGORY_LABELS = {
     "model": "模型",
     "prompt": "Prompt",
@@ -413,6 +415,8 @@ _CONFIG_KEYS = [
     "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
     "enable_notice_page", "notice_page_text", "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
     "japanese_residue_policy",
+    "enable_recovery_agent", "recovery_min_confidence", "recovery_max_attempts",
+    "recovery_fallback_provider", "recovery_fallback_api_key", "recovery_fallback_api_url", "recovery_fallback_model",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -640,6 +644,13 @@ class ConfigBridge(QObject):
     _hymt2PromptModeChanged = Signal()
     _hymt2RuntimeModeChanged = Signal()
     _japaneseResiduePolicyChanged = Signal()
+    _enableRecoveryAgentChanged = Signal()
+    _recoveryMinConfidenceChanged = Signal()
+    _recoveryMaxAttemptsChanged = Signal()
+    _recoveryFallbackProviderChanged = Signal()
+    _recoveryFallbackApiKeyChanged = Signal()
+    _recoveryFallbackApiUrlChanged = Signal()
+    _recoveryFallbackModelChanged = Signal()
     _themeChanged = Signal()
     japaneseResidueAllowlistChanged = Signal()
     knownKatakanaTermsChanged = Signal()
@@ -687,6 +698,13 @@ class ConfigBridge(QObject):
         self._hymt2_prompt_mode = "official"
         self._hymt2_runtime_mode = "cpu"
         self._japanese_residue_policy = "balanced"
+        self._enable_recovery_agent = False
+        self._recovery_min_confidence = 0.85
+        self._recovery_max_attempts = 2
+        self._recovery_fallback_provider = ""
+        self._recovery_fallback_api_key = ""
+        self._recovery_fallback_api_url = ""
+        self._recovery_fallback_model = ""
         self._theme = "light"
         self._autosave_enabled = False
         self._load_from_disk()
@@ -886,6 +904,13 @@ class ConfigBridge(QObject):
             "hymt2_prompt_mode": self._hymt2PromptModeChanged,
             "hymt2_runtime_mode": self._hymt2RuntimeModeChanged,
             "japanese_residue_policy": self._japaneseResiduePolicyChanged,
+            "enable_recovery_agent": self._enableRecoveryAgentChanged,
+            "recovery_min_confidence": self._recoveryMinConfidenceChanged,
+            "recovery_max_attempts": self._recoveryMaxAttemptsChanged,
+            "recovery_fallback_provider": self._recoveryFallbackProviderChanged,
+            "recovery_fallback_api_key": self._recoveryFallbackApiKeyChanged,
+            "recovery_fallback_api_url": self._recoveryFallbackApiUrlChanged,
+            "recovery_fallback_model": self._recoveryFallbackModelChanged,
         }
         changed = False
         for key, value in dict(values or {}).items():
@@ -1636,6 +1661,66 @@ class ConfigBridge(QObject):
             val = "balanced"
         if val != self._japanese_residue_policy:
             self._japanese_residue_policy = val; self._emit_changed(self._japaneseResiduePolicyChanged)
+
+    @Property(bool, notify=_enableRecoveryAgentChanged)
+    def enableRecoveryAgent(self) -> bool: return self._enable_recovery_agent
+    @enableRecoveryAgent.setter
+    def enableRecoveryAgent(self, val: bool):
+        val = bool(val)
+        if val != self._enable_recovery_agent:
+            self._enable_recovery_agent = val; self._emit_changed(self._enableRecoveryAgentChanged)
+
+    @Property(float, notify=_recoveryMinConfidenceChanged)
+    def recoveryMinConfidence(self) -> float: return self._recovery_min_confidence
+    @recoveryMinConfidence.setter
+    def recoveryMinConfidence(self, val: float):
+        try: val = max(0.0, min(1.0, float(val)))
+        except (TypeError, ValueError): val = 0.85
+        if val != self._recovery_min_confidence:
+            self._recovery_min_confidence = val; self._emit_changed(self._recoveryMinConfidenceChanged)
+
+    @Property(int, notify=_recoveryMaxAttemptsChanged)
+    def recoveryMaxAttempts(self) -> int: return self._recovery_max_attempts
+    @recoveryMaxAttempts.setter
+    def recoveryMaxAttempts(self, val: int):
+        try: val = max(1, min(5, int(val)))
+        except (TypeError, ValueError): val = 2
+        if val != self._recovery_max_attempts:
+            self._recovery_max_attempts = val; self._emit_changed(self._recoveryMaxAttemptsChanged)
+
+    @Property(str, notify=_recoveryFallbackProviderChanged)
+    def recoveryFallbackProvider(self) -> str: return self._recovery_fallback_provider
+    @recoveryFallbackProvider.setter
+    def recoveryFallbackProvider(self, val: str):
+        val = str(val or "").strip().lower()
+        if val not in {"", *PROVIDER_DEFAULTS.keys()}:
+            val = ""
+        if val != self._recovery_fallback_provider:
+            self._recovery_fallback_provider = val; self._emit_changed(self._recoveryFallbackProviderChanged)
+
+    @Property(str, notify=_recoveryFallbackApiKeyChanged)
+    def recoveryFallbackApiKey(self) -> str: return self._recovery_fallback_api_key
+    @recoveryFallbackApiKey.setter
+    def recoveryFallbackApiKey(self, val: str):
+        val = str(val or "")
+        if val != self._recovery_fallback_api_key:
+            self._recovery_fallback_api_key = val; self._emit_changed(self._recoveryFallbackApiKeyChanged)
+
+    @Property(str, notify=_recoveryFallbackApiUrlChanged)
+    def recoveryFallbackApiUrl(self) -> str: return self._recovery_fallback_api_url
+    @recoveryFallbackApiUrl.setter
+    def recoveryFallbackApiUrl(self, val: str):
+        val = str(val or "").strip()
+        if val != self._recovery_fallback_api_url:
+            self._recovery_fallback_api_url = val; self._emit_changed(self._recoveryFallbackApiUrlChanged)
+
+    @Property(str, notify=_recoveryFallbackModelChanged)
+    def recoveryFallbackModel(self) -> str: return self._recovery_fallback_model
+    @recoveryFallbackModel.setter
+    def recoveryFallbackModel(self, val: str):
+        val = str(val or "").strip()
+        if val != self._recovery_fallback_model:
+            self._recovery_fallback_model = val; self._emit_changed(self._recoveryFallbackModelChanged)
 
     @Property(str, notify=_themeChanged)
     def theme(self) -> str: return self._theme

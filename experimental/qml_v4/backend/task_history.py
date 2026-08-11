@@ -36,6 +36,7 @@ DETAILED_TASK_STATUSES = {
 SENSITIVE_CONFIG_KEYS = {
     "api_key",
     "proofread_api_key",
+    "recovery_fallback_api_key",
 }
 
 
