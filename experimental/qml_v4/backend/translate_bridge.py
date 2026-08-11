@@ -737,6 +737,7 @@ class _RetranslateFailedBlocksWorker(QObject):
             from translation_models import RecoveryAction, RecoveryIssue
             from backend.recovery_agent import RecoveryAgent
             from backend.recovery_executor import RecoveryExecutor
+            from backend.recovery_workflow import RecoveryWorkflow
 
             cfg = self._config
             sources = []
@@ -846,6 +847,7 @@ class _RetranslateFailedBlocksWorker(QObject):
                 )
                 executor = RecoveryExecutor(max_attempts=int(cfg.get("recovery_max_attempts") or 2))
                 fallback_translator = None
+                workflow = None
                 for source, block in recovery_blocks:
                     issue_payload = dict(block.get("recovery_issue") or {})
                     issue_payload.setdefault("original", source)
@@ -878,12 +880,14 @@ class _RetranslateFailedBlocksWorker(QObject):
                             allow_text_cache_reuse=True,
                             prompt_extra_instruction=cfg.get("prompt_extra_instruction", ""),
                         )
-                    execution = executor.execute(
-                        issue,
-                        decision,
-                        translator,
-                        fallback_translator=fallback_translator,
-                    )
+                    if workflow is None:
+                        workflow = RecoveryWorkflow(
+                            agent=agent,
+                            executor=executor,
+                            translator=translator,
+                            fallback_translator=fallback_translator,
+                        )
+                    execution = workflow.execute(issue, decision)
                     recovery_results[source] = execution.to_dict()
                     if execution.status == "success" and execution.translation:
                         translations[source] = execution.translation
@@ -901,6 +905,12 @@ class _RetranslateFailedBlocksWorker(QObject):
             success = len(translations)
             failed = max(failed, total_sources - success)
             recovery_success = sum(1 for item in recovery_results.values() if item.get("status") == "success")
+            recovery_summary = {
+                "attempted": len(recovery_results),
+                "success": recovery_success,
+                "needs_review": sum(1 for item in recovery_results.values() if item.get("status") == "needs_review"),
+                "failed": sum(1 for item in recovery_results.values() if item.get("status") not in {"success", "needs_review"}),
+            }
             self.finished.emit(
                 {
                     "ok": success > 0,
@@ -911,6 +921,7 @@ class _RetranslateFailedBlocksWorker(QObject):
                     "skipped": skipped,
                     "translations": translations,
                     "recovery_results": recovery_results,
+                    "recovery_summary": recovery_summary,
                 }
             )
         except Exception as exc:
@@ -2153,17 +2164,7 @@ class TranslateBridge(QObject):
                             "block_count": remaining,
                         },
                         "recovery_summary": {
-                            "attempted": len(payload.get("recovery_results") or {}),
-                            "success": sum(
-                                1
-                                for item in (payload.get("recovery_results") or {}).values()
-                                if isinstance(item, dict) and item.get("status") == "success"
-                            ),
-                            "needs_review": sum(
-                                1
-                                for item in (payload.get("recovery_results") or {}).values()
-                                if isinstance(item, dict) and item.get("status") == "needs_review"
-                            ),
+                            **dict(payload.get("recovery_summary") or {}),
                             "results": dict(payload.get("recovery_results") or {}),
                         },
                     },
@@ -2179,13 +2180,7 @@ class TranslateBridge(QObject):
                     task_id,
                     {
                         "recovery_summary": {
-                            "attempted": len(recovery_results),
-                            "success": 0,
-                            "needs_review": sum(
-                                1
-                                for item in recovery_results.values()
-                                if isinstance(item, dict) and item.get("status") == "needs_review"
-                            ),
+                            **dict(payload.get("recovery_summary") or {}),
                             "results": recovery_results,
                         }
                     },

@@ -19,10 +19,44 @@ from translator import (
 from experimental.qml_v4.backend.recovery_agent import RecoveryAgent
 from experimental.qml_v4.backend.recovery_classifier import classify_failed_detail, classify_recovery_issue
 from experimental.qml_v4.backend.recovery_executor import RecoveryExecutor
+from experimental.qml_v4.backend.recovery_workflow import RecoveryWorkflow
 from translation_models import RecoveryAction, RecoveryDecision, RecoveryExecutionResult, RecoveryIssue, RecoveryIssueType
 
 
 class TranslationArchitectureTests(unittest.TestCase):
+    def test_recovery_workflow_runs_confirmed_decisions_and_summarizes(self):
+        class FakeTranslator:
+            @staticmethod
+            def translate_batch(texts, **kwargs):
+                return {texts[0]: "安全译文"}
+
+            @staticmethod
+            def _is_incomplete_translation(_source, _translation):
+                return False
+
+        issue = RecoveryIssue(
+            issue_type=RecoveryIssueType.EMPTY_RESPONSE.value,
+            original="原文",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        decision = RecoveryDecision(
+            action=RecoveryAction.RETRANSLATE.value,
+            confidence=1.0,
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        workflow = RecoveryWorkflow(
+            agent=RecoveryAgent(enabled=False),
+            executor=RecoveryExecutor(max_attempts=2),
+            translator=FakeTranslator(),
+        )
+
+        results, summary = workflow.run_many([("原文", issue, decision)])
+
+        assert results["原文"]["status"] == "success"
+        assert summary == {"attempted": 1, "success": 1, "needs_review": 0, "failed": 0}
+
     def test_translator_keeps_public_result_and_error_exports(self):
         self.assertIs(SingleChunkResult, translation_models.SingleChunkResult)
         self.assertIs(BatchJsonResult, translation_models.BatchJsonResult)

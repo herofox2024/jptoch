@@ -908,6 +908,19 @@ Page {
                 wrapMode: Text.WordWrap
             }
 
+            Label {
+                Layout.fillWidth: true
+                text: {
+                    var summary = (taskPage.latestUnfinishedTask || {}).recovery_summary || {}
+                    return "恢复统计：尝试 " + Number(summary.attempted || 0) +
+                           "，成功 " + Number(summary.success || 0) +
+                           "，待复核 " + Number(summary.needs_review || 0) +
+                           "，失败 " + Number(summary.failed || 0)
+                }
+                color: AppPalette.mutedText
+                font.pixelSize: AppStyle.fontTiny
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: AppStyle.spacingSmall
