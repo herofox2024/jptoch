@@ -2743,6 +2743,31 @@ class AppLogicTests(unittest.TestCase):
         self.assertIn("链接AZH", rendered)
         self.assertIn("链接BZH", rendered)
 
+    def test_book_translation_service_reuses_body_heading_for_toc_and_inbook_link(self):
+        toc_original = "一 よにあふさかの せきはゆるさじ"
+        body_original = "一　よにあふさかの　せきはゆるさじ"
+        html = f"""
+        <html><body>
+          <h2>{body_original}</h2>
+          <p><a href="chapter.xhtml">{toc_original}</a></p>
+        </body></html>
+        """
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+        plan = build_book_text_plan(docs, [toc_original])
+        ordered = [
+            "一 世中逢坂关，岂容君通过",
+            "一 世上泛滥的坂道绝不容许",
+            "一 世上泛滥的坂道绝不容许",
+        ]
+
+        apply_translations_to_book(plan, {}, ordered, lambda text: text, lambda text: False)
+        toc_map = build_toc_translation_map(plan, {}, ordered, lambda text: text, lambda text: False)
+
+        soup = docs[0][1]
+        self.assertEqual(soup.find("h2").get_text(strip=True), "一 世中逢坂关，岂容君通过")
+        self.assertEqual(soup.find("a").get_text(strip=True), "一 世中逢坂关，岂容君通过")
+        self.assertEqual(toc_map[toc_original], "一 世中逢坂关，岂容君通过")
+
     def test_book_translation_service_scans_blocking_japanese_residue(self):
         html = "<html><body><p>逃げる</p><rt>よみ</rt><p>她笑了。</p></body></html>"
         docs = list(iter_text_nodes(FakeEpubBook(html)))

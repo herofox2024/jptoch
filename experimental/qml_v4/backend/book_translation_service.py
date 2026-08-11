@@ -163,6 +163,51 @@ def _clean_node_translation(
     return translated
 
 
+def _title_match_key(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _build_body_heading_translation_map(
+    plan: BookTextPlan,
+    results: Dict[str, str],
+    ordered_results: Optional[List[Optional[str]]],
+    clean_title: CleanTitle,
+    looks_like_refusal: RefusalCheck,
+) -> Dict[str, str]:
+    """Use translated body headings as the canonical title for matching TOC entries."""
+    toc_keys = {_title_match_key(title) for title in plan.toc_titles or [] if _title_match_key(title)}
+    heading_translations: Dict[str, str] = {}
+    ordered_cursor = 0
+
+    for record in plan.text_tag_map:
+        mode, tag = record[0], record[2]
+        if mode == "multi_anchor":
+            originals = [original for _, original in record[3]]
+        else:
+            originals = [record[3]]
+
+        tag_name = str(getattr(tag, "name", "") or "").lower()
+        for original in originals:
+            translated = _ordered_translation(original, ordered_cursor, results, ordered_results)
+            ordered_cursor += 1
+            key = _title_match_key(original)
+            if tag_name not in {"h1", "h2", "h3", "h4", "h5", "h6"} or key not in toc_keys:
+                continue
+            cleaned = _clean_node_translation(
+                original,
+                translated,
+                mode,
+                tag,
+                set(plan.toc_titles or []),
+                clean_title,
+                looks_like_refusal,
+            )
+            if cleaned:
+                heading_translations.setdefault(key, cleaned)
+
+    return heading_translations
+
+
 def apply_translations_to_book(
     plan: BookTextPlan,
     results: Dict[str, str],
@@ -171,6 +216,13 @@ def apply_translations_to_book(
     looks_like_refusal: RefusalCheck,
 ) -> None:
     toc_title_set = set(plan.toc_titles or [])
+    heading_translations = _build_body_heading_translation_map(
+        plan,
+        results,
+        ordered_results,
+        clean_title,
+        looks_like_refusal,
+    )
     ordered_cursor = 0
 
     for record in plan.text_tag_map:
@@ -180,6 +232,7 @@ def apply_translations_to_book(
             for node, original in node_records:
                 translated = _ordered_translation(original, ordered_cursor, results, ordered_results)
                 ordered_cursor += 1
+                translated = heading_translations.get(_title_match_key(original), translated)
                 translated = _clean_node_translation(
                     original,
                     translated,
@@ -196,6 +249,7 @@ def apply_translations_to_book(
         original = record[3]
         translated = _ordered_translation(original, ordered_cursor, results, ordered_results)
         ordered_cursor += 1
+        translated = heading_translations.get(_title_match_key(original), translated)
         translated = _clean_node_translation(
             original,
             translated,
@@ -228,9 +282,18 @@ def build_toc_translation_map(
     looks_like_refusal: RefusalCheck,
 ) -> Dict[str, str]:
     toc_translations: Dict[str, str] = {}
+    heading_translations = _build_body_heading_translation_map(
+        plan,
+        results,
+        ordered_results,
+        clean_title,
+        looks_like_refusal,
+    )
     for index in range(plan.toc_indices_start, plan.toc_indices_end):
         original = plan.all_texts[index]
-        translated = _ordered_translation(original, index, results, ordered_results)
+        translated = heading_translations.get(_title_match_key(original))
+        if not translated:
+            translated = _ordered_translation(original, index, results, ordered_results)
         if not translated:
             continue
         cleaned_title = clean_title(translated)
