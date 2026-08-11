@@ -1336,6 +1336,14 @@ class TranslatorTests(unittest.TestCase):
             self.assertIn("用户补充要求", prompt)
             self.assertIn("保留江户时代称谓", prompt)
 
+    def test_translation_and_proofread_prompts_preserve_classical_poetry(self):
+        t = DummyTranslator()
+
+        for prompt in (t._build_style_guidance("translation"), t._build_proofread_system_prompt()):
+            self.assertIn("和歌及古典诗歌保留规则", prompt)
+            self.assertIn("原歌：日文原句", prompt)
+            self.assertIn("双关、挂词、句切、系结、本歌取", prompt)
+
     def test_smart_split_text(self):
         text = "第一段。第二段！\n第三段？第四段。"
         parts = JaZhTranslator._smart_split_text(text, chunk_size=8)
@@ -1703,6 +1711,7 @@ class TranslatorTests(unittest.TestCase):
             self.assertIn("飛衛 翻译成 飞卫", prompt)
             self.assertIn("将以下日语文本翻译为简体中文", prompt)
             self.assertIn("只需要输出翻译后的结果，不要额外解释", prompt)
+            self.assertIn("和歌及古典诗歌保留规则", prompt)
             self.assertNotIn("信、雅、达", prompt)
             preview = t.build_prompt_preview()
             self.assertIn("System Prompt：不使用", preview)
@@ -1901,6 +1910,36 @@ class TranslatorTests(unittest.TestCase):
                         self.assertEqual(result["blocking"], blocking)
             finally:
                 tq.configure_data_dir(get_data_dir)
+
+    def test_waka_explanation_keeps_quoted_japanese_terms(self):
+        samples = [
+            "这首和歌采用二句切，第四句的‘ふる’是‘世に経る’与‘长雨が降る’的双关，"
+            "结句的‘ながめ’不仅是‘眺め’与‘长雨’，还兼有‘詠め’之意。",
+            "第二句的‘こそ’和‘なけれ’，以及结句的‘ぞ’和‘なる’这两处运用了系结。",
+        ]
+
+        for text in samples:
+            with self.subTest(text=text):
+                result = tq.classify_japanese_residue(text)
+                self.assertEqual(result["risk"], "none")
+                self.assertFalse(result["blocking"])
+
+    def test_bilingual_waka_original_does_not_count_as_residue(self):
+        text = (
+            "原歌：奥山に 紅葉踏みわけ 鳴く鹿の 声きく時ぞ 秋は悲しき\n"
+            "译意：深山踏红叶，鹿鸣声凄切，闻之秋悲凉。"
+        )
+
+        result = tq.classify_japanese_residue(text)
+
+        self.assertEqual(result["risk"], "none")
+        self.assertFalse(result["blocking"])
+
+    def test_unexplained_curly_quoted_japanese_still_blocks(self):
+        result = tq.classify_japanese_residue("她说‘明日は学校へ行きます’，然后离开。")
+
+        self.assertNotEqual(result["risk"], "none")
+        self.assertTrue(result["blocking"])
 
     def test_save_time_repairs_inline_furigana_in_long_sentence(self):
         text = "后来我们经过熟田津 にぎたづ 爱媛一带，又在旅途中听老人说起那座港口的旧名。"

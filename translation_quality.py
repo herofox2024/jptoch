@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 JAPANESE_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 JAPANESE_KANA_FRAGMENT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]+")
-JAPANESE_QUOTE_CHARS = "「」『』“”\"'（）()【】[]〈〉《》"
-JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“\"'（(【\[〈《]\s*([^\r\n]{1,80}?)\s*[」』”\"'）)】\]〉》]")
-JAPANESE_SHORT_QUOTED_TEXT_RE = re.compile(r"^[「『“\"'（(【\[〈《]\s*([^\r\n]{1,6}?)\s*[」』”\"'）)】\]〉》]$")
+JAPANESE_QUOTE_CHARS = "「」『』“”‘’\"'（）()【】[]〈〉《》"
+JAPANESE_QUOTED_TEXT_RE = re.compile(r"[「『“‘\"'（(【\[〈《]\s*([^\r\n]{1,80}?)\s*[」』”’\"'）)】\]〉》]")
+JAPANESE_SHORT_QUOTED_TEXT_RE = re.compile(r"^[「『“‘\"'（(【\[〈《]\s*([^\r\n]{1,6}?)\s*[」』”’\"'）)】\]〉》]$")
 JAPANESE_SINGLE_KATAKANA_RE = re.compile(r"^[\u30a0-\u30ff\uff66-\uff9f]$")
 JAPANESE_O_NAME_PREFIX_RE = re.compile(r"お[\u3400-\u9fff々]{1,3}(?![\u3400-\u9fff々])")
 JAPANESE_O_PREFIX_NON_PERSON_STEMS = {
@@ -79,7 +79,14 @@ ALLOWED_JAPANESE_SHAPE_NOTATION_RE = re.compile(
 )
 ALLOWED_LATIN_MIDDLE_DOT_RE = re.compile(r"(?<=[A-Za-z0-9])・(?=[A-Za-z0-9])")
 JAPANESE_EXPLANATORY_QUOTE_CUE_RE = re.compile(
-    r"(?:说法|所谓|写作|写成|写出来|读作|读成|发音|原文|日文|词语|词|意思|叫做|称作|称呼|表示)"
+    r"(?:说法|所谓|写作|写成|写出来|读作|读成|发音|原文|日文|词语|词|意思|叫做|称作|称呼|表示|"
+    r"和歌|短歌|俳句|原歌|原句|双关|雙關|挂词|掛词|掛詞|系结|係结|係り結び|语法|語法|"
+    r"助词|助詞|活用|句切|结句|結句|本歌取)"
+)
+JAPANESE_BILINGUAL_POEM_RE = re.compile(
+    r"((?:日文)?(?:原歌|和歌原文|短歌原文|俳句原文)\s*[:：])"
+    r"\s*([\s\S]{1,300}?)"
+    r"(?=\s*(?:中文)?(?:译意|譯意|译文|譯文)\s*[:：])"
 )
 JAPANESE_READING_PUZZLE_RUN_RE = re.compile(
     r"(?<![A-Za-z0-9])[\u30a0-\u30ff\uff66-\uff9f](?:[、,，・･\s]*[\u30a0-\u30ff\uff66-\uff9f]){2,}(?![A-Za-z0-9])"
@@ -350,6 +357,20 @@ def strip_builtin_allowed_quoted_literals(text: str) -> str:
     return JAPANESE_QUOTED_TEXT_RE.sub(replace, text)
 
 
+def strip_builtin_bilingual_poem_originals(text: str) -> str:
+    """Ignore explicitly labelled source poems when a Chinese rendering follows."""
+    if not text:
+        return ""
+
+    def replace(match: re.Match) -> str:
+        original = match.group(2) or ""
+        if JAPANESE_KANA_RE.search(original):
+            return match.group(1)
+        return match.group(0)
+
+    return JAPANESE_BILINGUAL_POEM_RE.sub(replace, text)
+
+
 def strip_builtin_allowed_reading_puzzle_runs(text: str) -> str:
     if not text:
         return ""
@@ -386,6 +407,7 @@ def strip_allowed_japanese_notation(text: str) -> str:
         return ""
     stripped = ALLOWED_LATIN_MIDDLE_DOT_RE.sub("", text)
     stripped = ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", stripped)
+    stripped = strip_builtin_bilingual_poem_originals(stripped)
     stripped = strip_builtin_allowed_quoted_literals(stripped)
     stripped = strip_builtin_allowed_reading_puzzle_rows(stripped)
     stripped = strip_builtin_allowed_reading_puzzle_runs(stripped)

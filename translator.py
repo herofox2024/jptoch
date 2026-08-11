@@ -3356,6 +3356,7 @@ class JaZhTranslator:
         custom_guidance = self._build_custom_prompt_guidance()
         if custom_guidance:
             parts.append(custom_guidance)
+        parts.append(self._classical_poetry_preservation_rule())
         if residue_guidance:
             parts.append(residue_guidance)
         parts.append(
@@ -3398,6 +3399,19 @@ class JaZhTranslator:
             "【简体中文输出要求】\n"
             "必须输出简体中文。不要输出繁体字、异体字或台湾/香港用字；"
             "如模型内部生成繁体表达，必须转换为大陆简体中文后再输出。"
+        )
+
+    @staticmethod
+    def _classical_poetry_preservation_rule() -> str:
+        return (
+            "【和歌及古典诗歌保留规则】\n"
+            "以下规则是‘只输出简体中文’的唯一内容性例外：\n"
+            "1. 原文完整引用和歌、短歌或俳句时，必须保留日文原句，并紧接简体中文译意，"
+            "格式为‘原歌：日文原句 译意：简体中文译意’；不得只保留日文，也不得只输出中文而删除原歌。\n"
+            "2. 正文讲解双关、挂词、句切、系结、本歌取、读音或古典语法时，"
+            "引号内作为分析对象的日文词形必须原样保留，周围说明仍翻译为简体中文。\n"
+            "3. 普通对白、叙述和未被讲解的日文不得借此保留，仍须完整翻译。\n"
+            "4. 这属于原作内容，不要额外添加译者说明、考据或原文没有的解释。"
         )
 
     def _build_custom_prompt_guidance(self) -> str:
@@ -3504,6 +3518,7 @@ class JaZhTranslator:
         custom_guidance = self._build_custom_prompt_guidance()
         if custom_guidance:
             parts.append(custom_guidance)
+        parts.append(self._classical_poetry_preservation_rule())
         return "\n\n".join(parts)
 
     def build_prompt_preview(self) -> str:
