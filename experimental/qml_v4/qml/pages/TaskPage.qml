@@ -41,6 +41,7 @@ Page {
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
     property var taskHistory: []
     property var latestFailedBlocks: []
+    property string recoveryAnalysisMessage: ""
     property var latestUnfinishedTask: ({})
     property int failedBlockProviderModeIndex: 0
     property var glossaryProfiles: []
@@ -960,6 +961,15 @@ Page {
 
             Label {
                 Layout.fillWidth: true
+                visible: taskPage.recoveryAnalysisMessage !== ""
+                text: taskPage.recoveryAnalysisMessage
+                color: AppPalette.accentColor
+                font.pixelSize: AppStyle.fontSmall
+                wrapMode: Text.WordWrap
+            }
+
+            Label {
+                Layout.fillWidth: true
                 visible: taskPage.latestFailedBlocks.length === 0
                 text: "当前没有失败块或保存前残留记录。"
                 color: AppPalette.mutedText
@@ -1280,9 +1290,27 @@ Page {
     }
 
     function analyzeFailedBlocks() {
-        if (!taskPage.tbridge || !taskPage.tbridge.analyzeLatestFailedBlocks) return
+        if (!taskPage.tbridge || !taskPage.tbridge.analyzeLatestFailedBlocks) {
+            if (typeof ToastBridge !== "undefined" && ToastBridge) ToastBridge.showError("失败块恢复服务不可用")
+            return
+        }
         var result = taskPage.tbridge.analyzeLatestFailedBlocks(cfg, 50)
-        if (result && result.ok) taskPage.latestFailedBlocks = result.items || []
+        if (result && result.ok) {
+            taskPage.recoveryAnalysisMessage = result.message || "已生成恢复建议"
+            if (taskPage.tbridge.getLatestFailedTranslationBlocks) {
+                taskPage.latestFailedBlocks = taskPage.tbridge.getLatestFailedTranslationBlocks(50) || []
+            } else {
+                taskPage.latestFailedBlocks = result.items || []
+            }
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showSuccess(taskPage.recoveryAnalysisMessage)
+            }
+        } else {
+            taskPage.recoveryAnalysisMessage = (result && result.message) || "生成恢复建议失败"
+            if (typeof ToastBridge !== "undefined" && ToastBridge) {
+                ToastBridge.showError(taskPage.recoveryAnalysisMessage)
+            }
+        }
     }
 
     function taskStatusLabel(status) {

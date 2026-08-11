@@ -163,6 +163,31 @@ def test_mark_blocks_success_clears_failed_blocks(tmp_path: Path):
     assert record["subtasks"][0]["translation"] == "fixed translation"
 
 
+def test_mark_blocks_success_matches_compacted_save_residue_text(tmp_path: Path):
+    store = TranslationTaskHistoryStore(path=tmp_path / "history.json", limit=5)
+    task_id = make_task_id()
+    exact_source = "medium\u3000title"
+    compact_source = "medium title"
+    store.upsert(
+        task_id,
+        {
+            "status": "failed",
+            "failed_blocks": [
+                {"kind": "save_residue", "text": compact_source, "reason": "residue"}
+            ],
+        },
+    )
+    store.initialize_subtasks(task_id, [exact_source])
+
+    result = store.mark_blocks_success(task_id, {exact_source: "translated title"})
+    record = result["record"]
+
+    assert result["changed"] == 1
+    assert result["remaining_blocks"] == 0
+    assert record["failed_blocks"] == []
+    assert record["failure_summary"]["retranslated_count"] == 1
+
+
 def test_record_recovery_results_persists_attempt_metadata(tmp_path: Path):
     store = TranslationTaskHistoryStore(path=tmp_path / "history.json", limit=5)
     task_id = make_task_id()

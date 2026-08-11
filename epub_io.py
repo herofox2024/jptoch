@@ -126,12 +126,15 @@ def _should_use_body_fallback(soup: BeautifulSoup, tags: list) -> bool:
 
     body_text = extract_visible_text(body)
     body_chars = _compact_text_len(body_text)
-    if body_chars < BODY_FALLBACK_MIN_CHARS or not _has_japanese_text(body_text):
+    if body_chars == 0 or not _has_japanese_text(body_text):
         return False
 
     target_chars = sum(_compact_text_len(extract_visible_text(tag)) for tag in tags)
     if target_chars == 0:
         return True
+
+    if body_chars < BODY_FALLBACK_MIN_CHARS:
+        return False
 
     # Some EPUBs put only a title in h1/h2 and the actual body directly under
     # body with <br>. Treat that as the same malformed layout, but do not touch

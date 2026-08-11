@@ -87,3 +87,16 @@ def test_bridge_uses_extracted_auxiliary_workers():
     assert translate_bridge._EstimateWorker is EstimateWorker
     assert translate_bridge._ClearBookCacheWorker is ClearBookCacheWorker
     assert translate_bridge._TestWorker is ConnectionTestWorker
+
+
+def test_failed_block_recovery_resolves_compacted_text_to_epub_source():
+    worker = translate_bridge._RetranslateFailedBlocksWorker
+    exact_source = "medium\u3000title"
+    block = {"kind": "save_residue", "text": "medium title"}
+
+    resolved = worker._resolve_block_source(
+        block,
+        {worker._compact_source(exact_source): [exact_source]},
+    )
+
+    assert resolved == exact_source

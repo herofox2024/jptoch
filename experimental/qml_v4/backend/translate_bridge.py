@@ -727,9 +727,23 @@ class _RetranslateFailedBlocksWorker(QObject):
     @staticmethod
     def _block_source(block: Dict[str, Any]) -> str:
         kind = str(block.get("kind") or "")
-        if kind not in {"failed", "residue"}:
+        if kind not in {"failed", "residue", "save_residue"}:
             return ""
         return str(block.get("text") or "").strip()
+
+    @staticmethod
+    def _compact_source(text: Any) -> str:
+        return " ".join(str(text or "").split())
+
+    @classmethod
+    def _resolve_block_source(cls, block: Dict[str, Any], extracted_sources: Dict[str, List[str]]) -> str:
+        source = cls._block_source(block)
+        if not source or str(block.get("kind") or "") != "save_residue":
+            return source
+        matches = extracted_sources.get(cls._compact_source(source), [])
+        if source in matches:
+            return source
+        return matches[0] if len(matches) == 1 else source
 
     def run(self):
         try:
@@ -740,6 +754,20 @@ class _RetranslateFailedBlocksWorker(QObject):
             from backend.recovery_workflow import RecoveryWorkflow
 
             cfg = self._config
+            extracted_sources: Dict[str, List[str]] = {}
+            if any(str(block.get("kind") or "") == "save_residue" for block in self._blocks if isinstance(block, dict)):
+                input_path = str(cfg.get("inp") or "").strip()
+                if input_path and os.path.exists(input_path):
+                    try:
+                        from backend.bridge_workers import collect_translatable_texts
+
+                        for text in collect_translatable_texts(input_path):
+                            key = self._compact_source(text)
+                            values = extracted_sources.setdefault(key, [])
+                            if text not in values:
+                                values.append(text)
+                    except Exception:
+                        logger.warning("解析保存前残留对应的 EPUB 原文失败", exc_info=True)
             sources = []
             recovery_blocks = []
             skipped = 0
@@ -747,7 +775,7 @@ class _RetranslateFailedBlocksWorker(QObject):
                 if not isinstance(block, dict):
                     skipped += 1
                     continue
-                source = self._block_source(block)
+                source = self._resolve_block_source(block, extracted_sources)
                 if source:
                     if isinstance(block.get("recovery_decision"), dict) and isinstance(block.get("recovery_issue"), dict):
                         recovery_blocks.append((source, block))
@@ -2029,7 +2057,9 @@ class TranslateBridge(QObject):
                     attempts=int(block.get("recovery_attempts") or 0),
                 )
                 issue_value = issue.issue_type
-                if issue_value in {"CONTENT_MODERATION", "JAPANESE_RESIDUE_HIGH"}:
+                if str(block.get("kind") or "") == "save_residue":
+                    action, reason = RecoveryAction.RETRANSLATE.value, "保存前残留：需用户确认后单块重译并复检"
+                elif issue_value in {"CONTENT_MODERATION", "JAPANESE_RESIDUE_HIGH"}:
                     action, reason = RecoveryAction.REQUIRE_USER_REVIEW.value, "高风险内容需要人工确认"
                 elif issue_value == "JAPANESE_RESIDUE_LOW":
                     action, reason = RecoveryAction.ALLOW_LOW_RISK.value, "低风险残留，可由用户确认放行"
@@ -2072,13 +2102,25 @@ class TranslateBridge(QObject):
         for block in blocks:
             if not isinstance(block, dict):
                 continue
-            if str(block.get("kind") or "") not in {"failed", "residue"}:
+            if str(block.get("kind") or "") not in {"failed", "residue", "save_residue"}:
                 continue
             if str(block.get("text") or "").strip():
                 actionable.append(dict(block))
             if len(actionable) >= limit:
                 break
         return task_id, actionable
+
+    def _failed_block_retranslate_unavailable_reason(self) -> str:
+        """Explain why pre-save residue samples cannot be sent to translation."""
+
+        record = self._task_history.latest()
+        blocks = record.get("failed_blocks", []) if isinstance(record, dict) else []
+        if not isinstance(blocks, list):
+            return "没有可自动重译的失败块"
+        kinds = {str(item.get("kind") or "") for item in blocks if isinstance(item, dict)}
+        if kinds and kinds.issubset({"save_residue"}):
+            return "这些是保存前残留样例，缺少对应日文原文，不能自动重译；请点击“定位”或“人工修正”处理。"
+        return "没有可自动重译的失败块"
 
     @staticmethod
     def _apply_retranslate_provider_mode(config, mode):
@@ -2107,8 +2149,9 @@ class TranslateBridge(QObject):
             return
         task_id, blocks = self._latest_failed_blocks_for_retranslate(limit)
         if not task_id or not blocks:
-            self.failed.emit("没有可自动重译的失败块")
-            ToastBridge.warning("没有可自动重译的失败块")
+            message = self._failed_block_retranslate_unavailable_reason()
+            self.failed.emit(message)
+            ToastBridge.warning(message)
             return
         config = self._make_config(cfg)
         config, provider_error = self._apply_retranslate_provider_mode(config, provider_mode)

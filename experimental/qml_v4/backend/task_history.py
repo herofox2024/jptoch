@@ -444,11 +444,15 @@ class TranslationTaskHistoryStore:
     def mark_blocks_success(self, task_id: str, translations: Mapping[str, Any]) -> Dict[str, Any]:
         """Mark failed/residue subtasks as fixed and remove matching failure blocks."""
 
-        cleaned = {
-            text_hash(source): _compact_text(dst, MAX_PERSISTED_TEXT_CHARS)
-            for source, dst in dict(translations or {}).items()
-            if str(source or "").strip() and str(dst or "").strip()
-        }
+        cleaned: Dict[str, str] = {}
+        translation_count = 0
+        for source, dst in dict(translations or {}).items():
+            if not str(source or "").strip() or not str(dst or "").strip():
+                continue
+            translated = _compact_text(dst, MAX_PERSISTED_TEXT_CHARS)
+            cleaned[text_hash(source)] = translated
+            cleaned[text_hash(_compact_text(source, MAX_PERSISTED_TEXT_CHARS))] = translated
+            translation_count += 1
         if not cleaned:
             return {"changed": 0, "remaining_blocks": 0, "record": {}}
 
@@ -482,7 +486,7 @@ class TranslationTaskHistoryStore:
 
             summary = dict(record.get("failure_summary") or {})
             summary["block_count"] = len(remaining_blocks)
-            summary["retranslated_count"] = int(summary.get("retranslated_count") or 0) + len(cleaned)
+            summary["retranslated_count"] = int(summary.get("retranslated_count") or 0) + translation_count
             if not remaining_blocks:
                 summary["failed_count"] = 0
                 summary["residue_count"] = 0

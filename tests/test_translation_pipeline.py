@@ -1182,6 +1182,26 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(texts[0], long_line)
         self.assertEqual(texts[1], "久堂は尾根を歩いた。")
 
+    def test_iter_text_nodes_falls_back_for_short_direct_body_notice(self):
+        html = """
+        <html><body>
+          <span id="#pagestart"></span>
+          本作品は電子書籍として刊行されたものです。<br/>
+          ご利用の端末によって表示が異なることがあります。<br/>
+        </body></html>
+        """
+
+        docs = list(iter_text_nodes(FakeEpubBook(html)))
+        texts = [extract_visible_text(tag) for tag in docs[0][2]]
+
+        self.assertEqual(
+            texts,
+            [
+                "本作品は電子書籍として刊行されたものです。",
+                "ご利用の端末によって表示が異なることがあります。",
+            ],
+        )
+
     def test_iter_text_nodes_accepts_text_html_items(self):
         html = "<html><body><p>これはHTML本文です。</p></body></html>"
         docs = list(iter_text_nodes(FakeEpubBook(
