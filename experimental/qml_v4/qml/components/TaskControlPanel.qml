@@ -13,6 +13,8 @@ Rectangle {
     property int maxTextSizeForBatch: 0
     property real viewportWidth: width
     property string modelSummary: "--"
+    property real progressValue: 0
+    property string statusText: "等待任务"
 
     signal startRequested()
     signal pauseRequested()
@@ -22,7 +24,7 @@ Rectangle {
     signal manualEditRequested()
 
     Layout.fillWidth: true
-    Layout.preferredHeight: viewportWidth > 900 ? 336 : 418
+    Layout.preferredHeight: viewportWidth > 900 ? 370 : 452
     radius: AppPalette.radiusLarge
     color: AppPalette.glass ? Qt.rgba(1, 1, 1, 0.48) : AppPalette.surfaceRaised
     border.color: AppPalette.borderColor
@@ -30,30 +32,6 @@ Rectangle {
 
     function valueOrDash(value) {
         return value !== undefined && value !== null && value !== "" ? value : "--"
-    }
-
-    Rectangle {
-        width: 260
-        height: 260
-        radius: 130
-        anchors.right: parent.right
-        anchors.rightMargin: -96
-        anchors.top: parent.top
-        anchors.topMargin: -112
-        color: AppPalette.accentSoft
-        opacity: 0.45
-    }
-
-    Rectangle {
-        width: 170
-        height: 170
-        radius: 85
-        anchors.left: parent.left
-        anchors.leftMargin: -70
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: -88
-        color: AppPalette.glass ? AppPalette.glassGlowAmber : AppPalette.backgroundAlt
-        opacity: 0.36
     }
 
     ColumnLayout {
@@ -103,6 +81,47 @@ Rectangle {
                 hint: root.readyToStart ? "使用当前模型与参数启动任务" : "请先选择源文件和输出文件"
                 enabled: root.readyToStart && !root.busy
                 onClicked: root.startRequested()
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: AppStyle.spacingInline
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.statusText
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontCaption
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        text: Math.round(Math.max(0, Math.min(1, root.progressValue)) * 100) + "%"
+                        color: AppPalette.accentColor
+                        font.pixelSize: AppStyle.fontCaption
+                        font.weight: Font.DemiBold
+                    }
+                }
+                ProgressBar {
+                    Layout.fillWidth: true
+                    from: 0
+                    to: 1
+                    value: Math.max(0, Math.min(1, root.progressValue))
+                    background: Rectangle { implicitHeight: 6; radius: 3; color: AppPalette.cardAlt }
+                    contentItem: Item {
+                        implicitHeight: 6
+                        Rectangle {
+                            width: parent.width * root.progressValue
+                            height: parent.height
+                            radius: 3
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "#635bff" }
+                                GradientStop { position: 1.0; color: "#0088ff" }
+                            }
+                        }
+                    }
+                }
             }
 
             RowLayout {

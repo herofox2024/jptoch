@@ -42,6 +42,7 @@ Page {
     property var taskHistory: []
     property var latestFailedBlocks: []
     property string recoveryAnalysisMessage: ""
+    property string runtimeStatus: busy ? "翻译运行中" : "等待任务"
     property var latestUnfinishedTask: ({})
     property int failedBlockProviderModeIndex: 0
     property var glossaryProfiles: []
@@ -104,16 +105,56 @@ Page {
             }
         }
 
-        WorkflowShortcutPanel {
-            busy: taskPage.busy
-            readyToStart: taskPage.readyToStart
-            modelSummary: taskPage.modelSummary()
-            failedBlockCount: taskPage.latestFailedBlocks.length
-            recentTaskCount: taskPage.taskHistory.length
-            onOpenStatus: taskPage.navigateToStatus()
-            onOpenApi: taskPage.navigateToApi()
-            onOpenLogs: taskPage.navigateToLogs()
-            onOpenSettings: taskPage.navigateToSettings()
+        GridLayout {
+            Layout.fillWidth: true
+            columns: taskPage.width >= 920 ? 4 : 2
+            columnSpacing: AppStyle.spacingLarge
+            rowSpacing: AppStyle.spacingLarge
+
+            Repeater {
+                model: [
+                    { label: "总任务", value: taskPage.taskHistory.length, detail: "本地任务记录", tone: "accent" },
+                    { label: "进行中", value: taskPage.taskCountByGroup("running"), detail: "运行或可继续", tone: "warning" },
+                    { label: "已完成", value: taskPage.taskCountByGroup("completed"), detail: "已成功输出 EPUB", tone: "success" },
+                    { label: "异常", value: taskPage.taskCountByGroup("failed"), detail: "失败或部分完成", tone: "error" }
+                ]
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 104
+                    radius: AppPalette.radiusLarge
+                    color: AppPalette.cardBg
+                    border.color: AppPalette.lineColor
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 15
+                        spacing: AppStyle.spacingLarge
+
+                        Rectangle {
+                            Layout.preferredWidth: 34
+                            Layout.preferredHeight: 34
+                            radius: 8
+                            color: taskPage.metricToneBg(modelData.tone)
+                            Label {
+                                anchors.centerIn: parent
+                                text: modelData.tone === "success" ? "✓" : (modelData.tone === "error" ? "!" : (modelData.tone === "warning" ? "◷" : "▦"))
+                                color: taskPage.metricToneColor(modelData.tone)
+                                font.pixelSize: AppStyle.fontBodyLarge
+                                font.weight: Font.DemiBold
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+                            Label { text: modelData.label; color: AppPalette.mutedText; font.pixelSize: AppStyle.fontCaption }
+                            Label { text: taskPage.formatMetricValue(modelData.value); color: AppPalette.textColor; font.pixelSize: 25; font.weight: Font.Bold }
+                            Label { Layout.fillWidth: true; text: modelData.detail; color: AppPalette.mutedText; font.pixelSize: AppStyle.fontTiny; elide: Text.ElideRight }
+                        }
+                    }
+                }
+            }
         }
 
         GridLayout {
@@ -397,6 +438,8 @@ Page {
             maxWorkers: cfg ? cfg.maxWorkers : 0
             batchSize: cfg ? cfg.batchSize : 0
             maxTextSizeForBatch: cfg ? cfg.maxTextSizeForBatch : 0
+            progressValue: taskPage.tbridge ? taskPage.tbridge.progressValue : 0
+            statusText: taskPage.runtimeStatus
 
             onStartRequested: {
                 if (taskPage.tbridge) {
@@ -1093,6 +1136,9 @@ Page {
         function onTranslationTaskHistoryChanged() {
             taskPage.refreshTaskHistory()
         }
+        function onStatusChanged(message) {
+            taskPage.runtimeStatus = message || (taskPage.busy ? "翻译运行中" : "等待任务")
+        }
         function onFailedBlocksRetranslated(result) {
             taskPage.refreshTaskHistory()
         }
@@ -1229,7 +1275,7 @@ Page {
             taskPage.latestUnfinishedTask = ({})
             return
         }
-        var rows = taskPage.tbridge.getTranslationTaskHistory(12)
+        var rows = taskPage.tbridge.getTranslationTaskHistory(80)
         taskPage.taskHistory = rows || []
         if (taskPage.tbridge.getLatestUnfinishedTranslationTask) {
             taskPage.latestUnfinishedTask = taskPage.tbridge.getLatestUnfinishedTranslationTask() || ({})
@@ -1373,6 +1419,36 @@ Page {
         var model = cfg.model || "-"
         if (model === "-") return provider
         return provider + " / " + model
+    }
+
+    function taskCountByGroup(group) {
+        var count = 0
+        for (var i = 0; i < taskPage.taskHistory.length; i++) {
+            var status = String(taskPage.taskHistory[i].status || "").toLowerCase()
+            if (group === "completed" && status === "completed") count++
+            else if (group === "running" && ["running", "pausing", "paused", "cancelling", "stopping"].indexOf(status) >= 0) count++
+            else if (group === "failed" && ["failed", "partial", "cancelled", "stopped"].indexOf(status) >= 0) count++
+        }
+        return count
+    }
+
+    function metricToneColor(tone) {
+        if (tone === "success") return AppPalette.successColor
+        if (tone === "warning") return AppPalette.amberColor
+        if (tone === "error") return AppPalette.errorColor
+        return AppPalette.accentColor
+    }
+
+    function formatMetricValue(value) {
+        var number = Number(value || 0)
+        return number < 10 ? "0" + number : String(number)
+    }
+
+    function metricToneBg(tone) {
+        if (tone === "success") return AppStyle.statusSuccessBg
+        if (tone === "warning") return AppStyle.statusWarningBg
+        if (tone === "error") return AppStyle.statusErrorBg
+        return AppPalette.accentSoft
     }
 
     function setInputPath(path) {

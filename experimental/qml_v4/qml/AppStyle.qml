@@ -5,10 +5,10 @@ QtObject {
     // Shared visual tokens. Colors stay in AppPalette; sizing, typography and
     // state backgrounds live here so page files do not repeat the same values.
 
-    readonly property int pagePadding: 24
+    readonly property int pagePadding: 22
     readonly property int pageGap: 16
     readonly property int sectionGap: 18
-    readonly property int cardPadding: 18
+    readonly property int cardPadding: 16
     readonly property int panelPadding: 14
     readonly property int fieldPadding: 14
 

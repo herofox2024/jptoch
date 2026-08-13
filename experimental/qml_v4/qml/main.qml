@@ -9,9 +9,9 @@ import QtQuick.Controls
 ApplicationWindow {
     id: appWindow
     visible: false
-    width: 1180
-    height: 780
-    minimumWidth: 860
+    width: 1420
+    height: 860
+    minimumWidth: 980
     minimumHeight: 640
     title: "AI日译中（EPUB）V4.1"
     font.family: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
@@ -37,6 +37,8 @@ ApplicationWindow {
     property bool apiPageLoaded: false
     property bool glossaryPageLoaded: false
     property bool optionsPageLoaded: false
+    property bool workspaceLogExpanded: true
+    readonly property bool showWorkspaceLog: workspaceLogExpanded && width >= 1360
 
     Material.theme: appWindow.darkMode ? Material.Dark : Material.Light
     Material.accent: AppPalette.accentColor
@@ -119,14 +121,10 @@ ApplicationWindow {
 
     background: Rectangle {
         id: bgRoot
-        // 主题过渡：在 color/opacity 变化时添加平滑动画
         Behavior on color { ColorAnimation { duration: 400; easing.type: Easing.OutCubic } }
-
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: AppPalette.background }
-            GradientStop { position: 1.0; color: AppPalette.backgroundAlt }
-        }
+        color: AppPalette.background
         Rectangle {
+            visible: appWindow.glassMode
             width: 520
             height: 520
             radius: 260
@@ -136,6 +134,7 @@ ApplicationWindow {
             opacity: appWindow.glassMode ? 0.72 : (AppPalette.dark ? 0.24 : 0.55)
         }
         Rectangle {
+            visible: appWindow.glassMode
             width: 360
             height: 360
             radius: 180
@@ -161,7 +160,7 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: 68
+        height: 64
         color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.52) : AppPalette.surface
         border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.72) : AppPalette.lineColor
         border.width: 1
@@ -186,22 +185,26 @@ ApplicationWindow {
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 20
-            anchors.rightMargin: 20
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
             spacing: AppStyle.spacingLarge
 
             Rectangle {
-                Layout.preferredWidth: 38
-                Layout.preferredHeight: 38
-                radius: 12
-                color: appWindow.glassMode ? Qt.rgba(0.05, 0.43, 0.45, 0.88) : AppPalette.accentColor
+                Layout.preferredWidth: 36
+                Layout.preferredHeight: 36
+                radius: 8
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "#635bff" }
+                    GradientStop { position: 1.0; color: "#0088ff" }
+                }
                 border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.48) : "transparent"
                 Label {
                     anchors.centerIn: parent
                     text: "译"
                     color: "white"
                     font.family: appWindow.titleFont
-                    font.pixelSize: AppStyle.fontSubHeader
+                    font.pixelSize: AppStyle.fontSection
                     font.weight: Font.DemiBold
                 }
             }
@@ -212,11 +215,11 @@ ApplicationWindow {
                     text: "AI日译中（EPUB）V4.1"
                     color: AppPalette.textColor
                     font.family: appWindow.titleFont
-                    font.pixelSize: AppStyle.fontHeader
+                    font.pixelSize: AppStyle.fontSection
                     font.weight: Font.DemiBold
                 }
                 Label {
-                    text: "日系小说翻译工作台 · PySide6/QML V4.1"
+                    text: "桌面翻译工作台"
                     color: AppPalette.mutedText
                     font.pixelSize: AppStyle.fontSmall
                 }
@@ -225,18 +228,44 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
 
             Rectangle {
-                Layout.preferredWidth: 150
+                Layout.preferredWidth: 174
                 Layout.minimumWidth: 150
                 Layout.preferredHeight: 32
-                radius: 16
-                color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.44) : AppPalette.accentSoft
+                radius: 8
+                color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.44) : AppPalette.cardAlt
                 border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.62) : AppPalette.borderColor
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 7
+                    Rectangle { width: 7; height: 7; radius: 4; color: AppPalette.successColor }
+                    Label {
+                        Layout.fillWidth: true
+                        text: cfg && cfg.model ? cfg.model : "翻译模型"
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontTiny
+                        elide: Text.ElideRight
+                    }
+                    Label { text: "就绪"; color: AppPalette.successColor; font.pixelSize: AppStyle.fontTiny }
+                }
+            }
+
+            Rectangle {
+                Layout.preferredWidth: 32
+                Layout.preferredHeight: 32
+                radius: 16
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "#635bff" }
+                    GradientStop { position: 1.0; color: "#0088ff" }
+                }
                 Label {
                     anchors.centerIn: parent
-                    text: appWindow.glassMode ? "V4.1 玻璃" : "V4.1"
-                    color: AppPalette.accentColor
-                    font.pixelSize: AppStyle.fontSmall
-                    font.weight: Font.DemiBold
+                    text: "AI"
+                    color: "white"
+                    font.pixelSize: AppStyle.fontTiny
+                    font.weight: Font.Bold
                 }
             }
         }
@@ -247,14 +276,11 @@ ApplicationWindow {
         spacing: AppStyle.spacingNone
 
         Rectangle {
-            Layout.preferredWidth: 168
+            Layout.preferredWidth: 184
             Layout.fillHeight: true
-            border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.26) : (AppPalette.dark ? "#223934" : "#244a4b")
+            border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.26) : AppPalette.lineColor
             border.width: 1
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: AppPalette.navBg }
-                GradientStop { position: 1.0; color: AppPalette.navBgAlt }
-            }
+            color: AppPalette.navBg
 
             Rectangle {
                 visible: appWindow.glassMode
@@ -285,15 +311,15 @@ ApplicationWindow {
                     spacing: AppStyle.spacingTight
                     Layout.fillWidth: true
                     Label {
-                        text: "Workflow"
-                        color: "#d9eee7"
+                        text: "WORKSPACE"
+                        color: AppPalette.accentColor
                         font.pixelSize: AppStyle.fontSmall
                         font.letterSpacing: 1.2
                         opacity: 0.82
                     }
                     Label {
-                        text: "翻译流程"
-                        color: "white"
+                        text: "功能导航"
+                        color: AppPalette.textColor
                         font.family: appWindow.titleFont
                         font.pixelSize: AppStyle.fontSubHeader
                         font.weight: Font.DemiBold
@@ -303,14 +329,14 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 1
-                    color: "#ffffff"
-                    opacity: 0.16
+                    color: AppPalette.lineColor
+                    opacity: 1
                 }
 
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: AppStyle.spacingSmall
-                    NavButton { iconName: "task"; label: "任务"; desc: "导入书籍"; pageIndex: 0 }
+                    NavButton { iconName: "task"; label: "工作台"; desc: "翻译与任务"; pageIndex: 0 }
                     NavButton { iconName: "status"; label: "状态"; desc: "实时进度"; pageIndex: 1 }
                     NavButton { iconName: "log"; label: "日志"; desc: "实时诊断"; pageIndex: 2 }
                     NavButton { iconName: "api"; label: "API"; desc: "模型接口"; pageIndex: 3 }
@@ -323,9 +349,13 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 108
-                    radius: 20
-                    color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.075)
-                    border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.18) : Qt.rgba(255, 255, 255, 0.10)
+                    radius: AppPalette.radiusLarge
+                    color: appWindow.glassMode
+                           ? Qt.rgba(1, 1, 1, 0.12)
+                           : (AppPalette.dark ? Qt.rgba(1, 1, 1, 0.075) : AppPalette.cardBg)
+                    border.color: appWindow.glassMode
+                                  ? Qt.rgba(1, 1, 1, 0.18)
+                                  : (AppPalette.dark ? Qt.rgba(255, 255, 255, 0.10) : AppPalette.borderColor)
                     clip: true
 
                     Rectangle {
@@ -333,7 +363,7 @@ ApplicationWindow {
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: 3
-                        color: AppPalette.amberColor
+                        color: AppPalette.accentColor
                         opacity: 0.85
                     }
 
@@ -345,7 +375,7 @@ ApplicationWindow {
                         Label {
                             Layout.fillWidth: true
                             text: "\u9879\u76ee\u4e0e\u8054\u7cfb"
-                            color: "#eefcf8"
+                            color: AppPalette.textColor
                             font.pixelSize: AppStyle.fontSmall
                             font.weight: Font.DemiBold
                             opacity: 0.92
@@ -481,6 +511,26 @@ ApplicationWindow {
                 }
             }
         }
+
+        WorkspaceLogPanel {
+            Layout.preferredWidth: appWindow.showWorkspaceLog ? 286 : 0
+            Layout.minimumWidth: appWindow.showWorkspaceLog ? 250 : 0
+            Layout.fillHeight: true
+            visible: appWindow.showWorkspaceLog
+            logBridge: appWindow.logBridge
+            onOpenFullLog: appWindow.switchPage(2)
+            onCollapseRequested: appWindow.workspaceLogExpanded = false
+        }
+
+        ToolButton {
+            visible: !appWindow.workspaceLogExpanded && appWindow.width >= 1360
+            Layout.preferredWidth: 36
+            Layout.alignment: Qt.AlignTop
+            text: ">"
+            ToolTip.visible: hovered
+            ToolTip.text: "展开实时日志"
+            onClicked: appWindow.workspaceLogExpanded = true
+        }
     }
 
     UiMetricsOverlay {
@@ -514,12 +564,12 @@ ApplicationWindow {
 
         Rectangle {
             anchors.fill: parent
-            radius: 18
+            radius: 8
             color: navBtn.active
                    ? AppPalette.navActiveBg
                    : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.10) : "transparent")
             border.color: navBtn.active
-                          ? (appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.72) : AppPalette.amberColor)
+                          ? (appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.72) : AppPalette.accentColor)
                           : (navBtn.activeFocus ? AppPalette.amberColor : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.18) : "transparent"))
             border.width: navBtn.active || navBtn.activeFocus || (appWindow.glassMode && navBtn.hovering) ? 1 : 0
             Behavior on border.color { ColorAnimation { duration: 120 } }
@@ -542,7 +592,7 @@ ApplicationWindow {
             radius: 2
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            color: AppPalette.amberColor
+            color: AppPalette.accentColor
             visible: navBtn.active
         }
 
@@ -557,18 +607,18 @@ ApplicationWindow {
                 Layout.preferredHeight: AppStyle.buttonHeightSmall
                 Rectangle {
                     anchors.fill: parent
-                    radius: 12
+                    radius: 7
                     color: navBtn.active
-                           ? (appWindow.glassMode ? AppPalette.accentColor : AppPalette.amberColor)
-                           : "#ffffff"
-                    opacity: navBtn.active ? 1.0 : (appWindow.glassMode ? 0.22 : 0.18)
+                           ? AppPalette.accentColor
+                           : AppPalette.cardAlt
+                    opacity: 1.0
                 }
                 NavIcon {
                     anchors.centerIn: parent
                     width: 21
                     height: 21
                     name: navBtn.iconName
-                    lineColor: navBtn.active ? "white" : (appWindow.glassMode ? "#eefcf8" : "#d9eee7")
+                    lineColor: navBtn.active ? "white" : AppPalette.mutedText
                 }
             }
 
@@ -577,13 +627,13 @@ ApplicationWindow {
                 spacing: AppStyle.spacingNone
                 Label {
                     text: navBtn.label
-                    color: navBtn.active ? AppPalette.textColor : "white"
+                    color: navBtn.active ? AppPalette.accentColor : AppPalette.textColor
                     font.pixelSize: AppStyle.fontBodyLarge
                     font.weight: Font.DemiBold
                 }
                 Label {
                     text: navBtn.desc
-                    color: navBtn.active ? AppPalette.mutedText : "#c9e1d9"
+                    color: AppPalette.mutedText
                     font.pixelSize: AppStyle.fontTiny
                 }
             }
@@ -617,10 +667,12 @@ ApplicationWindow {
         Layout.preferredHeight: AppStyle.buttonHeightCompact
         radius: 10
         color: contactLink.hovering || contactLink.activeFocus
-               ? Qt.rgba(1, 1, 1, 0.16)
-               : Qt.rgba(1, 1, 1, 0.07)
-        border.color: contactLink.activeFocus ? AppPalette.amberColor : Qt.rgba(255, 255, 255, 0.10)
-        border.width: contactLink.activeFocus ? 1 : 0
+               ? (AppPalette.dark || appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.16) : AppPalette.accentSoft)
+               : (AppPalette.dark || appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.07) : AppPalette.cardAlt)
+        border.color: contactLink.activeFocus
+                      ? AppPalette.accentColor
+                      : (AppPalette.dark || appWindow.glassMode ? Qt.rgba(255, 255, 255, 0.10) : AppPalette.lineColor)
+        border.width: 1
         activeFocusOnTab: true
 
         function openTarget() {
@@ -638,7 +690,7 @@ ApplicationWindow {
 
             Label {
                 text: contactLink.label
-                color: AppPalette.amberColor
+                color: AppPalette.accentColor
                 font.pixelSize: AppStyle.fontTiny
                 font.weight: Font.DemiBold
                 Layout.preferredWidth: 42
@@ -648,7 +700,7 @@ ApplicationWindow {
             Label {
                 Layout.fillWidth: true
                 text: contactLink.value
-                color: "#d7eee8"
+                color: AppPalette.textColor
                 font.pixelSize: AppStyle.fontTiny
                 elide: Text.ElideRight
             }
