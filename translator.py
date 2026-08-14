@@ -1260,8 +1260,8 @@ class JaZhTranslator:
                     token_total=token_total,
                     category=category or "",
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("写入请求日志失败: %s", exc)
         if is_ok and elapsed_ms < 15000:
             return
         log_label = "慢请求" if is_ok else "API请求"
@@ -3138,8 +3138,8 @@ class JaZhTranslator:
         if close_session:
             try:
                 self.session.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("关闭 HTTP session 失败: %s", exc)
 
     def _should_write_cache(self) -> bool:
         flag = getattr(self, "_discard_cache_writes", None)
@@ -5823,5 +5823,5 @@ JSON 顶层字段：
             cache_db = getattr(self, "_cache_db", None)
             if cache_db is not None:
                 cache_db.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("析构清理缓存失败: %s", exc)

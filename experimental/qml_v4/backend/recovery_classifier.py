@@ -10,6 +10,7 @@ import json
 from typing import Any, Iterable, Optional
 
 import translation_quality as tq
+from provider_client import contains_content_moderation_signal
 from translation_models import RecoveryIssue, RecoveryIssueType
 
 
@@ -35,10 +36,7 @@ def _is_json_error(reason: str, error: Optional[BaseException]) -> bool:
 
 
 def _is_moderation_error(reason: str) -> bool:
-    return _contains_any(
-        reason,
-        ("moderation", "contentmoderation", "security_audit_fail", "内容审核", "违规", "security_error"),
-    )
+    return contains_content_moderation_signal(reason)
 
 
 def _is_timeout_error(reason: str) -> bool:

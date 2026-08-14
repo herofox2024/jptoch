@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from provider_client import contains_content_moderation_signal
+
 _LOCK = threading.RLock()
 _MAX_LINES_PER_FILE = 2000
 _MAX_FILES = 14
@@ -80,7 +82,7 @@ def classify(outcome: str = "", status_code: Optional[int] = None, error: str = 
     raw = f"{outcome or ''} {status_code or ''} {error or ''}".lower()
     if "residue" in raw or "日文残留" in raw:
         return "residue"
-    if "security_audit_fail" in raw or "content_moderation" in raw or "moderation" in raw or "内容审核" in raw or "违规" in raw:
+    if contains_content_moderation_signal(raw):
         return "security"
     if "timeout" in raw or "超时" in raw:
         return "timeout"

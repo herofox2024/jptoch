@@ -89,7 +89,8 @@ def _content_body_visible_text(content: Any) -> str:
     try:
         soup = BeautifulSoup(content, "html.parser")
         return extract_visible_text(soup.find("body") or soup)
-    except Exception:
+    except Exception as exc:
+        logger.debug("解析文档可见文本失败: %s", exc)
         return ""
 
 
@@ -483,7 +484,8 @@ def _epub_opf_dir(path: str) -> str:
         rootfile = soup.find("rootfile")
         opf_path = rootfile.get("full-path") if rootfile else ""
         return str(Path(opf_path).parent).replace("\\", "/").strip(".")
-    except Exception:
+    except Exception as exc:
+        logger.debug("读取 EPUB OPF 目录失败: %s", exc)
         return ""
 
 
@@ -513,7 +515,8 @@ def _restore_raw_document_content(book: epub.EpubBook, path: str) -> None:
                     raw_soup = BeautifulSoup(raw, "html.parser")
                     current_visible = extract_visible_text(current_soup.find("body") or current_soup)
                     raw_visible = extract_visible_text(raw_soup.find("body") or raw_soup)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("解析文档内容失败，跳过 raw 恢复: %s (%s)", file_name, exc)
                     continue
                 if _compact_text_len(current_visible) == 0 and _compact_text_len(raw_visible) > 0:
                     item.content = raw
@@ -660,12 +663,12 @@ def _apply_reading_direction_to_book(book: epub.EpubBook, chinese_mode: bool) ->
 
     try:
         book.set_direction(page_direction)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("设置阅读方向失败: %s", exc)
     try:
         book.set_language(language)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("设置语言元数据失败: %s", exc)
 
     metadata_list = book.metadata.setdefault("http://www.idpf.org/2007/opf", {})
     metadata_list["meta"] = [
@@ -692,8 +695,8 @@ def set_book_title_metadata(book: epub.EpubBook, title: str) -> bool:
     metadata_list["title"] = [(clean_title, attrs)]
     try:
         book.title = clean_title
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("设置书名 title 属性失败: %s", exc)
     return True
 
 
@@ -730,7 +733,8 @@ def add_translation_notice_page(book: epub.EpubBook, notice_text: Optional[str] 
         if isinstance(candidate, str):
             try:
                 return book.get_item_with_id(candidate)
-            except Exception:
+            except Exception as exc:
+                logger.debug("按 id 解析 spine 条目失败: %s (%s)", candidate, exc)
                 return None
         return candidate
 
@@ -749,8 +753,8 @@ def add_translation_notice_page(book: epub.EpubBook, notice_text: Optional[str] 
         if hasattr(resolved, "get_id"):
             try:
                 parts.append(str(resolved.get_id() or ""))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("读取 spine 条目 id 失败: %s", exc)
         return " ".join(parts).lower()
 
     def _is_cover_spine_entry(entry: Any) -> bool:
@@ -762,7 +766,8 @@ def add_translation_notice_page(book: epub.EpubBook, notice_text: Optional[str] 
             return False
         try:
             raw = item.get_content() if hasattr(item, "get_content") else getattr(item, "content", b"")
-        except Exception:
+        except Exception as exc:
+            logger.debug("读取封面条目内容失败，回退 content 属性: %s", exc)
             raw = getattr(item, "content", b"")
         if isinstance(raw, bytes):
             markup = raw.decode("utf-8", errors="ignore")
@@ -841,8 +846,8 @@ def save_book(path: str, book: epub.EpubBook, chinese_mode: Optional[bool] = Non
         logger.exception("EPUB 写入失败，路径: %s", path)
         try:
             os.remove(temp_output)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("清理临时 EPUB 文件失败: %s (%s)", temp_output, exc)
         raise
 
     temp_path = getattr(book, '_repaired_temp_path', None)

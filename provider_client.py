@@ -22,6 +22,20 @@ CONTENT_MODERATION_SNIPPETS = (
     "content moderation",
 )
 
+# 更宽的信号词集合，供「信号文本分类」（恢复分类器、请求日志）使用。
+# 在精确的 HTTP 响应体关键词之上补齐通用 moderation 信号，保证各处对
+# 「内容审核拦截」的判定一致，避免同一类错误在不同模块被漏判。
+CONTENT_MODERATION_SIGNAL_TERMS = CONTENT_MODERATION_SNIPPETS + (
+    "moderation",
+    "contentmoderation",
+)
+
+
+def contains_content_moderation_signal(text: str) -> bool:
+    """Return True if *text* contains any content-moderation signal (case-insensitive)."""
+    lowered = (text or "").lower()
+    return any(term in lowered for term in CONTENT_MODERATION_SIGNAL_TERMS)
+
 
 def create_session(max_workers: int) -> requests.Session:
     """Create a requests session sized for the translator worker pool."""
