@@ -24,7 +24,7 @@ Rectangle {
     signal manualEditRequested()
 
     Layout.fillWidth: true
-    Layout.preferredHeight: viewportWidth > 900 ? 370 : 452
+    Layout.preferredHeight: viewportWidth > AppStyle.bpSmall ? 370 : 452
     radius: AppPalette.radiusLarge
     color: AppPalette.glass ? Qt.rgba(1, 1, 1, 0.48) : AppPalette.surfaceRaised
     border.color: AppPalette.borderColor
@@ -70,7 +70,7 @@ Rectangle {
 
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: root.viewportWidth > 900 ? 168 : 256
+            Layout.preferredHeight: root.viewportWidth > AppStyle.bpSmall ? 168 : 256
             spacing: AppStyle.spacingMedium
 
             TaskActionButton {
@@ -116,8 +116,8 @@ Rectangle {
                             radius: 3
                             gradient: Gradient {
                                 orientation: Gradient.Horizontal
-                                GradientStop { position: 0.0; color: "#635bff" }
-                                GradientStop { position: 1.0; color: "#0088ff" }
+                                GradientStop { position: 0.0; color: AppPalette.brandGradientStart }
+                                GradientStop { position: 1.0; color: AppPalette.brandGradientEnd }
                             }
                         }
                     }
@@ -130,7 +130,7 @@ Rectangle {
 
                 GridLayout {
                     Layout.fillWidth: true
-                    columns: root.viewportWidth > 980 ? 5 : (root.viewportWidth > 680 ? 3 : 2)
+                    columns: root.viewportWidth > AppStyle.bpWide ? 5 : (root.viewportWidth > AppStyle.bpCompact ? 3 : 2)
                     columnSpacing: AppStyle.spacingMedium
                     rowSpacing: AppStyle.spacingMedium
 
@@ -228,7 +228,7 @@ Rectangle {
                 }
 
                 Rectangle {
-                    visible: root.viewportWidth > 880
+                    visible: root.viewportWidth > AppStyle.bpNarrow
                     Layout.preferredWidth: 104
                     Layout.preferredHeight: AppStyle.buttonHeightCompact
                     radius: 14

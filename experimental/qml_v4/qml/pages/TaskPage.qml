@@ -107,7 +107,7 @@ Page {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: taskPage.width >= 920 ? 4 : 2
+            columns: taskPage.width >= AppStyle.bpMedium ? 4 : 2
             columnSpacing: AppStyle.spacingLarge
             rowSpacing: AppStyle.spacingLarge
 
@@ -159,14 +159,14 @@ Page {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: taskPage.width > 980 ? 2 : 1
+            columns: taskPage.width > AppStyle.bpWide ? 2 : 1
             columnSpacing: 18
             rowSpacing: AppStyle.spacingXLarge
 
             Rectangle {
                 id: dropCard
                 Layout.fillWidth: true
-                Layout.preferredHeight: taskPage.width > 980 ? 280 : 300
+                Layout.preferredHeight: taskPage.width > AppStyle.bpWide ? 280 : 300
                 radius: AppPalette.radiusLarge
                 color: AppPalette.cardBg
                 border.color: dropCard.hovering ? AppPalette.amberColor : AppPalette.borderColor
@@ -292,7 +292,7 @@ Page {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: taskPage.width > 980 ? 280 : 300
+                Layout.preferredHeight: taskPage.width > AppStyle.bpWide ? 280 : 300
                 spacing: AppStyle.spacingLarge
 
                 Rectangle {
@@ -329,7 +329,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: taskPage.pathDisplay(cfg ? cfg.inp : "")
+                            text: FilePathUtils.pathDisplay(cfg ? cfg.inp : "")
                             color: (cfg && cfg.inp !== "") ? AppPalette.textColor : AppPalette.mutedText
                             font.pixelSize: AppStyle.fontBody
                             elide: Text.ElideMiddle
@@ -399,7 +399,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: taskPage.pathDisplay(cfg ? cfg.out : "")
+                            text: FilePathUtils.pathDisplay(cfg ? cfg.out : "")
                             color: (cfg && cfg.out !== "") ? AppPalette.textColor : AppPalette.mutedText
                             font.pixelSize: AppStyle.fontBody
                             elide: Text.ElideMiddle
@@ -571,8 +571,8 @@ Page {
 
                                 Label {
                                     Layout.fillWidth: true
-                                    text: taskPage.selectedGlossaryProfileCount() > 0
-                                          ? "已选 " + taskPage.selectedGlossaryProfileCount() + " 个 profile；开始翻译时生效。"
+                                    text: GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) > 0
+                                          ? "已选 " + GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) + " 个 profile；开始翻译时生效。"
                                           : "未选择 profile；可到术语表页提取或勾选已有 profile。"
                                     color: AppPalette.mutedText
                                     font.pixelSize: AppStyle.fontTiny
@@ -587,8 +587,8 @@ Page {
 
                             Button {
                                 text: "清空选择"
-                                enabled: taskPage.selectedGlossaryProfileCount() > 0
-                                onClicked: taskPage.clearSelectedGlossaryProfiles()
+                                enabled: GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) > 0
+                                onClicked: GlossaryProfileUtils.clearSelectedGlossaryProfiles(taskPage.cfg)
                             }
                         }
 
@@ -619,9 +619,9 @@ Page {
 
                                     delegate: CheckBox {
                                         text: taskPage.glossaryProfileLabel(modelData)
-                                        checked: taskPage.isGlossaryProfileSelected(modelData.profileId || modelData.id || "")
+                                        checked: GlossaryProfileUtils.isGlossaryProfileSelected(taskPage.cfg, modelData.profileId || modelData.id || "")
                                         enabled: !!taskPage.cfg && !!taskPage.cfg.enableGlossary
-                                        onToggled: taskPage.toggleGlossaryProfile(modelData.profileId || modelData.id || "", checked)
+                                        onToggled: GlossaryProfileUtils.toggleGlossaryProfile(taskPage.cfg, modelData.profileId || modelData.id || "", checked)
                                     }
                                 }
                             }
@@ -779,324 +779,33 @@ Page {
         anchors.centerIn: parent
     }
 
-    Dialog {
+    TaskHistoryDialog {
         id: taskHistoryDialog
-        title: "最近任务"
-        modal: true
-        width: Math.max(720, Math.min(980, taskPage.width - 48))
-        height: Math.max(420, Math.min(640, taskPage.height - 72))
-        x: Math.round((taskPage.width - width) / 2)
-        y: Math.round((taskPage.height - height) / 2)
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        ColumnLayout {
-            width: taskHistoryDialog.width - 48
-            spacing: AppStyle.spacingSmall
-
-            Label {
-                Layout.fillWidth: true
-                text: "记录最近翻译任务的状态、进度和输入输出路径；API Key 不会写入历史。"
-                color: AppPalette.mutedText
-                font.pixelSize: AppStyle.fontSmall
-                wrapMode: Text.WordWrap
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: AppStyle.spacingSmall
-
-                Button {
-                    text: "刷新"
-                    onClicked: taskPage.refreshTaskHistory()
-                }
-
-                Button {
-                    text: "清空"
-                    enabled: taskPage.taskHistory.length > 0 && !taskPage.busy
-                    onClicked: taskPage.clearTaskHistory()
-                }
-
-                Button {
-                    text: "继续上次"
-                    enabled: !taskPage.busy && !!(taskPage.latestUnfinishedTask && taskPage.latestUnfinishedTask.task_id)
-                    highlighted: enabled
-                    onClicked: taskPage.resumeLatestTask()
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Button {
-                    text: "关闭"
-                    onClicked: taskHistoryDialog.close()
-                }
-            }
-
-            Label {
-                Layout.fillWidth: true
-                visible: taskPage.taskHistory.length === 0
-                text: "暂无任务历史。开始一次翻译后，这里会显示可追踪记录。"
-                color: AppPalette.mutedText
-                font.pixelSize: AppStyle.fontSmall
-                wrapMode: Text.WordWrap
-            }
-
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                ScrollBar.horizontal.policy: ScrollBar.AsNeeded
-                ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                ListView {
-                    width: parent.width
-                    height: Math.max(0, contentHeight)
-                    spacing: AppStyle.spacingSmall
-                    model: taskPage.taskHistory
-
-                    delegate: Rectangle {
-                        width: ListView.view.width
-                        height: taskPage.width > 900 ? 42 : 58
-                        radius: AppPalette.radiusMedium
-                        color: AppPalette.fieldBg
-                        border.color: AppPalette.lineColor
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            anchors.rightMargin: 8
-                            spacing: AppStyle.spacingSmall
-
-                            Rectangle {
-                                Layout.preferredWidth: 8
-                                Layout.preferredHeight: 8
-                                radius: 4
-                                color: taskPage.taskStatusColor(modelData.status)
-                            }
-
-                            Label {
-                                Layout.preferredWidth: 72
-                                text: taskPage.taskStatusLabel(modelData.status)
-                                color: taskPage.taskStatusColor(modelData.status)
-                                font.pixelSize: AppStyle.fontCaption
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
-                            }
-
-                            Label {
-                                Layout.preferredWidth: 68
-                                text: taskPage.taskProgressText(modelData)
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontCaption
-                                elide: Text.ElideRight
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: taskPage.fileName(modelData.input_path || "")
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontCaption
-                                elide: Text.ElideMiddle
-                            }
-
-                            Label {
-                                visible: taskPage.width > 900
-                                Layout.preferredWidth: 190
-                                text: (modelData.provider || "-") + " / " + (modelData.model || "-")
-                                color: AppPalette.mutedText
-                                font.pixelSize: AppStyle.fontTiny
-                                elide: Text.ElideRight
-                            }
-
-                            Label {
-                                visible: taskPage.width > 980
-                                Layout.preferredWidth: 108
-                                text: taskPage.taskTimeText(modelData.updated_at || modelData.started_at || modelData.created_at)
-                                color: AppPalette.mutedText
-                                font.pixelSize: AppStyle.fontTiny
-                                horizontalAlignment: Text.AlignRight
-                                elide: Text.ElideRight
-                            }
-
-                            Button {
-                                text: "载入"
-                                enabled: !taskPage.busy
-                                onClicked: taskPage.applyTaskRecord(modelData)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        taskHistory: taskPage.taskHistory
+        latestUnfinishedTask: taskPage.latestUnfinishedTask
+        busy: taskPage.busy
+        pageWidth: taskPage.width
+        pageHeight: taskPage.height
+        onRefreshRequested: taskPage.refreshTaskHistory()
+        onClearRequested: taskPage.clearTaskHistory()
+        onResumeLatestRequested: taskPage.resumeLatestTask()
+        onLoadRecordRequested: function(record) { taskPage.applyTaskRecord(record) }
     }
 
-    Dialog {
+    FailedBlocksDialog {
         id: failedBlocksDialog
-        onOpened: taskPage.analyzeFailedBlocks()
-        title: "失败块 / 日文残留"
-        modal: true
-        width: Math.max(760, Math.min(1040, taskPage.width - 48))
-        height: Math.max(460, Math.min(700, taskPage.height - 72))
-        x: Math.round((taskPage.width - width) / 2)
-        y: Math.round((taskPage.height - height) / 2)
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        ColumnLayout {
-            width: failedBlocksDialog.width - 48
-            spacing: AppStyle.spacingSmall
-
-            Label {
-                Layout.fillWidth: true
-                text: "可自动重译未译/残留块；保存前残留样例仍建议人工定位或继续整本续译。"
-                color: AppPalette.mutedText
-                font.pixelSize: AppStyle.fontSmall
-                wrapMode: Text.WordWrap
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: {
-                    var summary = (taskPage.latestUnfinishedTask || {}).recovery_summary || {}
-                    return "恢复统计：尝试 " + Number(summary.attempted || 0) +
-                           "，成功 " + Number(summary.success || 0) +
-                           "，待复核 " + Number(summary.needs_review || 0) +
-                           "，失败 " + Number(summary.failed || 0)
-                }
-                color: AppPalette.mutedText
-                font.pixelSize: AppStyle.fontTiny
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: AppStyle.spacingSmall
-
-                Button {
-                    text: "生成恢复建议"
-                    enabled: !taskPage.busy && taskPage.latestFailedBlocks.length > 0
-                    onClicked: taskPage.analyzeFailedBlocks()
-                }
-
-                ComboBox {
-                    Layout.preferredWidth: 116
-                    model: ["当前模型", "校对模型"]
-                    currentIndex: taskPage.failedBlockProviderModeIndex
-                    onActivated: taskPage.failedBlockProviderModeIndex = currentIndex
-                }
-
-                Button {
-                    text: "重译失败块"
-                    enabled: !taskPage.busy && taskPage.latestFailedBlocks.length > 0
-                    highlighted: enabled
-                    onClicked: taskPage.retranslateFailedBlocks()
-                }
-
-                Button {
-                    text: "查看请求日志"
-                    onClicked: taskPage.navigateToLogs()
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Button {
-                    text: "关闭"
-                    onClicked: failedBlocksDialog.close()
-                }
-            }
-
-            Label {
-                Layout.fillWidth: true
-                visible: taskPage.recoveryAnalysisMessage !== ""
-                text: taskPage.recoveryAnalysisMessage
-                color: AppPalette.accentColor
-                font.pixelSize: AppStyle.fontSmall
-                wrapMode: Text.WordWrap
-            }
-
-            Label {
-                Layout.fillWidth: true
-                visible: taskPage.latestFailedBlocks.length === 0
-                text: "当前没有失败块或保存前残留记录。"
-                color: AppPalette.mutedText
-                font.pixelSize: AppStyle.fontSmall
-                wrapMode: Text.WordWrap
-            }
-
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                ScrollBar.horizontal.policy: ScrollBar.AsNeeded
-                ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                ListView {
-                    width: parent.width
-                    height: Math.max(0, contentHeight)
-                    spacing: AppStyle.spacingSmall
-                    model: taskPage.latestFailedBlocks
-
-                    delegate: Rectangle {
-                        width: ListView.view.width
-                        height: taskPage.width > 900 ? 60 : 78
-                        radius: AppPalette.radiusSmall
-                        color: AppPalette.surfaceRaised
-                        border.color: AppPalette.lineColor
-
-                        RowLayout {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            height: 32
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 6
-                            spacing: AppStyle.spacingSmall
-
-                            Label {
-                                Layout.preferredWidth: 76
-                                text: taskPage.failedBlockKindLabel(modelData.kind)
-                                color: modelData.kind === "save_residue" ? AppPalette.errorColor : AppPalette.amberColor
-                                font.pixelSize: AppStyle.fontTiny
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: taskPage.failedBlockText(modelData)
-                                color: AppPalette.textColor
-                                font.pixelSize: AppStyle.fontTiny
-                                elide: Text.ElideRight
-                            }
-
-                            Button {
-                                text: modelData.kind === "save_residue" ? "定位" : "人工修正"
-                                enabled: !taskPage.busy
-                                onClicked: taskPage.openManualEdit(modelData.text || "", modelData.translation || "")
-                            }
-                        }
-
-                        Label {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            anchors.bottomMargin: 5
-                            text: {
-                                var issue = modelData.recovery_issue || {}
-                                var decision = modelData.recovery_decision || {}
-                                var attempts = Number(modelData.recovery_attempts || 0)
-                                return (issue.issue_type || "未分类") + " | " +
-                                       (decision.action || "未分析") + " | " +
-                                       (modelData.recovery_recommendation || "等待人工确认") +
-                                       " | 已尝试 " + attempts + " 次"
-                            }
-                            color: modelData.recovery_status === "success" ? AppPalette.successColor : AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontTiny
-                            elide: Text.ElideRight
-                        }
-                    }
-                }
-            }
-        }
+        latestFailedBlocks: taskPage.latestFailedBlocks
+        latestUnfinishedTask: taskPage.latestUnfinishedTask
+        busy: taskPage.busy
+        providerModeIndex: taskPage.failedBlockProviderModeIndex
+        recoveryAnalysisMessage: taskPage.recoveryAnalysisMessage
+        pageWidth: taskPage.width
+        pageHeight: taskPage.height
+        onAnalyzeRequested: taskPage.analyzeFailedBlocks()
+        onProviderModeChanged: function(idx) { taskPage.failedBlockProviderModeIndex = idx }
+        onRetranslateRequested: taskPage.retranslateFailedBlocks()
+        onNavigateToLogsRequested: taskPage.navigateToLogs()
+        onManualEditRequested: function(text, translation) { taskPage.openManualEdit(text, translation) }
     }
 
     Timer {
@@ -1159,27 +868,6 @@ Page {
         }
     }
 
-    function defaultOutputPath(path) {
-        var normalized = (path || "").replace(/\\/g, "/")
-        var slash = normalized.lastIndexOf("/")
-        var dir = slash >= 0 ? normalized.substring(0, slash + 1) : ""
-        var base = slash >= 0 ? normalized.substring(slash + 1) : normalized
-        base = base.replace(/\.epub$/i, "")
-        return dir + base + "_zh.epub"
-    }
-
-    function fileName(path) {
-        if (!path || path === "") return "未选择"
-        var normalized = path.replace(/\\/g, "/")
-        var slash = normalized.lastIndexOf("/")
-        return slash >= 0 ? normalized.substring(slash + 1) : normalized
-    }
-
-    function pathDisplay(path) {
-        if (!path || path === "") return "未选择"
-        return path.replace(/\\/g, "/")
-    }
-
     function compactEstimateText(text) {
         if (!text || text === "预估字符: -") return "预估: -"
         return text.replace("预估字符:", "预估:")
@@ -1192,65 +880,6 @@ Page {
         }
         var items = taskPage.cfg.listGlossaryProfiles("") || []
         taskPage.glossaryProfiles = items
-    }
-
-    function selectedGlossaryProfileIds() {
-        if (!taskPage.cfg) return []
-        var raw = taskPage.cfg.selectedGlossaryProfileIds || []
-        var ids = []
-        for (var i = 0; i < raw.length; i++) {
-            var value = String(raw[i] || "").trim()
-            if (value !== "" && ids.indexOf(value) < 0) ids.push(value)
-        }
-        return ids
-    }
-
-    function selectedGlossaryProfileCount() {
-        return taskPage.selectedGlossaryProfileIds().length
-    }
-
-    function setSelectedGlossaryProfileIds(ids) {
-        if (!taskPage.cfg) return
-        var cleaned = []
-        for (var i = 0; i < (ids || []).length; i++) {
-            var value = String(ids[i] || "").trim()
-            if (value !== "" && cleaned.indexOf(value) < 0) cleaned.push(value)
-        }
-        taskPage.cfg.selectedGlossaryProfileIds = cleaned
-        if (cleaned.length > 0) {
-            taskPage.cfg.enableGlossary = true
-            taskPage.cfg.enableLayeredGlossary = true
-        }
-    }
-
-    function clearSelectedGlossaryProfiles() {
-        taskPage.setSelectedGlossaryProfileIds([])
-    }
-
-    function isGlossaryProfileSelected(profileId) {
-        var value = String(profileId || "").trim()
-        if (value === "") return false
-        return taskPage.selectedGlossaryProfileIds().indexOf(value) >= 0
-    }
-
-    function toggleGlossaryProfile(profileId, checked) {
-        var value = String(profileId || "").trim()
-        if (value === "" || !taskPage.cfg) return
-        var ids = taskPage.selectedGlossaryProfileIds()
-        var index = ids.indexOf(value)
-        if (checked && index < 0) ids.push(value)
-        if (!checked && index >= 0) ids.splice(index, 1)
-        taskPage.setSelectedGlossaryProfileIds(ids)
-    }
-
-    function addSelectedGlossaryProfileIds(ids) {
-        if (!ids || ids.length === 0) return
-        var merged = taskPage.selectedGlossaryProfileIds()
-        for (var i = 0; i < ids.length; i++) {
-            var value = String(ids[i] || "").trim()
-            if (value !== "" && merged.indexOf(value) < 0) merged.push(value)
-        }
-        taskPage.setSelectedGlossaryProfileIds(merged)
     }
 
     function glossaryScopeLabel(scope) {
@@ -1316,7 +945,7 @@ Page {
             var out = record.output_path || (record.config ? record.config.out : "")
             if (inp) cfg.inp = inp
             if (out) cfg.out = out
-            else if (inp) cfg.out = taskPage.defaultOutputPath(inp)
+            else if (inp) cfg.out = FilePathUtils.defaultOutputPath(inp)
         }
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
             ToastBridge.showInfo("已载入最近任务配置")
@@ -1357,60 +986,6 @@ Page {
                 ToastBridge.showError(taskPage.recoveryAnalysisMessage)
             }
         }
-    }
-
-    function taskStatusLabel(status) {
-        var value = String(status || "")
-        if (value === "completed") return "已完成"
-        if (value === "running") return "运行中"
-        if (value === "paused") return "可续译"
-        if (value === "pausing") return "暂停中"
-        if (value === "stopping") return "停止中"
-        if (value === "stopped") return "已停止"
-        if (value === "cancelled") return "已取消"
-        if (value === "cancelling") return "取消中"
-        if (value === "failed") return "失败"
-        return value || "-"
-    }
-
-    function taskStatusColor(status) {
-        var value = String(status || "")
-        if (value === "completed") return AppPalette.successColor
-        if (value === "running" || value === "pausing" || value === "stopping" || value === "cancelling") return AppPalette.accentColor
-        if (value === "paused") return AppPalette.amberColor
-        if (value === "failed") return AppPalette.errorColor
-        return AppPalette.mutedText
-    }
-
-    function taskProgressText(record) {
-        if (!record) return "-"
-        var completed = Number(record.completed_texts || 0)
-        var total = Number(record.total_texts || 0)
-        if (total > 0) return completed + "/" + total
-        var progress = Number(record.progress || 0)
-        if (progress > 0) return Math.round(progress * 100) + "%"
-        return "-"
-    }
-
-    function taskTimeText(seconds) {
-        var value = Number(seconds || 0)
-        if (value <= 0) return "-"
-        return Qt.formatDateTime(new Date(value * 1000), "MM-dd hh:mm")
-    }
-
-    function failedBlockKindLabel(kind) {
-        var value = String(kind || "")
-        if (value === "failed") return "未译"
-        if (value === "residue") return "残留"
-        if (value === "save_residue") return "保存前"
-        return "问题"
-    }
-
-    function failedBlockText(block) {
-        if (!block) return "-"
-        var fragments = block.fragments && block.fragments.length > 0 ? (" [" + block.fragments.join(" / ") + "] ") : ""
-        var text = block.text || block.translation || "-"
-        return fragments + text
     }
 
     function modelSummary() {
@@ -1454,7 +1029,7 @@ Page {
     function setInputPath(path) {
         if (cfg) {
             cfg.inp = path
-            cfg.out = taskPage.defaultOutputPath(path)
+            cfg.out = FilePathUtils.defaultOutputPath(path)
         }
         estimateLabel.text = "预估字符: 计算中..."
         Qt.callLater(function() {

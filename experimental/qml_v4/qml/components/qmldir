@@ -15,4 +15,9 @@ TaskActionButton 1.0 TaskActionButton.qml
 SummaryChip 1.0 SummaryChip.qml
 UiMetricsOverlay 1.0 UiMetricsOverlay.qml
 WorkflowShortcutPanel 1.0 WorkflowShortcutPanel.qml
+NavIcon 1.0 NavIcon.qml
+ContactLink 1.0 ContactLink.qml
+NavButton 1.0 NavButton.qml
+TaskHistoryDialog 1.0 TaskHistoryDialog.qml
+FailedBlocksDialog 1.0 FailedBlocksDialog.qml
 singleton ThemeRegistry 1.0 ThemeRegistry.qml

@@ -91,18 +91,6 @@ Page {
         return items
     }
 
-    function fileName(path) {
-        if (!path || path === "") return "未选择"
-        var normalized = String(path).replace(/\\/g, "/")
-        var slash = normalized.lastIndexOf("/")
-        return slash >= 0 ? normalized.substring(slash + 1) : normalized
-    }
-
-    function pathDisplay(path) {
-        if (!path || path === "") return "未选择"
-        return String(path).replace(/\\/g, "/")
-    }
-
     function glossaryExtractionModeIndex(value) {
         var idx = page.glossaryExtractionModeValues.indexOf(String(value || "novel").toLowerCase())
         return idx >= 0 ? idx : 0
@@ -150,65 +138,6 @@ Page {
                 + (model !== "" ? " / " + model : "")
                 + "；模式：" + mode + "。"
                 + page.glossaryProviderCapability(provider)
-    }
-
-    function selectedGlossaryProfileIds() {
-        if (!page.cfg) return []
-        var raw = page.cfg.selectedGlossaryProfileIds || []
-        var ids = []
-        for (var i = 0; i < raw.length; i++) {
-            var value = String(raw[i] || "").trim()
-            if (value !== "" && ids.indexOf(value) < 0) ids.push(value)
-        }
-        return ids
-    }
-
-    function selectedGlossaryProfileCount() {
-        return page.selectedGlossaryProfileIds().length
-    }
-
-    function setSelectedGlossaryProfileIds(ids) {
-        if (!page.cfg) return
-        var cleaned = []
-        for (var i = 0; i < (ids || []).length; i++) {
-            var value = String(ids[i] || "").trim()
-            if (value !== "" && cleaned.indexOf(value) < 0) cleaned.push(value)
-        }
-        page.cfg.selectedGlossaryProfileIds = cleaned
-        if (cleaned.length > 0) {
-            page.cfg.enableGlossary = true
-            page.cfg.enableLayeredGlossary = true
-        }
-    }
-
-    function clearSelectedGlossaryProfiles() {
-        page.setSelectedGlossaryProfileIds([])
-    }
-
-    function isGlossaryProfileSelected(profileId) {
-        var value = String(profileId || "").trim()
-        if (value === "") return false
-        return page.selectedGlossaryProfileIds().indexOf(value) >= 0
-    }
-
-    function toggleGlossaryProfile(profileId, checked) {
-        var value = String(profileId || "").trim()
-        if (value === "" || !page.cfg) return
-        var ids = page.selectedGlossaryProfileIds()
-        var index = ids.indexOf(value)
-        if (checked && index < 0) ids.push(value)
-        if (!checked && index >= 0) ids.splice(index, 1)
-        page.setSelectedGlossaryProfileIds(ids)
-    }
-
-    function addSelectedGlossaryProfileIds(ids) {
-        if (!ids || ids.length === 0) return
-        var merged = page.selectedGlossaryProfileIds()
-        for (var i = 0; i < ids.length; i++) {
-            var value = String(ids[i] || "").trim()
-            if (value !== "" && merged.indexOf(value) < 0) merged.push(value)
-        }
-        page.setSelectedGlossaryProfileIds(merged)
     }
 
     function glossaryProfileLabel(profile) {
@@ -444,7 +373,7 @@ Page {
             if (!result || Number(result.failed_count || 0) === 0) {
                 page.clearGlossaryExtractionBooks()
             }
-            page.addSelectedGlossaryProfileIds(result && result.profile_ids ? result.profile_ids : [])
+            GlossaryProfileUtils.addSelectedGlossaryProfileIds(page.cfg, result && result.profile_ids ? result.profile_ids : [])
             page.refreshGlossaryProfiles()
             if (page.cfg && page.cfg.notifyGlossaryProfilesChanged) {
                 page.cfg.notifyGlossaryProfilesChanged()
@@ -453,7 +382,7 @@ Page {
         function onGlossaryPostApplyFinished(result) {
             var message = result && result.message ? result.message : "术语后处理完成"
             if (result && result.output_path) {
-                message += "；输出: " + page.fileName(result.output_path)
+                message += "；输出: " + FilePathUtils.fileName(result.output_path)
             } else if (result && result.output_paths && result.output_paths.length > 0) {
                 message += "；输出 " + result.output_paths.length + " 本"
             }
@@ -988,8 +917,8 @@ Page {
                                 }
                                 Label {
                                     Layout.fillWidth: true
-                                    text: page.selectedGlossaryProfileCount() > 0
-                                          ? "已选 " + page.selectedGlossaryProfileCount() + " 个 profile；开始翻译或译后统一时生效。"
+                                    text: GlossaryProfileUtils.selectedGlossaryProfileCount(page.cfg) > 0
+                                          ? "已选 " + GlossaryProfileUtils.selectedGlossaryProfileCount(page.cfg) + " 个 profile；开始翻译或译后统一时生效。"
                                           : "未选择 profile；可先提取术语，或刷新后勾选已有 profile。"
                                     color: AppPalette.mutedText
                                     font.pixelSize: AppStyle.fontCaption
@@ -1020,8 +949,8 @@ Page {
                             }
                             Button {
                                 text: "清空选择"
-                                enabled: page.selectedGlossaryProfileCount() > 0
-                                onClicked: page.clearSelectedGlossaryProfiles()
+                                enabled: GlossaryProfileUtils.selectedGlossaryProfileCount(page.cfg) > 0
+                                onClicked: GlossaryProfileUtils.clearSelectedGlossaryProfiles(page.cfg)
                             }
                         }
 
@@ -1051,9 +980,9 @@ Page {
                                     model: glossaryProfileModel
                                     delegate: CheckBox {
                                         text: page.glossaryProfileScopeLabel(scope) + " / " + (name || "未命名") + " / " + Number(termCount || 0) + " 条"
-                                        checked: page.isGlossaryProfileSelected(profileId || "")
+                                        checked: GlossaryProfileUtils.isGlossaryProfileSelected(page.cfg, profileId || "")
                                         enabled: !!page.cfg && !!page.cfg.enableGlossary
-                                        onToggled: page.toggleGlossaryProfile(profileId || "", checked)
+                                        onToggled: GlossaryProfileUtils.toggleGlossaryProfile(page.cfg, profileId || "", checked)
                                     }
                                 }
                             }
@@ -1151,7 +1080,7 @@ Page {
                                     spacing: AppStyle.spacingSmall
                                     Label {
                                         Layout.fillWidth: true
-                                        text: page.pathDisplay(modelData)
+                                        text: FilePathUtils.pathDisplay(modelData)
                                         color: AppPalette.textColor
                                         font.pixelSize: AppStyle.fontTiny
                                         elide: Text.ElideMiddle
@@ -1238,7 +1167,7 @@ Page {
                                     spacing: AppStyle.spacingSmall
                                     Label {
                                         Layout.fillWidth: true
-                                        text: page.pathDisplay(modelData)
+                                        text: FilePathUtils.pathDisplay(modelData)
                                         color: AppPalette.textColor
                                         font.pixelSize: AppStyle.fontTiny
                                         elide: Text.ElideMiddle

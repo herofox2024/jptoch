@@ -50,6 +50,10 @@ QtObject {
     readonly property color successColor: glass ? "#238c59" : (dark ? "#86d391" : "#2f8a46")
     readonly property color errorColor: glass ? "#c94a3f" : (dark ? "#ff8a80" : "#c83c32")
 
+    // 品牌渐变（logo / AI 徽章 / 进度条共用）
+    readonly property color brandGradientStart: "#635bff"
+    readonly property color brandGradientEnd: "#0088ff"
+
     // 玻璃效果专用
     readonly property color glassHighlight: Qt.rgba(1, 1, 1, glass ? 0.72 : 0.0)
     readonly property color glassShadow: glass ? Qt.rgba(0.08, 0.18, 0.20, 0.16) : Qt.rgba(0, 0, 0, 0)

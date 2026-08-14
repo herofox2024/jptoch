@@ -38,7 +38,7 @@ ApplicationWindow {
     property bool glossaryPageLoaded: false
     property bool optionsPageLoaded: false
     property bool workspaceLogExpanded: true
-    readonly property bool showWorkspaceLog: workspaceLogExpanded && width >= 1360
+    readonly property bool showWorkspaceLog: workspaceLogExpanded && width >= AppStyle.bpLogVisible
 
     Material.theme: appWindow.darkMode ? Material.Dark : Material.Light
     Material.accent: AppPalette.accentColor
@@ -195,8 +195,8 @@ ApplicationWindow {
                 radius: 8
                 gradient: Gradient {
                     orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "#635bff" }
-                    GradientStop { position: 1.0; color: "#0088ff" }
+                    GradientStop { position: 0.0; color: AppPalette.brandGradientStart }
+                    GradientStop { position: 1.0; color: AppPalette.brandGradientEnd }
                 }
                 border.color: appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.48) : "transparent"
                 Label {
@@ -257,8 +257,8 @@ ApplicationWindow {
                 radius: 16
                 gradient: Gradient {
                     orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "#635bff" }
-                    GradientStop { position: 1.0; color: "#0088ff" }
+                    GradientStop { position: 0.0; color: AppPalette.brandGradientStart }
+                    GradientStop { position: 1.0; color: AppPalette.brandGradientEnd }
                 }
                 Label {
                     anchors.centerIn: parent
@@ -336,12 +336,60 @@ ApplicationWindow {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: AppStyle.spacingSmall
-                    NavButton { iconName: "task"; label: "工作台"; desc: "翻译与任务"; pageIndex: 0 }
-                    NavButton { iconName: "status"; label: "状态"; desc: "实时进度"; pageIndex: 1 }
-                    NavButton { iconName: "log"; label: "日志"; desc: "实时诊断"; pageIndex: 2 }
-                    NavButton { iconName: "api"; label: "API"; desc: "模型接口"; pageIndex: 3 }
-                    NavButton { iconName: "glossary"; label: "术语表"; desc: "名词统一"; pageIndex: 4 }
-                    NavButton { iconName: "settings"; label: "设置"; desc: "性能校对"; pageIndex: 5 }
+                    NavButton {
+                        iconName: "task"
+                        label: "工作台"
+                        desc: "翻译与任务"
+                        pageIndex: 0
+                        active: pageStack.currentIndex === 0
+                        glassMode: appWindow.glassMode
+                        onActivated: function(idx) { appWindow.switchPage(idx) }
+                    }
+                    NavButton {
+                        iconName: "status"
+                        label: "状态"
+                        desc: "实时进度"
+                        pageIndex: 1
+                        active: pageStack.currentIndex === 1
+                        glassMode: appWindow.glassMode
+                        onActivated: function(idx) { appWindow.switchPage(idx) }
+                    }
+                    NavButton {
+                        iconName: "log"
+                        label: "日志"
+                        desc: "实时诊断"
+                        pageIndex: 2
+                        active: pageStack.currentIndex === 2
+                        glassMode: appWindow.glassMode
+                        onActivated: function(idx) { appWindow.switchPage(idx) }
+                    }
+                    NavButton {
+                        iconName: "api"
+                        label: "API"
+                        desc: "模型接口"
+                        pageIndex: 3
+                        active: pageStack.currentIndex === 3
+                        glassMode: appWindow.glassMode
+                        onActivated: function(idx) { appWindow.switchPage(idx) }
+                    }
+                    NavButton {
+                        iconName: "glossary"
+                        label: "术语表"
+                        desc: "名词统一"
+                        pageIndex: 4
+                        active: pageStack.currentIndex === 4
+                        glassMode: appWindow.glassMode
+                        onActivated: function(idx) { appWindow.switchPage(idx) }
+                    }
+                    NavButton {
+                        iconName: "settings"
+                        label: "设置"
+                        desc: "性能校对"
+                        pageIndex: 5
+                        active: pageStack.currentIndex === 5
+                        glassMode: appWindow.glassMode
+                        onActivated: function(idx) { appWindow.switchPage(idx) }
+                    }
                 }
 
                 Item { Layout.fillHeight: true }
@@ -385,12 +433,14 @@ ApplicationWindow {
                             label: "GitHub"
                             value: "herofox2024/jptoch"
                             targetUrl: "https://github.com/herofox2024/jptoch"
+                            glassMode: appWindow.glassMode
                         }
 
                         ContactLink {
                             label: "Email"
                             value: "42845734@qq.com"
                             targetUrl: "mailto:42845734@qq.com"
+                            glassMode: appWindow.glassMode
                         }
                     }
                 }
@@ -523,7 +573,7 @@ ApplicationWindow {
         }
 
         ToolButton {
-            visible: !appWindow.workspaceLogExpanded && appWindow.width >= 1360
+            visible: !appWindow.workspaceLogExpanded && appWindow.width >= AppStyle.bpLogVisible
             Layout.preferredWidth: 36
             Layout.alignment: Qt.AlignTop
             text: ">"
@@ -542,301 +592,6 @@ ApplicationWindow {
         targetWindow: appWindow
         targetContent: pageStack
         fontFamily: appWindow.uiFont
-    }
-
-    component NavButton: Item {
-        id: navBtn
-        property string iconName: ""
-        property string label: ""
-        property string desc: ""
-        property int pageIndex: 0
-        property bool hovering: false
-        readonly property bool active: pageStack.currentIndex === pageIndex
-
-        Layout.fillWidth: true
-        Layout.preferredHeight: AppStyle.navButtonHeight
-        activeFocusOnTab: true
-
-        function activate() {
-            appWindow.switchPage(navBtn.pageIndex)
-            navBtn.forceActiveFocus()
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            radius: 8
-            color: navBtn.active
-                   ? AppPalette.navActiveBg
-                   : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.10) : "transparent")
-            border.color: navBtn.active
-                          ? (appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.72) : AppPalette.accentColor)
-                          : (navBtn.activeFocus ? AppPalette.amberColor : (appWindow.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.18) : "transparent"))
-            border.width: navBtn.active || navBtn.activeFocus || (appWindow.glassMode && navBtn.hovering) ? 1 : 0
-            Behavior on border.color { ColorAnimation { duration: 120 } }
-        }
-
-        Rectangle {
-            visible: appWindow.glassMode && navBtn.active
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
-            height: 1
-            color: Qt.rgba(1, 1, 1, 0.72)
-        }
-
-        Rectangle {
-            width: 4
-            height: 28
-            radius: 2
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            color: AppPalette.accentColor
-            visible: navBtn.active
-        }
-
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 14
-            anchors.rightMargin: 12
-            spacing: AppStyle.spacingMedium
-
-            Item {
-                Layout.preferredWidth: 34
-                Layout.preferredHeight: AppStyle.buttonHeightSmall
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 7
-                    color: navBtn.active
-                           ? AppPalette.accentColor
-                           : AppPalette.cardAlt
-                    opacity: 1.0
-                }
-                NavIcon {
-                    anchors.centerIn: parent
-                    width: 21
-                    height: 21
-                    name: navBtn.iconName
-                    lineColor: navBtn.active ? "white" : AppPalette.mutedText
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: AppStyle.spacingNone
-                Label {
-                    text: navBtn.label
-                    color: navBtn.active ? AppPalette.accentColor : AppPalette.textColor
-                    font.pixelSize: AppStyle.fontBodyLarge
-                    font.weight: Font.DemiBold
-                }
-                Label {
-                    text: navBtn.desc
-                    color: AppPalette.mutedText
-                    font.pixelSize: AppStyle.fontTiny
-                }
-            }
-        }
-
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onEntered: navBtn.hovering = true
-            onExited: navBtn.hovering = false
-            onClicked: navBtn.activate()
-        }
-
-        Keys.onReturnPressed: navBtn.activate()
-        Keys.onEnterPressed: navBtn.activate()
-        Keys.onSpacePressed: navBtn.activate()
-        Accessible.role: Accessible.Button
-        Accessible.name: navBtn.label
-        Accessible.description: navBtn.desc
-    }
-
-    component ContactLink: Rectangle {
-        id: contactLink
-        property string label: ""
-        property string value: ""
-        property string targetUrl: ""
-        property bool hovering: false
-
-        Layout.fillWidth: true
-        Layout.preferredHeight: AppStyle.buttonHeightCompact
-        radius: 10
-        color: contactLink.hovering || contactLink.activeFocus
-               ? (AppPalette.dark || appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.16) : AppPalette.accentSoft)
-               : (AppPalette.dark || appWindow.glassMode ? Qt.rgba(1, 1, 1, 0.07) : AppPalette.cardAlt)
-        border.color: contactLink.activeFocus
-                      ? AppPalette.accentColor
-                      : (AppPalette.dark || appWindow.glassMode ? Qt.rgba(255, 255, 255, 0.10) : AppPalette.lineColor)
-        border.width: 1
-        activeFocusOnTab: true
-
-        function openTarget() {
-            if (contactLink.targetUrl !== "") {
-                Qt.openUrlExternally(contactLink.targetUrl)
-                contactLink.forceActiveFocus()
-            }
-        }
-
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 9
-            anchors.rightMargin: 9
-            spacing: AppStyle.spacingInline
-
-            Label {
-                text: contactLink.label
-                color: AppPalette.accentColor
-                font.pixelSize: AppStyle.fontTiny
-                font.weight: Font.DemiBold
-                Layout.preferredWidth: 42
-                elide: Text.ElideRight
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: contactLink.value
-                color: AppPalette.textColor
-                font.pixelSize: AppStyle.fontTiny
-                elide: Text.ElideRight
-            }
-        }
-
-        MouseArea {
-            id: mouseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onEntered: contactLink.hovering = true
-            onExited: contactLink.hovering = false
-            onClicked: contactLink.openTarget()
-        }
-
-        Keys.onReturnPressed: contactLink.openTarget()
-        Keys.onEnterPressed: contactLink.openTarget()
-        Keys.onSpacePressed: contactLink.openTarget()
-        Accessible.role: Accessible.Link
-        Accessible.name: contactLink.label + " " + contactLink.value
-    }
-
-    component NavIcon: Item {
-        id: navIcon
-        property string name: "task"
-        property color lineColor: "white"
-
-        Canvas {
-            id: iconCanvas
-            anchors.fill: parent
-            antialiasing: true
-
-            function px(v) { return v * width / 24 }
-            function py(v) { return v * height / 24 }
-
-            function roundedRect(ctx, x, y, w, h, r) {
-                ctx.beginPath()
-                ctx.moveTo(px(x + r), py(y))
-                ctx.lineTo(px(x + w - r), py(y))
-                ctx.quadraticCurveTo(px(x + w), py(y), px(x + w), py(y + r))
-                ctx.lineTo(px(x + w), py(y + h - r))
-                ctx.quadraticCurveTo(px(x + w), py(y + h), px(x + w - r), py(y + h))
-                ctx.lineTo(px(x + r), py(y + h))
-                ctx.quadraticCurveTo(px(x), py(y + h), px(x), py(y + h - r))
-                ctx.lineTo(px(x), py(y + r))
-                ctx.quadraticCurveTo(px(x), py(y), px(x + r), py(y))
-            }
-
-            function line(ctx, x1, y1, x2, y2) {
-                ctx.beginPath()
-                ctx.moveTo(px(x1), py(y1))
-                ctx.lineTo(px(x2), py(y2))
-                ctx.stroke()
-            }
-
-            function circle(ctx, x, y, r, fill) {
-                ctx.beginPath()
-                ctx.arc(px(x), py(y), px(r), 0, Math.PI * 2)
-                if (fill) ctx.fill()
-                else ctx.stroke()
-            }
-
-            onPaint: {
-                var ctx = getContext("2d")
-                ctx.reset()
-                ctx.clearRect(0, 0, width, height)
-                ctx.strokeStyle = navIcon.lineColor
-                ctx.fillStyle = navIcon.lineColor
-                ctx.lineWidth = Math.max(1.7, width / 13)
-                ctx.lineCap = "round"
-                ctx.lineJoin = "round"
-
-                if (navIcon.name === "task") {
-                    roundedRect(ctx, 5, 3.5, 12.5, 17, 2)
-                    ctx.stroke()
-                    line(ctx, 8, 9, 14, 9)
-                    line(ctx, 8, 13, 15, 13)
-                    line(ctx, 8, 17, 12, 17)
-                    line(ctx, 14.5, 3.5, 18.5, 7.5)
-                } else if (navIcon.name === "status") {
-                    circle(ctx, 12, 12, 8, false)
-                    ctx.beginPath()
-                    ctx.arc(px(12), py(12), px(8), -Math.PI / 2, Math.PI / 5)
-                    ctx.stroke()
-                    line(ctx, 12, 12, 16, 9)
-                    circle(ctx, 12, 12, 1.2, true)
-                } else if (navIcon.name === "api") {
-                    roundedRect(ctx, 3.5, 6, 17, 12, 2.5)
-                    ctx.stroke()
-                    line(ctx, 7, 12, 10, 12)
-                    line(ctx, 14, 12, 17, 12)
-                    circle(ctx, 12, 12, 1.4, true)
-                    line(ctx, 12, 6, 12, 3.5)
-                    line(ctx, 12, 18, 12, 20.5)
-                } else if (navIcon.name === "log") {
-                    roundedRect(ctx, 4.5, 3.5, 15, 17, 2.2)
-                    ctx.stroke()
-                    line(ctx, 8, 8, 16, 8)
-                    line(ctx, 8, 12, 16, 12)
-                    line(ctx, 8, 16, 13.5, 16)
-                    circle(ctx, 6.8, 8, 0.45, true)
-                    circle(ctx, 6.8, 12, 0.45, true)
-                    circle(ctx, 6.8, 16, 0.45, true)
-                } else if (navIcon.name === "glossary") {
-                    ctx.beginPath()
-                    ctx.moveTo(px(4), py(6))
-                    ctx.quadraticCurveTo(px(8), py(4), px(12), py(6))
-                    ctx.quadraticCurveTo(px(16), py(4), px(20), py(6))
-                    ctx.lineTo(px(20), py(19))
-                    ctx.quadraticCurveTo(px(16), py(17), px(12), py(19))
-                    ctx.quadraticCurveTo(px(8), py(17), px(4), py(19))
-                    ctx.closePath()
-                    ctx.stroke()
-                    line(ctx, 12, 6, 12, 19)
-                    line(ctx, 7, 10, 10, 9.5)
-                    line(ctx, 14, 9.5, 17, 10)
-                } else {
-                    circle(ctx, 12, 12, 4, false)
-                    for (var i = 0; i < 8; i++) {
-                        var a = i * Math.PI / 4
-                        var x1 = 12 + Math.cos(a) * 7
-                        var y1 = 12 + Math.sin(a) * 7
-                        var x2 = 12 + Math.cos(a) * 9
-                        var y2 = 12 + Math.sin(a) * 9
-                        line(ctx, x1, y1, x2, y2)
-                    }
-                }
-            }
-
-            Component.onCompleted: requestPaint()
-            onWidthChanged: requestPaint()
-            onHeightChanged: requestPaint()
-        }
-
-        onNameChanged: iconCanvas.requestPaint()
-        onLineColorChanged: iconCanvas.requestPaint()
     }
 
     // ====== Toast 通知浮层 ======

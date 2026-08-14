@@ -49,10 +49,22 @@ QtObject {
     readonly property int infoBarHeight: 44
     readonly property int navButtonHeight: 58
 
+    // 响应式布局断点（视口/窗口宽度，px）
+    readonly property int bpCompact: 680      // 紧凑：操作按钮 2 列
+    readonly property int bpNarrow: 880       // 窄屏：隐藏次要状态
+    readonly property int bpSmall: 900        // 小屏：列表单行 / 布局收窄
+    readonly property int bpMedium: 920       // 中屏：统计卡片 2 列
+    readonly property int bpWide: 980         // 宽屏：双栏 / 按钮 5 列
+    readonly property int bpLogVisible: 1360   // 侧边实时日志可见
+
     readonly property color statusNeutralBg: AppPalette.cardAlt
     readonly property color statusAccentBg: AppPalette.accentSoft
-    readonly property color statusWarningBg: AppPalette.dark ? "#3b2d1c" : "#f2e4cf"
-    readonly property color statusErrorBg: AppPalette.dark ? "#3a2420" : "#f6ded9"
+    readonly property color statusWarningBg: AppPalette.glass
+                                             ? Qt.rgba(0.82, 0.55, 0.16, 0.16)
+                                             : (AppPalette.dark ? "#3b2d1c" : "#f2e4cf")
+    readonly property color statusErrorBg: AppPalette.glass
+                                           ? Qt.rgba(0.80, 0.24, 0.20, 0.14)
+                                           : (AppPalette.dark ? "#3a2420" : "#f6ded9")
     readonly property color statusSuccessBg: AppPalette.glass
                                              ? Qt.rgba(0.30, 0.72, 0.48, 0.18)
                                              : (AppPalette.dark ? "#203f2a" : "#dcefdc")
