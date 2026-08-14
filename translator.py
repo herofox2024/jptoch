@@ -26,6 +26,11 @@ from glossary_store import has_valid_glossary_match as gs_has_valid_glossary_mat
 from glossary_store import normalize_policy as gs_normalize_policy
 from provider_registry import (
     API_KEY_REQUIRED_PROVIDERS,
+    GLM_FREE_MODEL_MARKERS,
+    GLM_FREE_MODEL_RATE_LIMIT,
+    HYMT2_RUNTIME_RATE_LIMITS,
+    LONGCAT_ENDPOINT_MARKER,
+    LONGCAT_RATE_LIMIT,
     PROVIDER_DEFAULTS,
     SUPPORTED_PROVIDERS,
     normalize_api_url,
@@ -543,10 +548,6 @@ class JaZhTranslator:
     FAST_BATCH_MAX_CHARS = 2600
     FAST_BATCH_LONG_THRESHOLD = 700
     RATE_WINDOW_SECONDS = 60.0
-    PROVIDER_RATE_PRESETS: Dict[str, Dict[str, int]] = {
-        "deepseek": {"rpm": 36, "tpm": 120000, "max_workers": 6, "batch_size": 6},
-        "longcat": {"rpm": 24, "tpm": 90000, "max_workers": 4, "batch_size": 4},
-    }
 
     def _provider_uses_context_window(self) -> bool:
         """Hy-MT2 is prone to leaking reference context into the translation."""
@@ -600,10 +601,6 @@ class JaZhTranslator:
     @classmethod
     def _get_provider_default_model(cls, provider: str) -> str:
         return provider_default_model(provider)
-
-    @classmethod
-    def _get_provider_rate_profile(cls, provider: str) -> Dict[str, int]:
-        return dict(cls.PROVIDER_RATE_PRESETS.get((provider or "").strip().lower(), {}))
 
     def _get_proofread_url(self) -> str:
         """获取校对专用 API URL。"""
@@ -698,8 +695,9 @@ class JaZhTranslator:
             self.hymt2_runtime_mode = "cpu"
         self.glossary_extraction_mode = self._normalize_glossary_extraction_mode(glossary_extraction_mode)
         hymt2_official_mode = self.provider == "hymt2" and self.hymt2_generation_mode == "official"
-        default_temperature = 0.7 if hymt2_official_mode else (0.1 if self.provider in {"sakura", "hymt2"} else 0.3)
-        default_top_p = 0.6 if hymt2_official_mode else (0.3 if self.provider in {"sakura", "hymt2"} else None)
+        provider_defaults = PROVIDER_DEFAULTS.get(self.provider)
+        default_temperature = 0.7 if hymt2_official_mode else (provider_defaults.default_temperature if provider_defaults else 0.3)
+        default_top_p = 0.6 if hymt2_official_mode else (provider_defaults.default_top_p if provider_defaults else None)
         self.temperature = temperature if temperature is not None else default_temperature
         self.top_p = top_p if top_p is not None else default_top_p
         self.top_k = int(top_k) if top_k is not None else (20 if hymt2_official_mode else None)
@@ -710,28 +708,30 @@ class JaZhTranslator:
         )
         self.max_tokens = int(max_tokens) if max_tokens is not None else (4096 if hymt2_official_mode else None)
         self.frequency_penalty = (
-            frequency_penalty if frequency_penalty is not None else (0.1 if self.provider == "sakura" else None)
+            frequency_penalty
+            if frequency_penalty is not None
+            else (provider_defaults.default_frequency_penalty if provider_defaults else None)
         )
         glm_model_name = self.model.lower()
-        is_glm_free_or_flash = self.provider == "glm" and ("flash" in glm_model_name or "free" in glm_model_name)
+        is_glm_free_or_flash = self.provider == "glm" and any(
+            marker in glm_model_name for marker in GLM_FREE_MODEL_MARKERS
+        )
         if is_glm_free_or_flash:
-            max_workers = min(max_workers, 2)
-            batch_size = min(batch_size, 2)
-            max_batch_length = min(max_batch_length, 500)
-            max_text_size_for_batch = min(max_text_size_for_batch, 150)
+            limit = GLM_FREE_MODEL_RATE_LIMIT
+            max_workers = min(max_workers, limit.max_workers)
+            batch_size = min(batch_size, limit.batch_size)
+            max_batch_length = min(max_batch_length, limit.max_batch_length)
+            max_text_size_for_batch = min(max_text_size_for_batch, limit.max_text_size_for_batch)
         if self.provider == "hymt2":
             old_workers, old_batch = max_workers, batch_size
-            if self.hymt2_runtime_mode == "gpu":
-                max_workers = min(max_workers, 6)
-                batch_size = min(batch_size, 8)
-                max_batch_length = min(max_batch_length, 1000)
-                max_text_size_for_batch = min(max_text_size_for_batch, 250)
-            else:
-                max_workers = min(max_workers, 1)
-                batch_size = min(batch_size, 1)
-                max_batch_length = min(max_batch_length, 300)
-                max_text_size_for_batch = min(max_text_size_for_batch, 120)
-            api_timeout = max(api_timeout, 300)
+            limit = HYMT2_RUNTIME_RATE_LIMITS.get(
+                self.hymt2_runtime_mode, HYMT2_RUNTIME_RATE_LIMITS["cpu"]
+            )
+            max_workers = min(max_workers, limit.max_workers)
+            batch_size = min(batch_size, limit.batch_size)
+            max_batch_length = min(max_batch_length, limit.max_batch_length)
+            max_text_size_for_batch = min(max_text_size_for_batch, limit.max_text_size_for_batch)
+            api_timeout = max(api_timeout, limit.min_timeout)
             if (old_workers, old_batch) != (max_workers, batch_size):
                 logger.info(
                     "Hy-MT2 本地%s模式: 并发 %s→%s，批量 %s→%s",
@@ -742,10 +742,10 @@ class JaZhTranslator:
                     batch_size,
                 )
         endpoint_hint = f"{self.api_url} {self.model}".lower()
-        if "longcat" in endpoint_hint:
+        if LONGCAT_ENDPOINT_MARKER in endpoint_hint:
             old_workers, old_batch = max_workers, batch_size
-            max_workers = min(max_workers, 4)
-            batch_size = min(batch_size, 4)
+            max_workers = min(max_workers, LONGCAT_RATE_LIMIT.max_workers)
+            batch_size = min(batch_size, LONGCAT_RATE_LIMIT.batch_size)
             if (old_workers, old_batch) != (max_workers, batch_size):
                 logger.info(
                     "LongCat 稳定性保护: 并发 %s→%s，批量 %s→%s",
@@ -755,11 +755,10 @@ class JaZhTranslator:
                     batch_size,
                 )
 
-        rate_profile = self._get_provider_rate_profile(self.provider)
-        if rate_profile:
+        if provider_defaults:
             old_workers, old_batch = max_workers, batch_size
-            profile_workers = int(rate_profile.get("max_workers") or 0)
-            profile_batch = int(rate_profile.get("batch_size") or 0)
+            profile_workers = int(provider_defaults.max_workers or 0)
+            profile_batch = int(provider_defaults.batch_size or 0)
             if profile_workers > 0:
                 max_workers = min(max_workers, profile_workers)
             if profile_batch > 0:
@@ -773,8 +772,11 @@ class JaZhTranslator:
                     old_batch,
                     batch_size,
                 )
-        self._provider_rpm_limit = int(rate_profile.get("rpm") or 0)
-        self._provider_tpm_limit = int(rate_profile.get("tpm") or 0)
+            self._provider_rpm_limit = int(provider_defaults.rpm or 0)
+            self._provider_tpm_limit = int(provider_defaults.tpm or 0)
+        else:
+            self._provider_rpm_limit = 0
+            self._provider_tpm_limit = 0
 
         data_dir = get_data_dir()
         self.glossary_path = glossary_path or str(data_dir / "glossary.json")
