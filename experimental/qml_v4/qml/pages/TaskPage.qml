@@ -10,30 +10,7 @@ import "../components"
 Page {
     id: taskPage
     padding: AppStyle.pagePadding
-    background: Item {
-        Rectangle {
-            anchors.fill: parent
-            color: "transparent"
-        }
-        Rectangle {
-            width: 360
-            height: 360
-            radius: 180
-            x: parent.width - width * 0.65
-            y: -height * 0.45
-            color: AppPalette.glass ? AppPalette.glassGlowCyan : AppPalette.accentSoft
-            opacity: AppPalette.dark ? 0.16 : 0.24
-        }
-        Rectangle {
-            width: 280
-            height: 280
-            radius: 140
-            x: -width * 0.42
-            y: parent.height - height * 0.58
-            color: AppPalette.glass ? AppPalette.glassGlowAmber : AppPalette.backgroundAlt
-            opacity: AppPalette.dark ? 0.16 : 0.32
-        }
-    }
+    background: Item {}
 
     property var cfg: null
     property var tbridge: null
@@ -180,9 +157,6 @@ Page {
                 color: AppPalette.cardBg
                 border.color: dropCard.hovering ? AppPalette.amberColor : AppPalette.borderColor
                 border.width: dropCard.hovering ? 2 : 1
-                scale: dropCard.hovering ? 1.02 : 1.0
-                y: dropCard.hovering ? -3 : 0
-                opacity: dropCard.hovering ? 1.0 : 0.98
 
                 layer.enabled: true
                 layer.effect: MultiEffect {
@@ -193,16 +167,6 @@ Page {
                 }
 
                 property bool hovering: false
-
-                Behavior on y {
-                    NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
-                }
-                Behavior on scale {
-                    NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
-                }
-                Behavior on opacity {
-                    NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
-                }
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -216,7 +180,7 @@ Page {
                         Rectangle {
                             Layout.preferredWidth: 42
                             Layout.preferredHeight: 42
-                            radius: 14
+                            radius: AppPalette.radiusLarge
                             color: AppPalette.accentSoft
                             border.color: AppPalette.lineColor
                             Label {
@@ -251,27 +215,10 @@ Page {
                         id: dropArea
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        radius: 22
+                        radius: AppPalette.radiusMedium
                         color: dropCard.hovering ? AppPalette.accentSoft : AppPalette.fieldBg
                         border.color: dropCard.hovering ? AppPalette.amberColor : AppPalette.lineColor
                         border.width: dropCard.hovering ? 2 : 1
-                        scale: dropCard.hovering ? 1.01 : 1.0
-                        Behavior on scale {
-                            NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
-                        }
-
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: -5
-                            radius: 27
-                            color: "transparent"
-                            border.color: AppPalette.amberColor
-                            border.width: dropCard.hovering ? 2 : 0
-                            opacity: dropCard.hovering ? 0.62 : 0
-                            Behavior on opacity {
-                                NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
-                            }
-                        }
 
                         ColumnLayout {
                             anchors.centerIn: parent

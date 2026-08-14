@@ -53,6 +53,9 @@ Page {
     property string qualityReportSuggestions: ""
     property string qualityReportGeneratedAt: ""
     property string diagnosticsText: ""
+    property bool qualityDetailsExpanded: false
+    property bool blockMapExpanded: true
+    property bool proofreadDetailsExpanded: false
     readonly property bool compactLayout: height < 760
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
 
@@ -692,26 +695,37 @@ Page {
                                     title: page.qualityReportStatus
                                     tone: page.qualityReportStatus === "通过" ? "accent" : (page.qualityReportAvailable ? "amber" : "neutral")
                                 }
+
+                                ToolButton {
+                                    text: page.qualityDetailsExpanded ? "−" : "+"
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: page.qualityDetailsExpanded ? "收起质量明细" : "展开质量明细"
+                                    onClicked: page.qualityDetailsExpanded = !page.qualityDetailsExpanded
+                                }
                             }
                         }
 
                         ReportField {
+                            visible: page.qualityDetailsExpanded
                             title: "关键指标"
                             body: page.qualityReportMetrics
                             tone: "normal"
                         }
                         ReportField {
+                            visible: page.qualityDetailsExpanded
                             title: "提醒"
                             body: page.qualityReportWarnings
                             tone: page.qualityReportStatus === "通过" ? "normal" : "accent"
                         }
                         ReportField {
+                            visible: page.qualityDetailsExpanded
                             title: "建议"
                             body: page.qualityReportSuggestions
                             tone: "accent"
                         }
 
                         RowLayout {
+                            visible: page.qualityDetailsExpanded
                             Layout.fillWidth: true
                             spacing: AppStyle.spacingMedium
 
@@ -738,27 +752,42 @@ Page {
                     anchors.margins: page.compactLayout ? AppStyle.spacingLarge : AppStyle.spacingXXLarge
                     spacing: page.compactLayout ? AppStyle.spacingMedium : AppStyle.spacingLarge
 
-                    ColumnLayout {
+                    RowLayout {
                         Layout.fillWidth: true
-                        spacing: AppStyle.spacingTight
+                        spacing: AppStyle.spacingMedium
 
-                        Label {
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            text: "文本块进度"
-                            color: AppPalette.textColor
-                            font.pixelSize: AppStyle.fontSubSection
-                            font.weight: Font.DemiBold
+                            spacing: AppStyle.spacingTight
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: "文本块进度"
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontSubSection
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.statCompleted + " / " + (page.statTotal > 0 ? page.statTotal : "--")
+                                      + "，警告 " + page.statJapaneseResidueRemaining
+                                      + "，失败 " + page.statFailCount
+                                color: AppPalette.mutedText
+                                font.pixelSize: AppStyle.fontSmall
+                                elide: Text.ElideRight
+                            }
                         }
-                        Label {
-                            Layout.fillWidth: true
-                            text: "使用色块显示已完成、处理中、警告和失败的文本块。"
-                            color: AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontSmall
-                            elide: Text.ElideRight
+
+                        ToolButton {
+                            text: page.blockMapExpanded ? "−" : "+"
+                            ToolTip.visible: hovered
+                            ToolTip.text: page.blockMapExpanded ? "收起文本块地图" : "展开文本块地图"
+                            onClicked: page.blockMapExpanded = !page.blockMapExpanded
                         }
                     }
 
                     TranslationBlockMap {
+                        visible: page.blockMapExpanded
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         Layout.minimumHeight: 120
@@ -832,10 +861,18 @@ Page {
                                     font.weight: Font.DemiBold
                                 }
                             }
+
+                            ToolButton {
+                                text: page.proofreadDetailsExpanded ? "−" : "+"
+                                ToolTip.visible: hovered
+                                ToolTip.text: page.proofreadDetailsExpanded ? "收起校对记录" : "展开校对记录"
+                                onClicked: page.proofreadDetailsExpanded = !page.proofreadDetailsExpanded
+                            }
                         }
                     }
 
                     Item {
+                        visible: page.proofreadDetailsExpanded
                         Layout.fillWidth: true
                         Layout.fillHeight: true
 

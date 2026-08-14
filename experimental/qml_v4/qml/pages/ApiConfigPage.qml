@@ -794,6 +794,7 @@ Page {
 
     Dialog {
         id: localModelDialog
+        readonly property bool compactLayout: width < 900
         title: "Hy-MT2 本地模型"
         modal: true
         width: Math.max(780, Math.min(1100, page.width - 48))
@@ -806,7 +807,7 @@ Page {
             width: localModelDialog.width - 48
             height: localModelDialog.height - 96
             clip: true
-            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
             ColumnLayout {
@@ -866,7 +867,7 @@ Page {
 
                 GridLayout {
                     Layout.fillWidth: true
-                    columns: 3
+                    columns: localModelDialog.compactLayout ? 1 : 3
                     rowSpacing: 10
                     columnSpacing: 12
 
@@ -931,7 +932,7 @@ Page {
 
                 GridLayout {
                     Layout.fillWidth: true
-                    columns: 3
+                    columns: localModelDialog.compactLayout ? 1 : 3
                     rowSpacing: 10
                     columnSpacing: 12
 
@@ -981,10 +982,10 @@ Page {
                         font.pixelSize: AppStyle.fontSmall
                     }
 
-                    Item {}
+                    Item { visible: !localModelDialog.compactLayout }
                     Label {
                         Layout.fillWidth: true
-                        Layout.columnSpan: 2
+                        Layout.columnSpan: localModelDialog.compactLayout ? 1 : 2
                         text: page.localModel && page.localModel.backendMode === "server"
                               ? "GPU 模式仅对 llama-server.exe 外部模式生效：CUDA 会追加 --gpu-layers 999，CPU 会追加 --gpu-layers 0。注意必须使用 CUDA 版 llama-server.exe，CPU 版程序不会真正调用显卡。"
                               : "Python 本地模式固定 CPU：当前 llama-cpp-python 不支持 CUDA，GPU 模式在此模式下不会生效。"
@@ -1003,7 +1004,7 @@ Page {
                         wrapMode: Text.WordWrap
                         font.pixelSize: AppStyle.fontSmall
                     }
-                    Item {}
+                    Item { visible: !localModelDialog.compactLayout }
 
                     FieldLabel { text: "生成模式" }
                     ComboBox {
@@ -1051,7 +1052,7 @@ Page {
 
                 GridLayout {
                     Layout.fillWidth: true
-                    columns: 3
+                    columns: localModelDialog.compactLayout ? 1 : 3
                     rowSpacing: 10
                     columnSpacing: 12
 

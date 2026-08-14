@@ -25,7 +25,22 @@ Page {
     property bool loadedOnce: false
     property var selectedRows: []
     property string statusMessage: "暂无术语"
+    property var detailTerm: ({})
+    readonly property bool narrowTable: width < AppStyle.bpWide
+    readonly property bool mediumTable: width < 1180
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
+
+    function openTermDetails(category, original, translation, aliases, policy, note) {
+        page.detailTerm = {
+            "category": category || "-",
+            "original": original || "-",
+            "translation": translation || "-",
+            "aliases": aliases || "-",
+            "policy": policy || "默认策略",
+            "note": note || "-"
+        }
+        termDetailDialog.open()
+    }
 
     function clearSelection() {
         page.selectedRows = []
@@ -459,13 +474,14 @@ Page {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: AppStyle.spacingNone
-                    TableHeader { w: 56; text: "选择"; first: true }
-                    TableHeader { w: 104; text: "分类" }
-                    TableHeader { w: 210; text: "原文" }
-                    TableHeader { w: 210; text: "译文" }
-                    TableHeader { w: 220; text: "中文别名" }
-                    TableHeader { w: 120; text: "应用策略" }
-                    TableHeader { w: -1; text: "备注/来源"; last: true }
+                    TableHeader { w: page.narrowTable ? 48 : 56; text: "选择"; first: true }
+                    TableHeader { visible: !page.narrowTable; w: 104; text: "分类" }
+                    TableHeader { w: page.narrowTable ? -1 : 210; text: "原文" }
+                    TableHeader { w: page.narrowTable ? -1 : 210; text: "译文" }
+                    TableHeader { w: page.narrowTable ? -1 : 220; text: "中文别名" }
+                    TableHeader { visible: !page.narrowTable; w: 120; text: "应用策略" }
+                    TableHeader { visible: !page.mediumTable; w: -1; text: "备注/来源"; last: true }
+                    TableHeader { visible: page.narrowTable; w: 52; text: "详情"; last: true }
                 }
 
                 ListView {
@@ -493,7 +509,7 @@ Page {
                             spacing: AppStyle.spacingNone
 
                             Rectangle {
-                                Layout.preferredWidth: 56
+                                Layout.preferredWidth: page.narrowTable ? 48 : 56
                                 Layout.fillHeight: true
                                 color: "transparent"
                                 Rectangle {
@@ -521,41 +537,59 @@ Page {
                             }
 
                             CellEditor {
+                                visible: !page.narrowTable
                                 w: 104
                                 value: category || ""
                                 editable: cfg ? cfg.enableGlossary : true
                                 onCommit: function(text) { model.category = text; page.dirty = true; page.refreshStats() }
                             }
                             CellEditor {
-                                w: 210
+                                w: page.narrowTable ? -1 : 210
                                 value: original || ""
                                 editable: cfg ? cfg.enableGlossary : true
                                 onCommit: function(text) { model.original = text; page.dirty = true; page.refreshStats() }
                             }
                             CellEditor {
-                                w: 210
+                                w: page.narrowTable ? -1 : 210
                                 value: translation || ""
                                 editable: cfg ? cfg.enableGlossary : true
                                 accent: true
                                 onCommit: function(text) { model.translation = text; page.dirty = true; page.refreshStats() }
                             }
                             CellEditor {
-                                w: 220
+                                w: page.narrowTable ? -1 : 220
                                 value: aliases || ""
                                 editable: cfg ? cfg.enableGlossary : true
                                 onCommit: function(text) { model.aliases = text; page.dirty = true; page.refreshStats() }
                             }
                             PolicySelector {
+                                visible: !page.narrowTable
                                 w: 120
                                 value: policy || "默认策略"
                                 editable: cfg ? cfg.enableGlossary : true
                                 onCommit: function(text) { model.policy = text; page.dirty = true; page.refreshStats() }
                             }
                             CellEditor {
+                                visible: !page.mediumTable
                                 w: -1
                                 value: note || ""
                                 editable: false
                                 muted: true
+                            }
+
+                            Rectangle {
+                                visible: page.narrowTable
+                                Layout.preferredWidth: 52
+                                Layout.fillHeight: true
+                                color: "transparent"
+
+                                ToolButton {
+                                    anchors.centerIn: parent
+                                    text: "…"
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "查看完整术语信息"
+                                    onClicked: page.openTermDetails(category, original, translation, aliases, policy, note)
+                                }
                             }
                         }
                     }
@@ -611,6 +645,42 @@ Page {
         anchors.fill: parent
         cfg: page.cfg
         tbridge: page.tbridge
+    }
+
+    Dialog {
+        id: termDetailDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(420, Math.min(page.width - 48, 720))
+        height: Math.max(440, Math.min(page.height - 72, 660))
+        title: "术语详情"
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: ScrollView {
+            width: termDetailDialog.width - 48
+            height: termDetailDialog.height - 96
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            ColumnLayout {
+                width: Math.max(0, termDetailDialog.width - 72)
+                spacing: AppStyle.spacingMedium
+
+                ReportField { title: "分类"; body: page.detailTerm.category || "-" }
+                ReportField { title: "原文"; body: page.detailTerm.original || "-" }
+                ReportField { title: "译文"; body: page.detailTerm.translation || "-"; tone: "accent" }
+                ReportField { title: "中文别名"; body: page.detailTerm.aliases || "-" }
+                ReportField { title: "应用策略"; body: page.detailTerm.policy || "默认策略" }
+                ReportField { title: "备注 / 来源"; body: page.detailTerm.note || "-" }
+
+                Button {
+                    Layout.alignment: Qt.AlignRight
+                    text: "关闭"
+                    onClicked: termDetailDialog.close()
+                }
+            }
+        }
     }
 
     FileDialog {

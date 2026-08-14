@@ -195,18 +195,36 @@ Page {
         TabBar {
             id: settingsTabs
             Layout.fillWidth: true
+            Layout.preferredHeight: AppStyle.buttonHeightNormal
+            spacing: AppStyle.spacingXSmall
+
+            contentItem: ListView {
+                model: settingsTabs.contentModel
+                currentIndex: settingsTabs.currentIndex
+                orientation: ListView.Horizontal
+                spacing: settingsTabs.spacing
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.AutoFlickIfNeeded
+                snapMode: ListView.SnapToItem
+                highlightMoveDuration: 120
+                ScrollBar.horizontal: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                }
+            }
+
             background: Rectangle {
-                radius: 18
+                radius: AppPalette.radiusLarge
                 color: AppPalette.cardAlt
                 border.color: AppPalette.lineColor
             }
-            TabButton { text: "性能" }
-            TabButton { text: "输出" }
-            TabButton { text: "风格" }
-            TabButton { text: "校对" }
-            TabButton { text: "缓存" }
-            TabButton { text: "界面" }
-            TabButton { text: "更新" }
+            TabButton { text: "性能"; width: Math.max(88, implicitWidth) }
+            TabButton { text: "输出"; width: Math.max(88, implicitWidth) }
+            TabButton { text: "风格"; width: Math.max(88, implicitWidth) }
+            TabButton { text: "校对"; width: Math.max(88, implicitWidth) }
+            TabButton { text: "缓存"; width: Math.max(88, implicitWidth) }
+            TabButton { text: "界面"; width: Math.max(88, implicitWidth) }
+            TabButton { text: "更新"; width: Math.max(88, implicitWidth) }
         }
 
         StackLayout {
@@ -741,52 +759,34 @@ Page {
                     title: "保存前日文残留策略"
                     Layout.fillWidth: true
 
-                    ColumnLayout {
+                    RowLayout {
                         width: parent.width
-                        spacing: AppStyle.spacingMedium
+                        spacing: AppStyle.spacingLarge
 
-                        GridLayout {
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            columns: 2
-                            rowSpacing: 10
-                            columnSpacing: 12
+                            spacing: AppStyle.spacingTight
 
-                            Label { text: "处理策略" }
-                            ComboBox {
-                                id: residuePolicyCombo
+                            Label {
                                 Layout.fillWidth: true
-                                model: page.residuePolicyLabels
-                                currentIndex: page.residuePolicyIndex(cfg ? cfg.japaneseResiduePolicy : "balanced")
-                                onActivated: function(index) {
-                                    if (cfg) {
-                                        cfg.japaneseResiduePolicy = page.residuePolicyValues[index]
-                                    }
-                                }
+                                text: "当前策略：" + page.residuePolicyLabels[page.residuePolicyIndex(cfg ? cfg.japaneseResiduePolicy : "balanced")]
+                                color: AppPalette.textColor
+                                font.pixelSize: AppStyle.fontBody
+                                font.weight: Font.DemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: page.residuePolicyDescription(cfg ? cfg.japaneseResiduePolicy : "balanced")
+                                color: AppPalette.mutedText
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: AppStyle.fontSmall
                             }
                         }
 
-                        Label {
-                            Layout.fillWidth: true
-                            text: page.residuePolicyDescription(cfg ? cfg.japaneseResiduePolicy : "balanced")
-                            color: AppPalette.mutedText
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: AppStyle.fontSmall
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: "风险分层：高风险=整句或长假名疑似未译；中风险=短词残留但应翻译；低风险=标题、人名、机构名或术语类残留；弱风险=极短假名噪声。保存前会先自动修复已知片假名词和地名振假名。"
-                            color: AppPalette.mutedText
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: AppStyle.fontSmall
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: "残留报告会保存到 C:\\Users\\HUAWEI\\.epub_translator\\residue_reports。不要把明显应该翻译的日文加入白名单，优先加入片假名术语修复词表。"
-                            color: AppPalette.amberColor
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: AppStyle.fontSmall
+                        Button {
+                            text: "配置策略"
+                            highlighted: true
+                            onClicked: residuePolicyDialog.open()
                         }
                     }
                 }
@@ -795,99 +795,33 @@ Page {
                     title: "智能失败恢复"
                     Layout.fillWidth: true
 
-                    ColumnLayout {
+                    RowLayout {
                         width: parent.width
-                        spacing: AppStyle.spacingMedium
+                        spacing: AppStyle.spacingLarge
 
-                        CheckBox {
-                            text: "启用智能失败恢复（默认关闭）"
-                            checked: cfg ? cfg.enableRecoveryAgent : false
-                            onToggled: if (cfg) cfg.enableRecoveryAgent = checked
-                        }
-                        Label {
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            text: "仅生成失败块恢复建议，不会自动修改 EPUB。高风险残留、内容审核和谜题中的日文引用仍需人工确认。"
-                            color: AppPalette.mutedText
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: AppStyle.fontSmall
+                            spacing: AppStyle.spacingTight
+
+                            CheckBox {
+                                text: "启用智能失败恢复"
+                                checked: cfg ? cfg.enableRecoveryAgent : false
+                                onToggled: if (cfg) cfg.enableRecoveryAgent = checked
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: "置信度 " + Math.round((cfg ? cfg.recoveryMinConfidence : 0.85) * 100)
+                                      + "% · 最多 " + (cfg ? cfg.recoveryMaxAttempts : 2)
+                                      + " 次 · 备用模型 " + ((cfg && cfg.recoveryFallbackProvider) ? cfg.recoveryFallbackProvider : "未配置")
+                                color: AppPalette.mutedText
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: AppStyle.fontSmall
+                            }
                         }
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: 2
-                            columnSpacing: 12
-                            rowSpacing: 8
-                            enabled: cfg ? cfg.enableRecoveryAgent : false
 
-                            Label { text: "最低执行置信度" }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Slider {
-                                    id: recoveryConfidenceSlider
-                                    Layout.fillWidth: true
-                                    from: 0.50
-                                    to: 1.00
-                                    stepSize: 0.05
-                                    value: cfg ? cfg.recoveryMinConfidence : 0.85
-                                    onMoved: if (cfg) cfg.recoveryMinConfidence = value
-                                }
-                                Label { text: Math.round((recoveryConfidenceSlider.value || 0.85) * 100) + "%" }
-                            }
-
-                            Label { text: "单块最大恢复次数" }
-                            SpinBox {
-                                from: 1
-                                to: 5
-                                value: cfg ? cfg.recoveryMaxAttempts : 2
-                                onValueModified: if (cfg) cfg.recoveryMaxAttempts = value
-                            }
-
-                            Label { text: "备用模型 Provider" }
-                            ComboBox {
-                                id: recoveryProviderCombo
-                                Layout.fillWidth: true
-                                model: ["不使用", "DeepSeek", "LongCat", "Hy-MT2", "自定义"]
-                                property var providerValues: ["", "deepseek", "longcat", "hymt2", "custom"]
-                                currentIndex: Math.max(0, providerValues.indexOf(cfg ? cfg.recoveryFallbackProvider : ""))
-                                onActivated: function(index) {
-                                    if (!cfg) return
-                                    var provider = providerValues[index] || ""
-                                    cfg.recoveryFallbackProvider = provider
-                                    if (provider === "") {
-                                        cfg.recoveryFallbackApiUrl = ""
-                                        cfg.recoveryFallbackModel = ""
-                                    } else {
-                                        var defaults = cfg.getProviderDefaults(provider)
-                                        cfg.recoveryFallbackApiUrl = defaults.url || ""
-                                        cfg.recoveryFallbackModel = defaults.model || ""
-                                    }
-                                }
-                            }
-
-                            Label { text: "备用 Base URL" }
-                            TextField {
-                                Layout.fillWidth: true
-                                text: cfg ? cfg.recoveryFallbackApiUrl : ""
-                                placeholderText: "留空表示不使用备用模型"
-                                selectByMouse: true
-                                onTextChanged: if (cfg) cfg.recoveryFallbackApiUrl = text
-                            }
-
-                            Label { text: "备用模型名" }
-                            TextField {
-                                Layout.fillWidth: true
-                                text: cfg ? cfg.recoveryFallbackModel : ""
-                                selectByMouse: true
-                                onTextChanged: if (cfg) cfg.recoveryFallbackModel = text
-                            }
-
-                            Label { text: "备用 API Key" }
-                            TextField {
-                                Layout.fillWidth: true
-                                echoMode: TextInput.Password
-                                text: cfg ? cfg.recoveryFallbackApiKey : ""
-                                selectByMouse: true
-                                onTextChanged: if (cfg) cfg.recoveryFallbackApiKey = text
-                            }
+                        Button {
+                            text: "高级配置"
+                            onClicked: recoverySettingsDialog.open()
                         }
                     }
                 }
@@ -1089,6 +1023,20 @@ Page {
         onBatchAddRequested: function(files, noticeText) {
             page.batchAddNoticePages(files, noticeText)
         }
+    }
+
+    ResiduePolicyDialog {
+        id: residuePolicyDialog
+        cfg: page.cfg
+        pageWidth: page.width
+        pageHeight: page.height
+    }
+
+    RecoverySettingsDialog {
+        id: recoverySettingsDialog
+        cfg: page.cfg
+        pageWidth: page.width
+        pageHeight: page.height
     }
 
     KnownKatakanaTermsDialog {

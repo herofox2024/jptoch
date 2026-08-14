@@ -259,8 +259,28 @@ Page {
                     spacing: AppStyle.spacingMedium
 
                     Button { text: "刷新"; onClicked: page.reloadRecent(true) }
-                    Button { text: "清空日志"; onClicked: page.clearRecentLog() }
-                    Button { text: "打开日志目录"; onClicked: if (page.logBridge) page.logBridge.openLogDirectory() }
+
+                    ToolButton {
+                        text: "⋯"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "更多运行日志操作"
+                        onClicked: runningLogMenu.open()
+
+                        Menu {
+                            id: runningLogMenu
+                            y: parent.height
+
+                            MenuItem {
+                                text: "打开日志目录"
+                                onTriggered: if (page.logBridge) page.logBridge.openLogDirectory()
+                            }
+                            MenuSeparator {}
+                            MenuItem {
+                                text: "清空运行日志"
+                                onTriggered: page.clearRecentLog()
+                            }
+                        }
+                    }
 
                     Item { Layout.fillWidth: true }
 
@@ -324,8 +344,28 @@ Page {
 
                     Button { text: "搜索"; onClicked: page.reloadRequestLogs() }
                     Button { text: "刷新"; onClicked: page.reloadRequestLogs() }
-                    Button { text: "清空请求日志"; onClicked: page.clearRequestLogs() }
-                    Button { text: "打开目录"; onClicked: if (page.logBridge) page.logBridge.openRequestLogDirectory() }
+
+                    ToolButton {
+                        text: "⋯"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "更多请求日志操作"
+                        onClicked: requestLogMenu.open()
+
+                        Menu {
+                            id: requestLogMenu
+                            y: parent.height
+
+                            MenuItem {
+                                text: "打开请求日志目录"
+                                onTriggered: if (page.logBridge) page.logBridge.openRequestLogDirectory()
+                            }
+                            MenuSeparator {}
+                            MenuItem {
+                                text: "清空请求日志"
+                                onTriggered: page.clearRequestLogs()
+                            }
+                        }
+                    }
                 }
 
                 Label {
