@@ -24,4 +24,6 @@ NoticePageDialog 1.0 NoticePageDialog.qml
 UpdateDialog 1.0 UpdateDialog.qml
 KnownKatakanaTermsDialog 1.0 KnownKatakanaTermsDialog.qml
 ResidueAllowlistDialog 1.0 ResidueAllowlistDialog.qml
+GlossaryProfileSection 1.0 GlossaryProfileSection.qml
+TableHeader 1.0 TableHeader.qml
 singleton ThemeRegistry 1.0 ThemeRegistry.qml
