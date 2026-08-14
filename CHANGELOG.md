@@ -4,6 +4,19 @@
 
 发布新版本前，在这里新增对应版本小节，例如 `## v4.1.2`。GitHub Actions 会自动读取该小节，并追加提交摘要后写入 Release 页面。
 
+## v4.2.0
+- 统一内容审核错误判定逻辑
+- 重构限流与默认参数管理
+- 新增通用组件与工具类，重构术语表与导航逻辑
+- 新建NoticePageDialog.qml弹窗组件用于版权提示页管理
+- 在qmldir中注册新增的弹窗组件
+- 重构OptionsPage中的弹窗代码，替换为封装好的NoticePageDialog
+- 抽离弹窗组件到独立文件并重构选项页逻辑
+- 增两个QML组件：GlossaryProfileSection和TableHeader，同时更新qmldir注册这两个新组件
+- 完成UI优化与组件复用重构
+- 移除顶部header栏布局
+
+
 ## v4.1.9
 
 - 新增内容审核拦截处理与统计逻辑
