@@ -31,6 +31,7 @@ ApplicationWindow {
     property var logBridge: LogBridge
     property var toast: typeof ToastBridge !== "undefined" ? ToastBridge : null
     property int currentPageIndex: 0
+    property int previousPageIndex: 0
     property bool taskPageLoaded: true
     property bool monitorPageLoaded: false
     property bool logPageLoaded: false
@@ -77,12 +78,21 @@ ApplicationWindow {
 
     function switchPage(index) {
         if (appWindow.currentPageIndex === index) return
+        appWindow.previousPageIndex = appWindow.currentPageIndex
         appWindow.markPageLoaded(index)
         appWindow.currentPageIndex = index
         Qt.callLater(appWindow.activateCurrentPage)
     }
 
+    function pageX(i) {
+        if (appWindow.currentPageIndex === i) return 0
+        var dir = appWindow.currentPageIndex >= appWindow.previousPageIndex ? 1 : -1
+        if (appWindow.previousPageIndex === i) return -dir * pageStack.width * 0.25
+        return dir * pageStack.width * 0.25
+    }
+
     function openRequestLogsPage() {
+        appWindow.previousPageIndex = appWindow.currentPageIndex
         appWindow.markPageLoaded(2)
         appWindow.currentPageIndex = 2
         Qt.callLater(function() {
@@ -110,6 +120,7 @@ ApplicationWindow {
     }
 
     function openManualEditFromMonitor(original, translation) {
+        appWindow.previousPageIndex = appWindow.currentPageIndex
         appWindow.markPageLoaded(0)
         appWindow.currentPageIndex = 0
         Qt.callLater(function() {
@@ -463,7 +474,7 @@ ApplicationWindow {
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 0
                     opacity: appWindow.currentPageIndex === 0 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 0 ? 1.0 : 0.992
+                    x: appWindow.pageX(0)
                     sourceComponent: TaskPage {
                         cfg: appWindow.cfg
                         tbridge: appWindow.tbridge
@@ -473,7 +484,7 @@ ApplicationWindow {
                         onNavigateToSettings: appWindow.switchPage(5)
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
@@ -483,7 +494,7 @@ ApplicationWindow {
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 1
                     opacity: appWindow.currentPageIndex === 1 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 1 ? 1.0 : 0.992
+                    x: appWindow.pageX(1)
                     sourceComponent: MonitorPage {
                         cfg: appWindow.cfg
                         tbridge: appWindow.tbridge
@@ -492,7 +503,7 @@ ApplicationWindow {
                         }
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
@@ -502,12 +513,12 @@ ApplicationWindow {
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 3
                     opacity: appWindow.currentPageIndex === 3 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 3 ? 1.0 : 0.992
+                    x: appWindow.pageX(3)
                     sourceComponent: ApiConfigPage {
                         cfg: appWindow.cfg
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
@@ -517,12 +528,12 @@ ApplicationWindow {
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 2
                     opacity: appWindow.currentPageIndex === 2 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 2 ? 1.0 : 0.992
+                    x: appWindow.pageX(2)
                     sourceComponent: LogPage {
                         logBridge: appWindow.logBridge
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
@@ -532,7 +543,7 @@ ApplicationWindow {
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 4
                     opacity: appWindow.currentPageIndex === 4 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 4 ? 1.0 : 0.992
+                    x: appWindow.pageX(4)
                     sourceComponent: GlossaryPage {
                         cfg: appWindow.cfg
                         gbridge: appWindow.gbridge
@@ -540,7 +551,7 @@ ApplicationWindow {
                     }
                     onLoaded: appWindow.activateCurrentPage()
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
@@ -550,14 +561,14 @@ ApplicationWindow {
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 5
                     opacity: appWindow.currentPageIndex === 5 ? 1 : 0
-                    scale: appWindow.currentPageIndex === 5 ? 1.0 : 0.992
+                    x: appWindow.pageX(5)
                     sourceComponent: OptionsPage {
                         cfg: appWindow.cfg
                         tbridge: appWindow.tbridge
                         updater: appWindow.updater
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-                    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
             }
         }

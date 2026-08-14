@@ -1,7 +1,8 @@
-﻿import QtQuick
+import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import QtQuick.Effects
 import ".."
 
 Page {
@@ -169,7 +170,7 @@ Page {
                 color: AppPalette.textColor
                 font.family: page.titleFont
                 font.pixelSize: AppStyle.fontPageTitle
-                font.weight: Font.DemiBold
+                font.weight: Font.Bold
             }
 
             Label {
@@ -213,6 +214,14 @@ Page {
             radius: AppPalette.radiusLarge
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
+
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                shadowBlur: 0.25
+                shadowVerticalOffset: AppPalette.shadowYOffset
+            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -281,6 +290,14 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                shadowBlur: 0.25
+                shadowVerticalOffset: AppPalette.shadowYOffset
+            }
+
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
@@ -328,6 +345,14 @@ Page {
             color: AppPalette.cardBg
             border.color: AppPalette.borderColor
             clip: true
+
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                shadowBlur: 0.25
+                shadowVerticalOffset: AppPalette.shadowYOffset
+            }
 
             ScrollView {
                 visible: page.activeTab === 0

@@ -189,7 +189,7 @@ Page {
             color: AppPalette.textColor
             font.family: page.titleFont
             font.pixelSize: AppStyle.fontPageTitle
-            font.weight: Font.DemiBold
+            font.weight: Font.Bold
         }
 
         TabBar {

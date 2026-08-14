@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtQuick.Effects
 import ".."
 import "../components"
 
@@ -366,7 +367,7 @@ Page {
                     color: AppPalette.textColor
                     font.family: page.titleFont
                     font.pixelSize: AppStyle.fontPageTitle
-                    font.weight: Font.DemiBold
+                    font.weight: Font.Bold
                 }
                 Label {
                     visible: !page.compactLayout
@@ -398,6 +399,14 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                shadowBlur: 0.25
+                shadowVerticalOffset: AppPalette.shadowYOffset
+            }
+
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: page.compactLayout ? AppStyle.spacingXLarge : AppStyle.spacingHuge
@@ -414,11 +423,13 @@ Page {
                         font.pixelSize: AppStyle.fontSmall
                         font.weight: Font.DemiBold
                     }
-                    Label {
-                        text: page.progressPercentText()
-                        color: AppPalette.accentColor
-                        font.pixelSize: page.compactLayout ? 38 : AppStyle.fontHero
-                        font.weight: Font.DemiBold
+                    RingProgress {
+                        Layout.alignment: Qt.AlignHCenter
+                        value: page.safeProgress()
+                        centerText: page.progressPercentText()
+                        size: page.compactLayout ? 76 : 96
+                        strokeWidth: 8
+                        ringColor: AppPalette.brandGradientStart
                     }
                     Label {
                         Layout.fillWidth: true

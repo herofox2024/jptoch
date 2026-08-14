@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import QtQuick.Layouts
 import ".."
 
@@ -11,6 +12,7 @@ Rectangle {
     property string tone: ""
     property real cardWidth: 112
     property real viewportWidth: 800
+    property bool hovered: false
 
     width: cardWidth
     height: viewportWidth > 760 ? 76 : 70
@@ -23,6 +25,19 @@ Rectangle {
     radius: AppPalette.radiusMedium
     color: AppPalette.surfaceRaised
     border.color: AppPalette.lineColor
+
+    scale: hovered ? 1.02 : 1.0
+    Behavior on scale {
+        NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+    }
+
+    layer.enabled: true
+    layer.effect: MultiEffect {
+        shadowEnabled: true
+        shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+        shadowBlur: 0.25
+        shadowVerticalOffset: AppPalette.shadowYOffset
+    }
 
     readonly property color toneColor: tone === "accent"
                                        ? AppPalette.accentColor
@@ -68,5 +83,12 @@ Rectangle {
             font.weight: Font.DemiBold
             elide: Text.ElideRight
         }
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        onEntered: root.hovered = true
+        onExited: root.hovered = false
     }
 }

@@ -50,9 +50,16 @@ QtObject {
     readonly property color successColor: glass ? "#238c59" : (dark ? "#86d391" : "#2f8a46")
     readonly property color errorColor: glass ? "#c94a3f" : (dark ? "#ff8a80" : "#c83c32")
 
-    // 品牌渐变（logo / AI 徽章 / 进度条共用）
-    readonly property color brandGradientStart: "#635bff"
-    readonly property color brandGradientEnd: "#0088ff"
+    // 品牌渐变（logo / AI 徽章 / 进度条共用，随主题三态变化）
+    readonly property color brandGradientStart: glass ? "#0d8f8f" : (dark ? "#8fd3c4" : "#635bff")
+    readonly property color brandGradientEnd:   glass ? "#4fc3c0" : (dark ? "#5fb8ab" : "#0088ff")
+
+    // 阴影（卡片浮起层次）
+    readonly property color shadowColor: dark ? Qt.rgba(0, 0, 0, 0.45)
+                                              : Qt.rgba(31, 45, 61, 0.10)
+    readonly property color shadowColorGlass: Qt.rgba(0.08, 0.18, 0.20, 0.20)
+    // MultiEffect 的 shadowVerticalOffset 是相对 source 高度的比例（0.01 = 1%）
+    readonly property real shadowYOffset: 0.02
 
     // 玻璃效果专用
     readonly property color glassHighlight: Qt.rgba(1, 1, 1, glass ? 0.72 : 0.0)

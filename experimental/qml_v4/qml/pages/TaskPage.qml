@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
+import QtQuick.Effects
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import ".."
@@ -78,7 +79,7 @@ Page {
                     color: AppPalette.textColor
                     font.family: taskPage.titleFont
                     font.pixelSize: AppStyle.fontPageTitle
-                    font.weight: Font.DemiBold
+                    font.weight: Font.Bold
                 }
                 Label {
                     text: "把 EPUB 放到工作台上，确认源文件和输出文件，然后开始翻译或断点续译。"
@@ -125,6 +126,14 @@ Page {
                     radius: AppPalette.radiusLarge
                     color: AppPalette.cardBg
                     border.color: AppPalette.lineColor
+
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                        shadowBlur: 0.25
+                        shadowVerticalOffset: AppPalette.shadowYOffset
+                    }
 
                     RowLayout {
                         anchors.fill: parent
@@ -174,6 +183,14 @@ Page {
                 scale: dropCard.hovering ? 1.02 : 1.0
                 y: dropCard.hovering ? -3 : 0
                 opacity: dropCard.hovering ? 1.0 : 0.98
+
+                layer.enabled: true
+                layer.effect: MultiEffect {
+                    shadowEnabled: true
+                    shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                    shadowBlur: 0.25
+                    shadowVerticalOffset: AppPalette.shadowYOffset
+                }
 
                 property bool hovering: false
 
@@ -302,6 +319,14 @@ Page {
                     color: AppPalette.surfaceRaised
                     border.color: AppPalette.borderColor
 
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                        shadowBlur: 0.25
+                        shadowVerticalOffset: AppPalette.shadowYOffset
+                    }
+
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 18
@@ -374,6 +399,14 @@ Page {
                     radius: AppPalette.radiusLarge
                     color: AppPalette.surfaceRaised
                     border.color: AppPalette.borderColor
+
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                        shadowBlur: 0.25
+                        shadowVerticalOffset: AppPalette.shadowYOffset
+                    }
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -467,6 +500,14 @@ Page {
             radius: AppPalette.radiusLarge
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
+
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                shadowBlur: 0.25
+                shadowVerticalOffset: AppPalette.shadowYOffset
+            }
 
             ColumnLayout {
                 id: glossaryLayerContent
@@ -638,6 +679,14 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
             clip: true
+
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
+                shadowBlur: 0.25
+                shadowVerticalOffset: AppPalette.shadowYOffset
+            }
 
             RowLayout {
                 id: taskHistorySummaryRow

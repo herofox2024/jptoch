@@ -435,13 +435,11 @@ Item {
                             }
                         }
 
-                        Label {
+                        EmptyState {
                             Layout.fillWidth: true
                             visible: glossaryProfileModel.count === 0
-                            text: "暂无可选 profile。可以在下方选择 EPUB 并提取术语。"
-                            color: AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontCaption
-                            wrapMode: Text.WordWrap
+                            iconName: "glossary"
+                            description: "暂无可选 profile。可以在下方选择 EPUB 并提取术语。"
                         }
 
                         ScrollView {
@@ -890,36 +888,12 @@ Item {
                                 }
                             }
 
-                            Rectangle {
+                            EmptyState {
                                 anchors.centerIn: parent
-                                width: Math.min(parent.width - 48, 420)
-                                height: 112
-                                radius: AppPalette.radiusLarge
                                 visible: glossaryProfileModel.count === 0
-                                color: AppPalette.surfaceRaised
-                                border.color: AppPalette.borderColor
-
-                                ColumnLayout {
-                                    anchors.centerIn: parent
-                                    width: parent.width - 36
-                                    spacing: AppStyle.spacingSmall
-                                    Label {
-                                        Layout.fillWidth: true
-                                        horizontalAlignment: Text.AlignHCenter
-                                        text: "暂无 profile"
-                                        color: AppPalette.textColor
-                                        font.pixelSize: AppStyle.fontSection
-                                        font.weight: Font.DemiBold
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        horizontalAlignment: Text.AlignHCenter
-                                        wrapMode: Text.WordWrap
-                                        text: "可在任务页点击“提取本书术语”，或点击“保存当前术语表”生成题材/系列/本书 profile。"
-                                        color: AppPalette.mutedText
-                                        font.pixelSize: AppStyle.fontSmall
-                                    }
-                                }
+                                iconName: "glossary"
+                                title: "暂无 profile"
+                                description: "可在任务页点击“提取本书术语”，或点击“保存当前术语表”生成题材/系列/本书 profile。"
                             }
                         }
                     }

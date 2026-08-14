@@ -106,13 +106,11 @@ Dialog {
             }
         }
 
-        Label {
+        EmptyState {
             Layout.fillWidth: true
             visible: dialog.taskHistory.length === 0
-            text: "暂无任务历史。开始一次翻译后，这里会显示可追踪记录。"
-            color: AppPalette.mutedText
-            font.pixelSize: AppStyle.fontSmall
-            wrapMode: Text.WordWrap
+            iconName: "task"
+            description: "暂无任务历史。开始一次翻译后，这里会显示可追踪记录。"
         }
 
         ScrollView {
