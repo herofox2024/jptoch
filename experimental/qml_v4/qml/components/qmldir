@@ -20,4 +20,5 @@ ContactLink 1.0 ContactLink.qml
 NavButton 1.0 NavButton.qml
 TaskHistoryDialog 1.0 TaskHistoryDialog.qml
 FailedBlocksDialog 1.0 FailedBlocksDialog.qml
+NoticePageDialog 1.0 NoticePageDialog.qml
 singleton ThemeRegistry 1.0 ThemeRegistry.qml

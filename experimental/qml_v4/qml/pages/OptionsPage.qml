@@ -1154,29 +1154,13 @@ Page {
         }
     }
 
-    Dialog {
+    NoticePageDialog {
         id: noticePageDialog
-        modal: true
-        anchors.centerIn: parent
-        width: Math.max(360, Math.min(page.width - 48, 920))
-        height: Math.max(420, Math.min(page.height - 72, 760))
-        title: "版权提示页管理"
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        contentItem: ScrollView {
-            width: noticePageDialog.width
-            height: noticePageDialog.height
-            clip: true
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-            NoticePageSettings {
-                width: Math.max(0, noticePageDialog.width - 32)
-                cfg: page.cfg
-                onBatchAddRequested: function(files, noticeText) {
-                    page.batchAddNoticePages(files, noticeText)
-                }
-            }
+        cfg: page.cfg
+        pageWidth: page.width
+        pageHeight: page.height
+        onBatchAddRequested: function(files, noticeText) {
+            page.batchAddNoticePages(files, noticeText)
         }
     }
 
