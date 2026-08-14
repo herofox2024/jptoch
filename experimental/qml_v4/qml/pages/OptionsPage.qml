@@ -27,92 +27,20 @@ Page {
     property var proofreadProviderLabels: ["跟随翻译模型", "DeepSeek", "豆包 Doubao", "Sakura 本地", "Hy-MT2 本地", "Gemini", "智谱 GLM", "文心一言", "LongCat 2.0", "自定义"]
     property var residuePolicyValues: ["balanced", "strict", "lenient"]
     property var residuePolicyLabels: ["推荐模式（推荐）", "严格模式", "宽松模式"]
-    property string residueAllowlistPath: cfg ? cfg.japaneseResidueAllowlistPath : ""
-    property string residueAllowlistStatus: ""
-    property string knownKatakanaTermsPath: cfg ? cfg.knownKatakanaTermsPath : ""
-    property string knownKatakanaTermsStatus: ""
+    property int knownKatakanaTermsCount: 0
+    property int residueAllowlistCount: 0
     property string promptPreviewText: "点击“刷新 Prompt 预览”查看当前初译和校对提示词片段。"
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : "Microsoft YaHei UI"
     readonly property bool updaterBusy: updater ? (updater.checking || updater.downloading) : false
 
-    ListModel { id: residueAllowlistModel }
-    ListModel { id: knownKatakanaTermsModel }
-
-    function refreshJapaneseResidueAllowlist() {
-        if (!cfg || !cfg.getJapaneseResidueAllowlist) return
-        var info = cfg.getJapaneseResidueAllowlist()
-        page.residueAllowlistPath = info.path || ""
-        residueAllowlistModel.clear()
-        var items = info.quoted || []
-        for (var i = 0; i < items.length; i++) {
-            residueAllowlistModel.append({ "fragment": items[i] })
+    function refreshCounts() {
+        if (cfg && cfg.getKnownKatakanaTerms) {
+            var info = cfg.getKnownKatakanaTerms()
+            page.knownKatakanaTermsCount = (info.items || []).length
         }
-    }
-
-    function addJapaneseResidueAllowItem() {
-        if (!cfg) return
-        var value = residueAllowInput.text.trim()
-        if (!value) {
-            page.residueAllowlistStatus = "请输入要放行的片段"
-            return
-        }
-        var result = cfg.addJapaneseResidueAllowQuoted(value)
-        page.residueAllowlistStatus = result.message || ""
-        residueAllowInput.text = ""
-        page.refreshJapaneseResidueAllowlist()
-        if (typeof ToastBridge !== "undefined" && ToastBridge) {
-            result.ok ? ToastBridge.showSuccess(page.residueAllowlistStatus) : ToastBridge.showError(page.residueAllowlistStatus)
-        }
-    }
-
-    function removeJapaneseResidueAllowItem(value) {
-        if (!cfg || !value) return
-        var result = cfg.removeJapaneseResidueAllowQuoted(value)
-        page.residueAllowlistStatus = result.message || ""
-        page.refreshJapaneseResidueAllowlist()
-        if (typeof ToastBridge !== "undefined" && ToastBridge) {
-            result.ok ? ToastBridge.showSuccess(page.residueAllowlistStatus) : ToastBridge.showError(page.residueAllowlistStatus)
-        }
-    }
-
-    function refreshKnownKatakanaTerms() {
-        if (!cfg || !cfg.getKnownKatakanaTerms) return
-        var info = cfg.getKnownKatakanaTerms()
-        page.knownKatakanaTermsPath = info.path || ""
-        knownKatakanaTermsModel.clear()
-        var items = info.items || []
-        for (var i = 0; i < items.length; i++) {
-            knownKatakanaTermsModel.append({
-                "source": items[i].source || "",
-                "target": items[i].target || "",
-                "builtin": !!items[i].builtin
-            })
-        }
-    }
-
-    function addKnownKatakanaTermItem() {
-        if (!cfg) return
-        var source = katakanaSourceInput.text.trim()
-        var target = katakanaTargetInput.text.trim()
-        var result = cfg.addKnownKatakanaTerm(source, target)
-        page.knownKatakanaTermsStatus = result.message || ""
-        if (result.ok) {
-            katakanaSourceInput.text = ""
-            katakanaTargetInput.text = ""
-        }
-        page.refreshKnownKatakanaTerms()
-        if (typeof ToastBridge !== "undefined" && ToastBridge) {
-            result.ok ? ToastBridge.showSuccess(page.knownKatakanaTermsStatus) : ToastBridge.showError(page.knownKatakanaTermsStatus)
-        }
-    }
-
-    function removeKnownKatakanaTermItem(source) {
-        if (!cfg || !source) return
-        var result = cfg.removeKnownKatakanaTerm(source)
-        page.knownKatakanaTermsStatus = result.message || ""
-        page.refreshKnownKatakanaTerms()
-        if (typeof ToastBridge !== "undefined" && ToastBridge) {
-            result.ok ? ToastBridge.showSuccess(page.knownKatakanaTermsStatus) : ToastBridge.showError(page.knownKatakanaTermsStatus)
+        if (cfg && cfg.getJapaneseResidueAllowlist) {
+            var info = cfg.getJapaneseResidueAllowlist()
+            page.residueAllowlistCount = (info.quoted || []).length
         }
     }
 
@@ -150,8 +78,7 @@ Page {
     }
 
     Component.onCompleted: {
-        page.refreshJapaneseResidueAllowlist()
-        page.refreshKnownKatakanaTerms()
+        page.refreshCounts()
     }
 
     Connections {
@@ -159,11 +86,11 @@ Page {
         ignoreUnknownSignals: true
 
         function onJapaneseResidueAllowlistChanged() {
-            page.refreshJapaneseResidueAllowlist()
+            page.refreshCounts()
         }
 
         function onKnownKatakanaTermsChanged() {
-            page.refreshKnownKatakanaTerms()
+            page.refreshCounts()
         }
     }
 
@@ -975,7 +902,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: "当前修复词表 " + knownKatakanaTermsModel.count + " 条，用于片假名原词到中文译名的自动修复。"
+                            text: "当前修复词表 " + page.knownKatakanaTermsCount + " 条，用于片假名原词到中文译名的自动修复。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
                             font.pixelSize: AppStyle.fontSmall
@@ -1002,7 +929,7 @@ Page {
 
                         Label {
                             Layout.fillWidth: true
-                            text: "当前白名单 " + residueAllowlistModel.count + " 条，仅在确认片段确实需要保留日文时使用。"
+                            text: "当前白名单 " + page.residueAllowlistCount + " 条，仅在确认片段确实需要保留日文时使用。"
                             color: AppPalette.mutedText
                             wrapMode: Text.WordWrap
                             font.pixelSize: AppStyle.fontSmall
@@ -1164,424 +1091,32 @@ Page {
         }
     }
 
-    Dialog {
+    KnownKatakanaTermsDialog {
         id: knownKatakanaTermsDialog
-        modal: true
-        anchors.centerIn: parent
-        width: Math.max(360, Math.min(page.width - 48, 920))
-        height: Math.max(460, Math.min(page.height - 72, 780))
-        title: "片假名术语修复词表"
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        contentItem: ScrollView {
-            width: knownKatakanaTermsDialog.width
-            height: knownKatakanaTermsDialog.height
-            clip: true
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-            ColumnLayout {
-                width: Math.max(0, knownKatakanaTermsDialog.width - 32)
-                spacing: AppStyle.spacingLarge
-
-                Label {
-                    Layout.fillWidth: true
-                    text: "用于处理模型已经翻译出中文解释、但仍残留片假名原词的情况。例如“チロリ的酒”会在保存前自动修复为“烫酒壶里的酒”。这类词应加入修复词表，不要加入日文残留白名单。"
-                    color: AppPalette.mutedText
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: AppStyle.fontSmall
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    Label {
-                        text: "文件"
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontSmall
-                        font.weight: Font.DemiBold
-                    }
-
-                    TextField {
-                        Layout.fillWidth: true
-                        text: page.knownKatakanaTermsPath
-                        readOnly: true
-                        selectByMouse: true
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontCaption
-                    }
-                }
-
-                GridLayout {
-                    Layout.fillWidth: true
-                    columns: page.width > 820 ? 5 : 2
-                    rowSpacing: 8
-                    columnSpacing: 12
-
-                    Label { text: "片假名原词" }
-                    TextField {
-                        id: katakanaSourceInput
-                        Layout.fillWidth: true
-                        placeholderText: "例如 チロリ"
-                        selectByMouse: true
-                        onAccepted: page.addKnownKatakanaTermItem()
-                    }
-
-                    Label { text: "中文译名" }
-                    TextField {
-                        id: katakanaTargetInput
-                        Layout.fillWidth: true
-                        placeholderText: "例如 烫酒壶"
-                        selectByMouse: true
-                        onAccepted: page.addKnownKatakanaTermItem()
-                    }
-
-                    Button {
-                        text: "保存修复词"
-                        highlighted: true
-                        Layout.fillWidth: page.width <= 820
-                        onClicked: page.addKnownKatakanaTermItem()
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(96, Math.min(220, knownKatakanaTermsModel.count * 40 + 18))
-                    radius: AppPalette.radiusMedium
-                    color: AppPalette.cardAlt
-                    border.color: AppPalette.lineColor
-                    clip: true
-
-                    ListView {
-                        id: knownKatakanaTermsList
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        model: knownKatakanaTermsModel
-                        spacing: AppStyle.spacingInline
-                        clip: true
-
-                        delegate: Rectangle {
-                            width: knownKatakanaTermsList.width
-                            height: 34
-                            radius: 10
-                            color: AppPalette.surfaceRaised
-                            border.color: AppPalette.lineColor
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 6
-                                spacing: AppStyle.spacingSmall
-
-                                Label {
-                                    Layout.preferredWidth: 140
-                                    text: source
-                                    color: AppPalette.textColor
-                                    font.pixelSize: AppStyle.fontBody
-                                    elide: Text.ElideRight
-                                }
-
-                                Label {
-                                    text: "→"
-                                    color: AppPalette.mutedText
-                                    font.pixelSize: AppStyle.fontSmall
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: target + (builtin ? "（内置）" : "")
-                                    color: AppPalette.textColor
-                                    font.pixelSize: AppStyle.fontBody
-                                    elide: Text.ElideRight
-                                }
-
-                                Button {
-                                    text: builtin ? "内置" : "删除"
-                                    flat: true
-                                    enabled: !builtin
-                                    onClicked: page.removeKnownKatakanaTermItem(source)
-                                }
-                            }
-                        }
-                    }
-
-                    Label {
-                        anchors.centerIn: parent
-                        visible: knownKatakanaTermsModel.count === 0
-                        text: "暂无修复词"
-                        color: AppPalette.mutedText
-                        font.pixelSize: AppStyle.fontSmall
-                    }
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: page.knownKatakanaTermsStatus
-                    visible: page.knownKatakanaTermsStatus !== ""
-                    color: page.knownKatakanaTermsStatus.indexOf("失败") >= 0
-                           || page.knownKatakanaTermsStatus.indexOf("请输入") >= 0
-                           || page.knownKatakanaTermsStatus.indexOf("需要") >= 0
-                           || page.knownKatakanaTermsStatus.indexOf("不能") >= 0
-                           ? AppPalette.errorColor : AppPalette.successColor
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: AppStyle.fontSmall
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-
-                    Item { Layout.fillWidth: true }
-
-                    Button {
-                        text: "关闭"
-                        onClicked: knownKatakanaTermsDialog.close()
-                    }
-                }
-            }
-        }
+        cfg: page.cfg
+        pageWidth: page.width
+        pageHeight: page.height
+        onCountChanged: function(count) { page.knownKatakanaTermsCount = count }
     }
 
-    Dialog {
+    ResidueAllowlistDialog {
         id: residueAllowlistDialog
-        modal: true
-        anchors.centerIn: parent
-        width: Math.max(360, Math.min(page.width - 48, 920))
-        height: Math.max(420, Math.min(page.height - 72, 720))
-        title: "日文残留白名单"
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        contentItem: ScrollView {
-            width: residueAllowlistDialog.width
-            height: residueAllowlistDialog.height
-            clip: true
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-            ColumnLayout {
-                width: Math.max(0, residueAllowlistDialog.width - 32)
-                spacing: AppStyle.spacingLarge
-
-                Label {
-                    Layout.fillWidth: true
-                    text: "仅在确认片段确实需要保留日文时使用。这里添加的是“引号内片段白名单”，例如译文中的 “レディス” 会放行，但正文其他位置的日文仍会继续被拦截。"
-                    color: AppPalette.mutedText
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: AppStyle.fontSmall
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    Label {
-                        text: "文件"
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontSmall
-                        font.weight: Font.DemiBold
-                    }
-
-                    TextField {
-                        Layout.fillWidth: true
-                        text: page.residueAllowlistPath
-                        readOnly: true
-                        selectByMouse: true
-                        color: AppPalette.textColor
-                        font.pixelSize: AppStyle.fontCaption
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    TextField {
-                        id: residueAllowInput
-                        Layout.fillWidth: true
-                        placeholderText: "输入保存前提示里的片段，例如 レディス"
-                        selectByMouse: true
-                        onAccepted: page.addJapaneseResidueAllowItem()
-                    }
-
-                    Button {
-                        text: "加入白名单"
-                        highlighted: true
-                        onClicked: page.addJapaneseResidueAllowItem()
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(86, Math.min(190, residueAllowlistModel.count * 38 + 18))
-                    radius: AppPalette.radiusMedium
-                    color: AppPalette.cardAlt
-                    border.color: AppPalette.lineColor
-                    clip: true
-
-                    ListView {
-                        id: residueAllowList
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        model: residueAllowlistModel
-                        spacing: AppStyle.spacingInline
-                        clip: true
-
-                        delegate: Rectangle {
-                            width: residueAllowList.width
-                            height: 32
-                            radius: 10
-                            color: AppPalette.surfaceRaised
-                            border.color: AppPalette.lineColor
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 6
-                                spacing: AppStyle.spacingSmall
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: fragment
-                                    color: AppPalette.textColor
-                                    font.pixelSize: AppStyle.fontBody
-                                    elide: Text.ElideRight
-                                }
-
-                                Button {
-                                    text: "删除"
-                                    flat: true
-                                    onClicked: page.removeJapaneseResidueAllowItem(fragment)
-                                }
-                            }
-                        }
-                    }
-
-                    Label {
-                        anchors.centerIn: parent
-                        visible: residueAllowlistModel.count === 0
-                        text: "暂无白名单片段"
-                        color: AppPalette.mutedText
-                        font.pixelSize: AppStyle.fontSmall
-                    }
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: page.residueAllowlistStatus
-                    visible: page.residueAllowlistStatus !== ""
-                    color: page.residueAllowlistStatus.indexOf("失败") >= 0 || page.residueAllowlistStatus.indexOf("请输入") >= 0
-                           ? AppPalette.errorColor : AppPalette.successColor
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: AppStyle.fontSmall
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-
-                    Item { Layout.fillWidth: true }
-
-                    Button {
-                        text: "关闭"
-                        onClicked: residueAllowlistDialog.close()
-                    }
-                }
-            }
-        }
+        cfg: page.cfg
+        pageWidth: page.width
+        pageHeight: page.height
+        onCountChanged: function(count) { page.residueAllowlistCount = count }
     }
 
-    Dialog {
+    UpdateDialog {
         id: updateDialog
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(page.width - 64, 620)
-        title: page.updateInfo && page.updateInfo.isNewer ? "发现新版本" : "软件更新"
-        closePolicy: page.updater && page.updater.downloading ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        contentItem: ColumnLayout {
-            width: updateDialog.width - 48
-            spacing: AppStyle.spacingLarge
-
-            Label {
-                Layout.fillWidth: true
-                text: "当前版本 V" + (page.updateInfo.currentVersion || (page.updater ? page.updater.currentVersion : "未知"))
-                      + "，最新版本 V" + (page.updateInfo.latestVersion || "未知")
-                color: AppPalette.textColor
-                font.pixelSize: AppStyle.fontBodyXLarge
-                font.weight: Font.DemiBold
-                wrapMode: Text.WordWrap
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: page.hasInstallerAsset()
-                      ? ("安装包：" + page.updateInfo.assetName + "（" + page.updateInfo.assetSizeText + "）")
-                      : "该 Release 没有找到 .exe 安装包，可打开发布页手动查看。"
-                color: AppPalette.mutedText
-                wrapMode: Text.WordWrap
-                font.pixelSize: AppStyle.fontSmall
-            }
-
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 180
-                clip: true
-
-                Label {
-                    width: updateDialog.width - 72
-                    text: page.updateInfo.releaseNotes || "没有发布说明。"
-                    color: AppPalette.textColor
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: AppStyle.fontSmall
-                }
-            }
-
-            ProgressBar {
-                Layout.fillWidth: true
-                visible: page.updater && page.updater.downloading
-                from: 0
-                to: 100
-                value: page.updateDownloadPercent
-            }
-
-            Label {
-                Layout.fillWidth: true
-                visible: page.updater && page.updater.downloading
-                text: page.updateStatus
-                color: AppPalette.mutedText
-                wrapMode: Text.WordWrap
-                font.pixelSize: AppStyle.fontSmall
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: AppStyle.spacingMedium
-
-                Button {
-                    text: "稍后"
-                    enabled: !(page.updater && page.updater.downloading)
-                    onClicked: updateDialog.close()
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Button {
-                    text: "打开发布页"
-                    enabled: !(page.updater && page.updater.downloading)
-                    onClicked: page.openUpdateRelease()
-                }
-
-                Button {
-                    text: page.updater && page.updater.downloading
-                          ? ("下载中 " + page.updateDownloadPercent + "%")
-                          : "下载并安装"
-                    highlighted: true
-                    enabled: page.updater
-                             && page.hasInstallerAsset()
-                             && !(page.updater && page.updater.downloading)
-                    onClicked: page.startUpdateDownload()
-                }
-            }
-        }
+        updater: page.updater
+        updateInfo: page.updateInfo
+        hasAsset: page.hasInstallerAsset()
+        updateDownloadPercent: page.updateDownloadPercent
+        updateStatus: page.updateStatus
+        pageWidth: page.width
+        onOpenReleaseRequested: page.openUpdateRelease()
+        onStartDownloadRequested: page.startUpdateDownload()
     }
 
     function applyPreset(key) {

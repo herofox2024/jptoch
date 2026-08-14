@@ -21,4 +21,7 @@ NavButton 1.0 NavButton.qml
 TaskHistoryDialog 1.0 TaskHistoryDialog.qml
 FailedBlocksDialog 1.0 FailedBlocksDialog.qml
 NoticePageDialog 1.0 NoticePageDialog.qml
+UpdateDialog 1.0 UpdateDialog.qml
+KnownKatakanaTermsDialog 1.0 KnownKatakanaTermsDialog.qml
+ResidueAllowlistDialog 1.0 ResidueAllowlistDialog.qml
 singleton ThemeRegistry 1.0 ThemeRegistry.qml
