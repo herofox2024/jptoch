@@ -1249,12 +1249,14 @@ class TranslateBridge(QObject):
     _progressValueChanged = Signal()
     _glossaryProgressValueChanged = Signal()
     _busyChanged = Signal()
+    _operationTypeChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._progress_value = 0.0
         self._glossary_progress_value = 0.0
         self._busy = False
+        self._operation_type = "idle"
         self._cancel_event = threading.Event()
         self._translator = None
         self._bridge = None
@@ -1594,7 +1596,20 @@ class TranslateBridge(QObject):
     def busy(self, val: bool):
         if val != self._busy:
             self._busy = val
+            if not val:
+                self.operationType = "idle"
             self._busyChanged.emit()
+
+    @Property(str, notify=_operationTypeChanged)
+    def operationType(self) -> str:
+        return self._operation_type
+
+    @operationType.setter
+    def operationType(self, value: str):
+        value = str(value or "idle").strip().lower() or "idle"
+        if value != self._operation_type:
+            self._operation_type = value
+            self._operationTypeChanged.emit()
 
     def _make_config(self, cfg):
         return {
@@ -1690,6 +1705,7 @@ class TranslateBridge(QObject):
         self._is_paused = False
         self._stop_requested = False
         self._active_texts = []
+        self.operationType = "translation"
         self.busy = True
         self.progressValue = 0.0
         ToastBridge.info("正在加载 EPUB 并开始翻译...")
@@ -1736,6 +1752,7 @@ class TranslateBridge(QObject):
             return
 
         self._cancel_event.clear()
+        self.operationType = "glossary"
         self.busy = True
         self.glossaryProgressValue = 0.0
         self.statusChanged.emit(f"正在批量提取术语: {len(source_paths)} 本 EPUB")
@@ -1828,6 +1845,7 @@ class TranslateBridge(QObject):
             return
 
         self._cancel_event.clear()
+        self.operationType = "glossary"
         self.busy = True
         self.glossaryProgressValue = 0.0
         self.statusChanged.emit("正在执行术语后处理...")
@@ -2169,6 +2187,7 @@ class TranslateBridge(QObject):
             return
 
         self._cancel_event.clear()
+        self.operationType = "recovery"
         self.busy = True
         self.statusChanged.emit(f"正在重译失败块: {len(blocks)} 条")
         ToastBridge.info("正在重译失败块")

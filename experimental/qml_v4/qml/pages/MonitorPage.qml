@@ -79,6 +79,10 @@ Page {
         return page.tbridge ? page.tbridge.busy : false
     }
 
+    function isTranslationBusy() {
+        return page.tbridge ? page.tbridge.operationType === "translation" : false
+    }
+
     function safeProgress() {
         var value = page.tbridge ? page.tbridge.progressValue : 0
         if (!isFinite(value) || value < 0) return 0
@@ -396,6 +400,7 @@ Page {
         }
 
         Rectangle {
+            visible: !page.tbridge || !page.tbridge.busy || page.isTranslationBusy()
             Layout.fillWidth: true
             Layout.preferredHeight: page.compactLayout ? 214 : 248
             radius: AppPalette.radiusLarge
