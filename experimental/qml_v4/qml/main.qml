@@ -370,6 +370,7 @@ ApplicationWindow {
                         onNavigateToLogs: appWindow.openRequestLogsPage()
                         onNavigateToApi: appWindow.switchPage(3)
                         onNavigateToSettings: appWindow.switchPage(5)
+                        onNavigateToGlossary: appWindow.switchPage(4)
                     }
                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }

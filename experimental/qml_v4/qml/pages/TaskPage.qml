@@ -28,6 +28,7 @@ Page {
     signal navigateToApi()
     signal navigateToLogs()
     signal navigateToSettings()
+    signal navigateToGlossary()
 
     function openManualEdit(src, dst) {
         manualEditDialog.openWith(src, dst)
@@ -441,6 +442,7 @@ Page {
 
         Rectangle {
             id: glossaryLayerCard
+            visible: false
             Layout.fillWidth: true
             Layout.preferredHeight: glossaryLayerContent.implicitHeight + 32
             Layout.minimumHeight: glossaryLayerContent.implicitHeight + 32
@@ -615,6 +617,55 @@ Page {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        Rectangle {
+            id: glossarySummaryCard
+            Layout.fillWidth: true
+            Layout.preferredHeight: 104
+            Layout.minimumHeight: 104
+            radius: AppPalette.radiusLarge
+            color: AppPalette.surfaceRaised
+            border.color: AppPalette.borderColor
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: AppStyle.spacingLarge
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: AppStyle.spacingTight
+
+                    Label {
+                        text: "\u4efb\u52a1\u672f\u8bed"
+                        color: AppPalette.textColor
+                        font.pixelSize: AppStyle.fontSubHeader
+                        font.weight: Font.DemiBold
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) > 0
+                              ? "\u5df2\u9009 " + GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) + " \u4e2a profile\uff0c\u5c06\u5728\u7ffb\u8bd1\u65f6\u6ce8\u5165"
+                              : "\u672a\u9009\u62e9 profile\uff0c\u8bf7\u5728\u672f\u8bed\u8868\u9875\u7684\u672f\u8bed\u4efb\u52a1\u4e2d\u9009\u62e9"
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontCaption
+                        elide: Text.ElideRight
+                    }
+                }
+
+                CheckBox {
+                    text: "\u672c\u6b21\u4efb\u52a1\u542f\u7528\u672f\u8bed\u8868"
+                    checked: taskPage.cfg ? taskPage.cfg.enableGlossary : true
+                    onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.enableGlossary = checked }
+                }
+
+                Button {
+                    text: "\u7ba1\u7406\u672f\u8bed\u8868"
+                    onClicked: taskPage.navigateToGlossary()
                 }
             }
         }
