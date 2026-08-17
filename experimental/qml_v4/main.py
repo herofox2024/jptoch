@@ -44,6 +44,52 @@ def _set_windows_app_user_model_id():
         pass
 
 
+def _apply_windows_titlebar_theme(window, theme):
+    """Keep the native Windows caption in sync with the QML theme."""
+    if sys.platform != "win32" or window is None:
+        return
+
+    try:
+        import ctypes
+
+        theme_name = str(theme or "light").strip().lower()
+        colors = {
+            "dark": ("#101614", "#f2f6f4"),
+            "glass": ("#eef8fb", "#18312e"),
+            "light": ("#f8f9fa", "#202124"),
+        }
+        caption_hex, text_hex = colors.get(theme_name, colors["light"])
+
+        def _colorref(value):
+            value = value.lstrip("#")
+            red, green, blue = (
+                int(value[0:2], 16),
+                int(value[2:4], 16),
+                int(value[4:6], 16),
+            )
+            return red | (green << 8) | (blue << 16)
+
+        hwnd = int(window.winId())
+        dwmapi = ctypes.windll.dwmapi
+        is_dark = ctypes.c_int(1 if theme_name == "dark" else 0)
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, 20, ctypes.byref(is_dark), ctypes.sizeof(is_dark)
+        )
+
+        # Windows 11 supports explicit caption/text colors. Older Windows
+        # versions simply reject these attributes and retain the dark-mode hint.
+        caption_color = ctypes.c_uint32(_colorref(caption_hex))
+        text_color = ctypes.c_uint32(_colorref(text_hex))
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, 35, ctypes.byref(caption_color), ctypes.sizeof(caption_color)
+        )
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color)
+        )
+    except Exception:
+        pass
+
+
 def _choose_font_family(candidates, fallback="Microsoft YaHei UI"):
     from PySide6.QtGui import QFontDatabase
 
@@ -287,19 +333,10 @@ def main():
     root_window.show()
     app.processEvents()
 
-    # Windows dark titlebar for the QML window.
-    try:
-        import ctypes
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        window = engine.rootObjects()[0]
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            int(window.winId()),
-            DWMWA_USE_IMMERSIVE_DARK_MODE,
-            ctypes.byref(ctypes.c_int(1 if config_bridge.theme == "dark" else 0)),
-            ctypes.sizeof(ctypes.c_int),
-        )
-    except Exception:
-        pass
+    _apply_windows_titlebar_theme(root_window, config_bridge.theme)
+    config_bridge._themeChanged.connect(
+        lambda: _apply_windows_titlebar_theme(root_window, config_bridge.theme)
+    )
 
     sys.exit(app.exec())
 
