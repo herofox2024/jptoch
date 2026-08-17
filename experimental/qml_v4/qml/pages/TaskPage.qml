@@ -418,7 +418,6 @@ Page {
             maxWorkers: cfg ? cfg.maxWorkers : 0
             batchSize: cfg ? cfg.batchSize : 0
             maxTextSizeForBatch: cfg ? cfg.maxTextSizeForBatch : 0
-            progressValue: taskPage.tbridge ? taskPage.tbridge.progressValue : 0
             statusText: taskPage.runtimeStatus
 
             onStartRequested: {
@@ -437,6 +436,7 @@ Page {
             onStopRequested: { if (taskPage.tbridge) taskPage.tbridge.stopTranslation() }
             onClearCacheRequested: clearCacheDialog.open()
             onManualEditRequested: manualEditDialog.open()
+            onStatusRequested: taskPage.navigateToStatus()
         }
 
         Rectangle {

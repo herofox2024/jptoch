@@ -13,7 +13,6 @@ Rectangle {
     property int maxTextSizeForBatch: 0
     property real viewportWidth: width
     property string modelSummary: "--"
-    property real progressValue: 0
     property string statusText: "等待任务"
 
     signal startRequested()
@@ -22,9 +21,10 @@ Rectangle {
     signal stopRequested()
     signal clearCacheRequested()
     signal manualEditRequested()
+    signal statusRequested()
 
     Layout.fillWidth: true
-    Layout.preferredHeight: viewportWidth > AppStyle.bpSmall ? 370 : 452
+    Layout.preferredHeight: viewportWidth > AppStyle.bpSmall ? 336 : 418
     radius: AppPalette.radiusLarge
     color: AppPalette.glass ? Qt.rgba(1, 1, 1, 0.48) : AppPalette.surfaceRaised
     border.color: AppPalette.borderColor
@@ -70,7 +70,7 @@ Rectangle {
 
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: root.viewportWidth > AppStyle.bpSmall ? 168 : 256
+            Layout.preferredHeight: root.viewportWidth > AppStyle.bpSmall ? 180 : 240
             spacing: AppStyle.spacingMedium
 
             TaskActionButton {
@@ -83,11 +83,13 @@ Rectangle {
                 onClicked: root.startRequested()
             }
 
-            ColumnLayout {
+            RowLayout {
                 Layout.fillWidth: true
-                spacing: AppStyle.spacingInline
+                spacing: AppStyle.spacingSmall
+
                 RowLayout {
                     Layout.fillWidth: true
+
                     Label {
                         Layout.fillWidth: true
                         text: root.statusText
@@ -95,31 +97,9 @@ Rectangle {
                         font.pixelSize: AppStyle.fontCaption
                         elide: Text.ElideRight
                     }
-                    Label {
-                        text: Math.round(Math.max(0, Math.min(1, root.progressValue)) * 100) + "%"
-                        color: AppPalette.accentColor
-                        font.pixelSize: AppStyle.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-                }
-                ProgressBar {
-                    Layout.fillWidth: true
-                    from: 0
-                    to: 1
-                    value: Math.max(0, Math.min(1, root.progressValue))
-                    background: Rectangle { implicitHeight: 6; radius: 3; color: AppPalette.cardAlt }
-                    contentItem: Item {
-                        implicitHeight: 6
-                        Rectangle {
-                            width: parent.width * root.progressValue
-                            height: parent.height
-                            radius: 3
-                            gradient: Gradient {
-                                orientation: Gradient.Horizontal
-                                GradientStop { position: 0.0; color: AppPalette.brandGradientStart }
-                                GradientStop { position: 1.0; color: AppPalette.brandGradientEnd }
-                            }
-                        }
+                    ToolButton {
+                        text: "查看状态"
+                        onClicked: root.statusRequested()
                     }
                 }
             }
