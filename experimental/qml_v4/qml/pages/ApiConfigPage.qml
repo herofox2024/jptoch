@@ -69,6 +69,7 @@ Page {
             cfg.provider, cfg.apiUrl, cfg.model, cfg.maxWorkers, cfg.batchSize,
             cfg.maxBatchLength, cfg.maxTextSizeForBatch, cfg.apiTimeout,
             cfg.enableThinking, cfg.enableProofread, cfg.proofreadGenre, cfg.proofreadTone,
+            cfg.enablePolish,
             cfg.proofreadProvider, cfg.proofreadApiUrl, cfg.proofreadModel,
             cfg.promptExtraInstruction, cfg.enablePromptExamples,
             cfg.enableLayeredGlossary, cfg.useGlobalGlossary, cfg.useGenreGlossary,

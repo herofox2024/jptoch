@@ -520,6 +520,24 @@ Page {
                             }
                         }
 
+                        CheckBox {
+                            id: polishCheckBox
+                            text: "启用译后润色（在校对基础上消除翻译腔，会增加 API 调用）"
+                            checked: cfg ? cfg.enablePolish : false
+                            enabled: cfg ? cfg.enableProofread : false
+                            onCheckedChanged: {
+                                if (cfg) {
+                                    cfg.enablePolish = checked
+                                }
+                            }
+
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: cfg && cfg.enableProofread
+                                ? "仅对检测到翻译腔或语气缺失的译文发起润色请求，正常译文不产生额外调用。"
+                                : "润色复用校对 provider 配置，请先启用译后校对。"
+                        }
+
                         GridLayout {
                             Layout.fillWidth: true
                             columns: page.width > 820 ? 4 : 2
