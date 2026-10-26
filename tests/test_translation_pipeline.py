@@ -1344,6 +1344,42 @@ class TranslatorTests(unittest.TestCase):
             self.assertIn("原歌：日文原句", prompt)
             self.assertIn("双关、挂词、句切、系结、本歌取", prompt)
 
+    def test_batch_prompt_includes_chinese_naturalness_rules(self):
+        """批量路径是默认高频路径，必须带中文自然度约束，不能只靠格式说明。"""
+        t = DummyTranslator()
+        prompt = t._build_batch_system_prompt()
+
+        # 三条核心约束：避免日式直译、保留语气、动作描写准确
+        self.assertIn("译文质量要求", prompt)
+        self.assertIn("避免日式直译", prompt)
+        self.assertIn("明明", prompt)
+        self.assertIn("噘嘴", prompt)
+
+    def test_batch_prompt_has_no_unresolved_placeholder(self):
+        t = DummyTranslator()
+        self.assertNotIn("{{{", t._build_batch_system_prompt())
+
+    def test_batch_prompt_keeps_quality_rules_for_legacy_custom_template(self):
+        """旧版自定义 YAML 没有 quality 占位符，质量约束仍必须追加，不能静默丢失。"""
+        t = DummyTranslator()
+        t._output_format_data = {
+            "system_prompt_base": "你是翻译助手。",
+            "system_prompt_output_format": "返回 JSON。",
+            "system_prompt_no_extract": "返回空 new_terms。",
+            "optional_extraction_rules": "提取规则。",
+            "system_prompt_template": (
+                "{{{system_prompt_base}}}\n"
+                "{{{system_prompt_output_format}}}\n"
+                "{{{optional_extraction_rules}}}"
+            ),
+        }
+
+        prompt = t._build_batch_system_prompt()
+
+        self.assertIn("返回 JSON", prompt)
+        self.assertIn("译文质量要求", prompt)
+        self.assertNotIn("{{{", prompt)
+
     def test_smart_split_text(self):
         text = "第一段。第二段！\n第三段？第四段。"
         parts = JaZhTranslator._smart_split_text(text, chunk_size=8)

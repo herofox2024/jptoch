@@ -192,6 +192,14 @@ system_prompt_output_format: |
 system_prompt_no_extract: |
   当未启用术语抽取时，必须返回 "new_terms": []。
 
+# 中文表达质量约束（会替换 {{{optional_quality_rules}}} 占位符）
+# 只保留影响最大的三条，避免批量请求的 token 成本明显上升。
+optional_quality_rules: |
+  译文质量要求：
+  - 中文表达要自然，避免日式直译：如「远处传来狗吠声」优于「远处狗吠声」。
+  - 保留原文语气与情感，特别是转折、遗憾、犹豫（如「なのに」应体现为「明明…却」）。
+  - 动作与状态描写要准确：如「唇を尖らせる」是「噘嘴」而非「翘嘴」。中文叙述多用「传来」「响起」「飘来」等动词补足感官主语。
+
 # 开启术语提取时的追加规则（会替换 {{{optional_extraction_rules}}} 占位符）
 optional_extraction_rules: |
   术语抽取规则：
@@ -204,6 +212,7 @@ optional_extraction_rules: |
 system_prompt_template: |
   {{{system_prompt_base}}}
   {{{system_prompt_output_format}}}
+  {{{optional_quality_rules}}}
   {{{optional_extraction_rules}}}
 """,
 }
@@ -294,6 +303,16 @@ def resolve_template_vars(template: str, **kwargs) -> str:
 
 # 默认术语分类
 DEFAULT_GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Creature"]
+
+
+# 批量翻译的中文表达质量约束。
+# 只保留影响最大的三条，避免批量请求的 token 成本明显上升。
+# 内容与 dict/system_prompt_hq_format.yaml 的 optional_quality_rules 保持一致；
+# 该常量同时作为模板缺失或用户自定义模板时的兜底。
+DEFAULT_BATCH_QUALITY_RULES = """译文质量要求：
+- 中文表达要自然，避免日式直译：如「远处传来狗吠声」优于「远处狗吠声」。
+- 保留原文语气与情感，特别是转折、遗憾、犹豫（如「なのに」应体现为「明明…却」）。
+- 动作与状态描写要准确：如「唇を尖らせる」是「噘嘴」而非「翘嘴」。中文叙述多用「传来」「响起」「飘来」等动词补足感官主语。"""
 
 
 PERFORMANCE_PRESETS = {
@@ -3587,6 +3606,13 @@ JSON 顶层字段：
    - category 可选值：Person, Location, Org, Item, Skill, Creature
    - 若无法确定分类，可省略 category 字段"""
 
+        # 中文表达质量约束：独立于模板解析，保证自定义模板也不会丢失。
+        quality_rules = DEFAULT_BATCH_QUALITY_RULES
+        if self._output_format_data:
+            template_quality = self._output_format_data.get("optional_quality_rules", "")
+            if template_quality:
+                quality_rules = resolve_template_vars(template_quality, target_lang="简体中文")
+
         # 尝试从模板加载
         if self._output_format_data:
             template = self._output_format_data.get("system_prompt_template", "")
@@ -3602,13 +3628,19 @@ JSON 顶层字段：
                     no_extract = self._output_format_data.get("system_prompt_no_extract", "")
                     optional_rules = no_extract if no_extract else '\n当未启用术语抽取时，必须返回 "new_terms": []。'
 
+                # 旧版自定义模板没有 quality 占位符，先按原样替换，再单独追加质量约束。
+                has_quality_placeholder = "{{{optional_quality_rules}}}" in template
                 system_prompt = resolve_template_vars(
                     template,
                     system_prompt_base=base_part or base_prompt,
                     system_prompt_output_format=format_part,
                     optional_extraction_rules=optional_rules,
+                    optional_quality_rules=quality_rules,
                     target_lang="简体中文"
                 )
+                if not has_quality_placeholder and quality_rules:
+                    system_prompt = system_prompt.rstrip() + "\n\n" + quality_rules
+
                 # 追加术语提取规则
                 if self.extract_glossary and self._extraction_prompt_data:
                     extraction_prompt = self._extraction_prompt_data.get("glossary_extraction_prompt", "")
@@ -3620,7 +3652,12 @@ JSON 顶层字段：
 
         # 回退到硬编码
         if not self.extract_glossary:
-            system_prompt = base_prompt + '\n\n当未启用术语抽取时，必须返回 "new_terms": []。'
+            system_prompt = (
+                base_prompt
+                + '\n\n当未启用术语抽取时，必须返回 "new_terms": []。'
+                + "\n\n"
+                + quality_rules
+            )
             return system_prompt.rstrip() + "\n\n" + self._build_style_guidance("translation")
 
         # 添加术语提取规则
@@ -3637,7 +3674,7 @@ JSON 顶层字段：
             if template_extraction:
                 extraction_rules = "\n" + resolve_template_vars(template_extraction, target_lang="简体中文")
 
-        system_prompt = base_prompt + "\n" + extraction_rules
+        system_prompt = base_prompt + "\n\n" + quality_rules + "\n" + extraction_rules
         return system_prompt.rstrip() + "\n\n" + self._build_style_guidance("translation")
 
     @staticmethod

@@ -15,6 +15,14 @@ system_prompt_output_format: |
 system_prompt_no_extract: |
   当未启用术语抽取时，必须返回 "new_terms": []。
 
+# 中文表达质量约束（会替换 {{{optional_quality_rules}}} 占位符）
+# 只保留影响最大的三条，避免批量请求的 token 成本明显上升。
+optional_quality_rules: |
+  译文质量要求：
+  - 中文表达要自然，避免日式直译：如「远处传来狗吠声」优于「远处狗吠声」。
+  - 保留原文语气与情感，特别是转折、遗憾、犹豫（如「なのに」应体现为「明明…却」）。
+  - 动作与状态描写要准确：如「唇を尖らせる」是「噘嘴」而非「翘嘴」。中文叙述多用「传来」「响起」「飘来」等动词补足感官主语。
+
 # 开启术语提取时的追加规则（会替换 {{{optional_extraction_rules}}} 占位符）
 optional_extraction_rules: |
   术语抽取规则：
@@ -27,4 +35,5 @@ optional_extraction_rules: |
 system_prompt_template: |
   {{{system_prompt_base}}}
   {{{system_prompt_output_format}}}
+  {{{optional_quality_rules}}}
   {{{optional_extraction_rules}}}
