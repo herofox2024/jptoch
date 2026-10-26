@@ -19,6 +19,9 @@
 - 修复 style_detector.py 历史推理关键词表中重复字典键导致的词条丢失
 - 清理 10 处未使用导入与 7 处未使用变量
 - 发布工作流增加 ruff 检查步骤，失败阻断打包
+- 统一 Python 版本到 3.12：CI 打包环境、.python-version、ruff 目标版本三者一致
+- 新增 tests/test_python_version_alignment.py 守护版本一致性并拒绝预发布解释器
+- 补充 .gitignore 虚拟环境规则与 pyproject.toml 的 pytest 配置段
 
 
 ## v4.2.0

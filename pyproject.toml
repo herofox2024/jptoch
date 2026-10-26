@@ -1,6 +1,6 @@
 [tool.ruff]
-# 目标与兼容性
-target-version = "py311"
+# 目标与兼容性：与 CI 打包环境、本地开发环境保持一致（.python-version）
+target-version = "py312"
 line-length = 120
 
 # 不参与检查的目录：归档代码、打包产物、缓存
@@ -31,3 +31,9 @@ ignore = []
 [tool.ruff.format]
 # 暂不启用 ruff format，避免一次性产生大量排版 diff。
 quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-ra"

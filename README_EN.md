@@ -399,6 +399,31 @@ Check:
 - Pause, resume, and stop behave as expected.
 - Logs do not show continuous API errors.
 
+## Development Environment
+
+The project standardizes on **Python 3.12**: the CI build environment, `.python-version`, and the
+ruff target version in `pyproject.toml` all agree.
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r experimental/qml_v4/requirements.txt
+pip install pytest ruff
+```
+
+Do not use a beta/rc interpreter for day-to-day development: tests that pass on a prerelease do
+not guarantee the release build (stable interpreter) behaves the same, and such differences tend
+to surface only at release time. `tests/test_python_version_alignment.py` checks that CI,
+`.python-version` and the ruff target stay in sync, and fails on a prerelease interpreter.
+
+Verification commands:
+
+```powershell
+ruff check .
+python experimental/qml_v4/qml_smoke_test.py
+python -m pytest -q
+```
+
 ---
 
 ## Release Notes

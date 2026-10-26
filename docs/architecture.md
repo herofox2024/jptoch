@@ -95,6 +95,20 @@ real defects in noise. `archived/`, `dist/`, `build/` and the QML directory are 
 
 `ruff check .` runs in the release workflow before packaging and blocks it on failure.
 
+## Interpreter Version
+
+The project pins a single Python minor version in three places, and they must agree:
+
+| Location | Purpose |
+| --- | --- |
+| `.python-version` | Local development and editor auto-detection |
+| `.github/workflows/release-qml-v4.yml` | Release build and CI test interpreter |
+| `pyproject.toml` → `tool.ruff.target-version` | Static analysis target |
+
+Python 3.12 is the standard. `tests/test_python_version_alignment.py` enforces the
+agreement and rejects prerelease (beta/rc) interpreters, because tests passing on a
+prerelease do not guarantee identical behaviour in the stable release build.
+
 ## Version Ownership
 
 - `experimental/qml_v4` is the only active desktop UI and the only release target.

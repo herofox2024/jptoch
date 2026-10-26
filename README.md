@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -641,6 +641,19 @@ QML/PySide6、EPUB 解析、配置加载和 Python 运行时初始化都会增�
 - 术语是否一致。
 - 暂停、恢复、停止是否符合预期。
 - 日志是否存在连续 API 错误。
+
+### 开发环境
+
+本项目统一使用 **Python 3.12**：CI 打包环境、`.python-version` 和 `pyproject.toml` 的 ruff 目标版本三者一致。
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r experimental/qml_v4/requirements.txt
+pip install pytest ruff
+```
+
+说明：不要使用 Python beta/rc 预发布解释器做日常开发。预发布解释器上测试通过不代表发布构建（稳定版解释器）行为一致，这类差异往往到发版时才暴露。`tests/test_python_version_alignment.py` 会校验 CI、`.python-version`、ruff 目标版本三者一致，并拒绝在预发布解释器上通过测试。
 
 开发验证命令：
 
