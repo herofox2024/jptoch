@@ -22,6 +22,9 @@
 - 统一 Python 版本到 3.12：CI 打包环境、.python-version、ruff 目标版本三者一致
 - 新增 tests/test_python_version_alignment.py 守护版本一致性并拒绝预发布解释器
 - 补充 .gitignore 虚拟环境规则与 pyproject.toml 的 pytest 配置段
+- 批量翻译提示词新增中文表达质量约束（避免日式直译、保留转折语气、动作描写准确），模板见 dict/system_prompt_hq_format.yaml，并对旧版自定义模板做兜底追加
+- 新增译后润色档 enable_polish（默认关闭）：检测翻译腔、语气缺失、感官动词不足，复用校对 provider 二次润色
+- 新增 tests/test_translation_polish.py 覆盖润色检测逻辑与开关行为
 
 
 ## v4.2.0

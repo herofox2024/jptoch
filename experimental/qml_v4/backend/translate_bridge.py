@@ -810,6 +810,7 @@ class _RetranslateFailedBlocksWorker(QObject):
                 enable_glossary=bool(cfg.get("enable_glossary", True)),
                 enable_thinking=bool(cfg.get("enable_thinking", False)),
                 enable_proofread=bool(cfg.get("enable_proofread", False)),
+                enable_polish=bool(cfg.get("enable_polish", False)),
                 proofread_genre=cfg.get("proofread_genre", "general"),
                 proofread_tone=cfg.get("proofread_tone", "neutral"),
                 proofread_model=cfg.get("proofread_model") or None,

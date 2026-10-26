@@ -679,6 +679,7 @@ class JaZhTranslator:
         hymt2_runtime_mode: str = "cpu",
         glossary_extraction_mode: str = "novel",
         glossary_fingerprint: str = "",
+        enable_polish: bool = False,
     ):
         self.provider = (provider or "deepseek").strip().lower()
         # preset 参数已弃用，不再应用预设，由调用方直接传递参数值
@@ -912,6 +913,8 @@ class JaZhTranslator:
         self.extract_glossary = bool(extract_glossary)
         self.enable_thinking = bool(enable_thinking)
         self.enable_proofread = bool(enable_proofread)
+        # 润色档：在校对基础上额外消除翻译腔、还原语气。依赖校对 provider。
+        self.enable_polish = bool(enable_polish)
         self.proofread_genre = proofread_genre if proofread_genre in GENRE_LABELS else "general"
         self.proofread_tone = proofread_tone if proofread_tone in TONE_LABELS else "neutral"
         self.prompt_extra_instruction = str(prompt_extra_instruction or "").strip()
@@ -1930,6 +1933,62 @@ class JaZhTranslator:
     def _build_proofread_system_prompt(self) -> str:
         return self._build_style_guidance("proofread")
 
+    # ---- 润色档：在校对之上额外消除翻译腔 ----
+    POLISH_TRANSLATIONESE_MARKERS: List[str] = [
+        # 缺少感官动词补足：日式直译常见
+        r"远处(?!传来|响起|飘来)[^，。]{0,6}(声|音)(?![，。]?[传响])",
+        # 「的」字堆叠
+        r"的[^，。]{1,8}的[^，。]{1,8}的",
+        # 生硬被动
+        r"被[^，。]{2,6}着[，。]",
+        # 冗余「进行/加以」
+        r"(进行|加以)(了)?(一[个次])?(处理|操作|动作|思考)",
+    ]
+
+    def _find_polish_issues(self, src: str, dst: str) -> List[str]:
+        """Detect translationese that plain proofreading does not flag.
+
+        Returns an empty list when nothing looks unnatural, so the polish stage
+        only spends API budget on suspicious text.
+        """
+        if not bool(getattr(self, "enable_polish", False)):
+            return []
+        dst = (dst or "").strip()
+        if not dst or len(dst) < 12:
+            return []
+
+        issues: List[str] = []
+        for pattern in self.POLISH_TRANSLATIONESE_MARKERS:
+            if re.search(pattern, dst):
+                issues.append("译文疑似存在翻译腔或日式直译，需要按中文表达习惯润色")
+                break
+
+        # 原文有转折/遗憾语气但译文可能丢失
+        if re.search(r"なのに|のに[。、]|けれども|とはいえ", src or ""):
+            if not re.search(r"明明|却|可是|然而|偏偏", dst):
+                issues.append("原文的转折或遗憾语气（なのに/のに）在译文中缺失，需要补回")
+
+        # 原文有感官动作但译文缺少对应的中文动词
+        if re.search(r"声が|音が|匂いが|香りが", src or ""):
+            if not re.search(r"传来|响起|飘来|闻到|听见|听到", dst):
+                issues.append("原文的感官描写缺少中文常用动词（传来/响起/飘来），表达生硬")
+
+        return issues
+
+    def _build_polish_user_prompt_suffix(self) -> str:
+        """Extra instruction appended for polish-mode proofreading."""
+        if not bool(getattr(self, "enable_polish", False)):
+            return ""
+        return (
+            "\n【润色要求】\n"
+            "在修正上述问题之外，请让译文读起来像原生中文：\n"
+            "- 消除日式直译和翻译腔，补足中文习惯的动词（如「传来」「响起」「飘来」）。\n"
+            "- 补回原文的转折、遗憾、犹豫语气（如「なのに」→「明明…却」）。\n"
+            "- 动作描写要准确（如「唇を尖らせる」是「噘嘴」不是「翘嘴」）。\n"
+            "- 不改变原意、不增删信息、不改变段落结构。\n"
+            "- 只输出润色后的简体中文译文。\n"
+        )
+
     @staticmethod
     def _strip_proofread_explanations(text: str, fallback: str = "") -> str:
         """Remove model-added proofreading notes while preserving the revised translation."""
@@ -1982,6 +2041,7 @@ class JaZhTranslator:
             + "短片假名普通物品、仅供参考术语和上下文命中术语不得强行替换；"
             + "标注保留原文的术语必须保留源词；如果术语译法会破坏语义，保留初译。\n"
             + "\n【输出格式】\n只输出修正后的简体中文译文。禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
+            + self._build_polish_user_prompt_suffix()
         )
         proofread_api_key = self.proofread_api_key or self.api_key
         headers = {
@@ -2184,8 +2244,15 @@ class JaZhTranslator:
             "prev/next 只是上下文参考，不要翻译 prev/next。\n"
             "术语只在日文原文中独立命中且符合上下文时才修正；仅供参考/上下文命中术语不得机械强改；保留原文术语必须保留源词；如果术语译法会破坏语义，保留初译。\n"
             "禁止输出说明、修改说明、理由、注释、括号说明或项目符号。\n"
-            "必须只返回 JSON 对象，格式为：{\"items\":[{\"idx\":0,\"revised\":\"修正后的简体中文译文\"}]}。\n\n"
-            f"【待校对项目】\n{json.dumps(prepared, ensure_ascii=False)}"
+            "必须只返回 JSON 对象，格式为：{\"items\":[{\"idx\":0,\"revised\":\"修正后的简体中文译文\"}]}。\n"
+            + (
+                "【润色要求】\n在修复 issues 之外，请让译文读起来像原生中文：消除日式直译和翻译腔，"
+                "补足中文习惯的感官动词（传来/响起/飘来），补回原文的转折与遗憾语气。"
+                "不改变原意、不增删信息、不改变段落结构。\n"
+                if bool(getattr(self, "enable_polish", False))
+                else ""
+            )
+            + f"\n【待校对项目】\n{json.dumps(prepared, ensure_ascii=False)}"
         )
         proofread_api_key = self.proofread_api_key or self.api_key
         headers = {
@@ -5348,6 +5415,11 @@ JSON 顶层字段：
                     continue
                 if enable_proofread:
                     issues = self._find_proofread_issues(src, clean_dst)
+                    # 润色档：即便没有硬错误，翻译腔/语气缺失也纳入校对范围。
+                    if bool(getattr(self, "enable_polish", False)):
+                        polish_issues = self._find_polish_issues(src, clean_dst)
+                        if polish_issues:
+                            issues = list(issues) + polish_issues
                     if issues:
                         # Phase 2-⑤: 校对分级 — 本地检查通过则跳过 LLM 校对
                         if self._should_skip_proofread(src, clean_dst):

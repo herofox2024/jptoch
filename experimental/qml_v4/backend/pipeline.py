@@ -298,6 +298,7 @@ class CreateTranslatorStage(PipelineStage):
             enable_glossary=cfg["enable_glossary"],
             enable_thinking=cfg["enable_thinking"],
             enable_proofread=cfg["enable_proofread"],
+            enable_polish=bool(cfg.get("enable_polish", False)),
             proofread_genre=style.genre,
             proofread_tone=style.tone,
             proofread_model=cfg.get("proofread_model") or None,

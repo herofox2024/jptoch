@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 配置桥接器：管理应用配置，提供 QML 可绑定的属性，支持持久化到 JSON 文件。
 """
@@ -385,7 +385,7 @@ MODEL_PROMPT_PRESET_BY_KEY = {item["key"]: item for item in MODEL_PROMPT_PRESETS
 PRESET_CONFIG_KEYS = {
     "provider", "api_url", "model",
     "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
-    "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
+    "direction", "enable_thinking", "enable_proofread", "enable_polish", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_url", "proofread_model",
     "prompt_extra_instruction", "enable_prompt_examples",
     "enable_layered_glossary", "use_global_glossary", "use_genre_glossary", "use_series_glossary", "use_book_glossary",
@@ -410,7 +410,7 @@ _CONFIG_KEYS = [
     "pre_extract_glossary", "series_glossary_name", "book_glossary_name", "selected_glossary_profile_ids",
     "glossary_extraction_mode",
     "max_workers", "batch_size", "max_batch_length", "max_text_size_for_batch", "api_timeout",
-    "direction", "enable_thinking", "enable_proofread", "proofread_genre", "proofread_tone",
+    "direction", "enable_thinking", "enable_proofread", "enable_polish", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
     "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
     "enable_notice_page", "notice_page_text", "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
@@ -630,6 +630,7 @@ class ConfigBridge(QObject):
     _directionChanged = Signal()
     _enableThinkingChanged = Signal()
     _enableProofreadChanged = Signal()
+    _enablePolishChanged = Signal()
     _proofreadGenreChanged = Signal()
     _proofreadToneChanged = Signal()
     _proofreadProviderChanged = Signal()
@@ -683,6 +684,7 @@ class ConfigBridge(QObject):
         self._direction = "zh"
         self._enable_thinking = False
         self._enable_proofread = True
+        self._enable_polish = False
         self._proofread_genre = "auto"
         self._proofread_tone = "auto"
         self._proofread_provider = ""
@@ -883,6 +885,7 @@ class ConfigBridge(QObject):
             "max_text_size_for_batch": self._maxTextSizeForBatchChanged,
             "api_timeout": self._apiTimeoutChanged,
             "enable_proofread": self._enableProofreadChanged,
+            "enable_polish": self._enablePolishChanged,
             "proofread_genre": self._proofreadGenreChanged,
             "proofread_tone": self._proofreadToneChanged,
             "proofread_provider": self._proofreadProviderChanged,
@@ -1213,6 +1216,7 @@ class ConfigBridge(QObject):
                 enable_glossary=False,
                 cache_path=str(_data_dir() / ".prompt_preview_cache.json"),
                 enable_proofread=self._enable_proofread,
+                enable_polish=self._enable_polish,
                 proofread_genre=genre,
                 proofread_tone=tone,
                 prompt_extra_instruction=self._prompt_extra_instruction,
@@ -1538,6 +1542,13 @@ class ConfigBridge(QObject):
     def enableProofread(self, val: bool):
         if val != self._enable_proofread:
             self._enable_proofread = val; self._emit_changed(self._enableProofreadChanged)
+
+    @Property(bool, notify=_enablePolishChanged)
+    def enablePolish(self) -> bool: return self._enable_polish
+    @enablePolish.setter
+    def enablePolish(self, val: bool):
+        if val != self._enable_polish:
+            self._enable_polish = val; self._emit_changed(self._enablePolishChanged)
 
     @Property(str, notify=_proofreadGenreChanged)
     def proofreadGenre(self) -> str: return self._proofread_genre
