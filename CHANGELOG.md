@@ -10,6 +10,11 @@
 - 新增 navigateToGlossary 信号用于跳转到术语表页面
 - 新增 isTranslationBusy 函数用于判断是否处于翻译操作中
 - 补充术语任务的功能说明、使用流程以及进度分离的相关细节，更新了术语表的使用步骤，新增术语任务独立进度的相关文档说明和冒烟测试的补充解释
+- 移除无引用的 cache_store.py，原子写入能力统一由 translation_cache.py 提供
+- request_log.py 从 backend 包提升到项目根目录，核心引擎不再依赖 QML 后端
+- 补充 .gitignore 规则，覆盖率与测试缓存产物不再入库
+- 发布工作流增加 pytest 全量回归和 QML 冒烟测试，测试失败阻断打包
+- 同步 app_info.py、README、README_EN 版本号至 V4.2.1
 
 
 ## v4.2.0

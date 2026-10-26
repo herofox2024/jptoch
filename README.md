@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -6,14 +6,14 @@
 
 基于大模型 API 的日文 EPUB 自动翻译工具，面向轻小说、推理小说、科幻小说等日文电子书场景，支持翻译、术语表、缓存续译、译后校对和 Windows 桌面安装包。
 
-![Version](https://img.shields.io/badge/version-V4.1-2f6f5f)
+![Version](https://img.shields.io/badge/version-V4.2.1-2f6f5f)
 ![UI](https://img.shields.io/badge/UI-PySide6%20%2B%20QML-203a43)
 ![Platform](https://img.shields.io/badge/platform-Windows-c47f2c)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen)
 
 **Language:** [简体中文](README.md) | [English](README_EN.md)
 
-**当前主力版本：QML/V4.1**  
+**当前主力版本：QML/V4.2.1**  
 **归档回退版：Qt V3.2.1**
 
 </div>
@@ -25,7 +25,7 @@
 | 内容 | 说明 |
 |------|------|
 | [版本定位](#版本定位) | 当前主线、回退版、历史入口的维护策略 |
-| [界面预览](#界面预览) | QML/V4.1 主要页面截图 |
+| [界面预览](#界面预览) | QML/V4.2.1 主要页面截图 |
 | [核心功能](#核心功能) | EPUB 翻译、术语表、缓存续译、译后校对 |
 | [快速开始](#快速开始) | 安装包运行和源码运行方式 |
 | [使用流程](#使用流程) | 从选择 EPUB 到生成中文 EPUB 的步骤 |
@@ -44,7 +44,7 @@
 
 | 版本 | 入口 | 状态 | 说明 |
 |------|------|------|------|
-| QML/V4.1 | `experimental/qml_v4/main.py` | 当前主力版本 | P0-P3 架构改造 + 性能优化 |
+| QML/V4.2.1 | `experimental/qml_v4/main.py` | 当前主力版本 | P0-P3 架构改造 + 性能优化 |
 | Qt V3.2.1 | `archived/qt_v3/main_qt.py` | 归档回退版 | 仅修安全、数据丢失和启动阻断问题 |
 | Tk 旧版 | `archived/tk_v1/app.py` | 冻结归档 | 仅保留兼容测试和源码参考 |
 
@@ -92,15 +92,15 @@
 
 ### 方式一：使用安装包
 
-已打包的 RC1 安装程序位于：
+已打包的 V4.2.1 安装程序位于：
 
 ```text
-dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.1 安装程序.exe
 ```
 
 安装后从开始菜单或桌面快捷方式启动即可。
 
-### 方式二：从源码运行 QML/V4.1
+### 方式二：从源码运行 QML/V4.2.1
 
 ```powershell
 pip install -r experimental/qml_v4/requirements.txt
@@ -325,7 +325,7 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 
 ```text
 .
-├─ experimental/qml_v4/        # QML/V4.1 当前主力版本
+├─ experimental/qml_v4/        # QML/V4.2.1 当前主力版本
 │  ├─ main.py                  # V4 启动入口（PySide6 + QML）
 │  ├─ qml_smoke_test.py        # QML 无窗口加载检查脚本
 │  ├─ qml/                     # QML 页面与主题
@@ -487,7 +487,7 @@ python -m PyInstaller experimental\qml_v4\EPUBTranslator_onedir_slim.spec --noco
 输出目录：
 
 ```text
-dist/AI日译中(EPUB)V4.1_slim/
+dist/AI日译中(EPUB)V4.2.1_slim/
 ```
 
 ### Inno Setup 安装包
@@ -503,7 +503,7 @@ dist/AI日译中(EPUB)V4.1_slim/
 输出安装包：
 
 ```text
-dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.1 安装程序.exe
 ```
 
 ---
@@ -518,7 +518,7 @@ dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
 
 触发方式：
 
-- 推送 `v*` 版本标签时，自动在 Windows Runner 上打包 QML/V4.1。
+- 推送 `v*` 版本标签时，自动在 Windows Runner 上打包 QML/V4.2.1。
 - 自动生成 onedir 便携压缩包和 Inno Setup 安装程序。
 - 自动生成发布说明：优先读取 `CHANGELOG.md` 中对应版本小节，再追加 Git 提交摘要。
 - 自动创建 GitHub Release，并把 `.exe` 安装包和 `.zip` 便携包挂到 Release 资产里。
@@ -555,12 +555,12 @@ git push origin v4.1.0
 注意：安装包名称仍由现有 Inno Setup 脚本控制，当前输出为：
 
 ```text
-AI日译中(EPUB)V4.1 安装程序.exe
+AI日译中(EPUB)V4.2.1 安装程序.exe
 ```
 
 ### 应用内检查更新
 
-V4.1 设置页提供「软件更新」区域：
+V4.2.1 设置页提供「软件更新」区域：
 
 - 点击「检查更新」会读取 GitHub 最新 Release。
 - 发现新版本后可打开发布页查看说明。
@@ -652,6 +652,14 @@ python -m pytest -q
 ---
 
 ## 版本记录
+
+### V4.2.1
+
+- 移除无引用的 `cache_store.py`，其原子写入能力统一由 `translation_cache.py` 提供。
+- `request_log.py` 从 `experimental/qml_v4/backend/` 提升到项目根目录，核心引擎不再反向依赖 QML 后端包。
+- 补充 `.gitignore` 规则，覆盖率与测试缓存产物不再进入版本库。
+- 发布工作流增加 `pytest` 全量回归和 QML 冒烟测试，测试失败即阻断打包。
+- 同步 `app_info.py`、README、README_EN 的版本号至 V4.2.1。
 
 ### V4.1
 

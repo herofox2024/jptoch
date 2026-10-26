@@ -1484,7 +1484,7 @@ class TranslateBridge(QObject):
             logger.debug("标记失败文本块状态失败: %s", mark_exc, exc_info=True)
         if residue_texts:
             try:
-                from backend import request_log
+                import request_log
 
                 request_log.record_event(
                     context="translation residue diagnostic",
@@ -1517,7 +1517,7 @@ class TranslateBridge(QObject):
         except Exception as mark_exc:
             logger.debug("标记保存前残留文本块状态失败: %s", mark_exc, exc_info=True)
         try:
-            from backend import request_log
+            import request_log
 
             request_log.record_event(
                 context="pre-save residue diagnostic",

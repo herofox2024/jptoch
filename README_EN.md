@@ -6,14 +6,14 @@
 
 An LLM-powered desktop tool for translating Japanese EPUB books into Simplified Chinese. It is designed for light novels, mystery novels, sci-fi novels, and other Japanese e-book workflows, with glossary management, resumable translation, post-translation proofreading, and Windows installers.
 
-![Version](https://img.shields.io/badge/version-V4.1-2f6f5f)
+![Version](https://img.shields.io/badge/version-V4.2.1-2f6f5f)
 ![UI](https://img.shields.io/badge/UI-PySide6%20%2B%20QML-203a43)
 ![Platform](https://img.shields.io/badge/platform-Windows-c47f2c)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen)
 
 **Language:** [简体中文](README.md) | [English](README_EN.md)
 
-**Current mainline:** QML/V4.1  
+**Current mainline:** QML/V4.2.1  
 **Archived fallback:** Qt V3.2.1
 
 </div>
@@ -43,7 +43,7 @@ An LLM-powered desktop tool for translating Japanese EPUB books into Simplified 
 
 | Version | Entry Point | Status | Notes |
 |---|---|---|---|
-| QML/V4.1 | `experimental/qml_v4/main.py` | Current mainline | Main desktop version with architecture and performance upgrades |
+| QML/V4.2.1 | `experimental/qml_v4/main.py` | Current mainline | Main desktop version with architecture and performance upgrades |
 | Qt V3.2.1 | `archived/qt_v3/main_qt.py` | Archived fallback | Security, data-loss, and startup-blocker fixes only |
 | Tk legacy | `archived/tk_v1/app.py` | Frozen archive | Kept for compatibility tests and source reference |
 
@@ -80,12 +80,12 @@ An LLM-powered desktop tool for translating Japanese EPUB books into Simplified 
 Packaged installers are expected under:
 
 ```text
-dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.1 安装程序.exe
 ```
 
 Install it, then launch the app from the Start Menu or desktop shortcut.
 
-### Option 2: Run QML/V4.1 from source
+### Option 2: Run QML/V4.2.1 from source
 
 ```powershell
 pip install -r experimental/qml_v4/requirements.txt
@@ -153,7 +153,7 @@ Gemini free tier may still trigger rate limits even with GLM-like conservative s
 
 ### Performance
 
-V4.1 uses Slider + SpinBox controls and provides model-specific presets.
+V4.2.1 uses Slider + SpinBox controls and provides model-specific presets.
 
 | Parameter | Purpose | Recommendation |
 |---|---|---|
@@ -262,7 +262,7 @@ Log path:
 
 ```text
 .
-├─ experimental/qml_v4/        # QML/V4.1 current mainline
+├─ experimental/qml_v4/        # QML/V4.2.1 current mainline
 │  ├─ main.py                  # V4 entry point (PySide6 + QML)
 │  ├─ qml/                     # QML pages, themes, components
 │  ├─ backend/                 # Python-QML bridge layer
@@ -301,7 +301,7 @@ python -m PyInstaller experimental\qml_v4\EPUBTranslator_onedir_slim.spec --noco
 Output:
 
 ```text
-dist/AI日译中(EPUB)V4.1_slim/
+dist/AI日译中(EPUB)V4.2.1_slim/
 ```
 
 ### Inno Setup installer
@@ -317,7 +317,7 @@ Common local path:
 Expected installer:
 
 ```text
-dist/installer/AI日译中(EPUB)V4.1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.1 安装程序.exe
 ```
 
 ---
@@ -332,7 +332,7 @@ The project includes a GitHub Actions workflow:
 
 Behavior:
 
-- Pushing a `v*` tag builds QML/V4.1 on a Windows runner.
+- Pushing a `v*` tag builds QML/V4.2.1 on a Windows runner.
 - It creates a slim onedir portable package and an Inno Setup installer.
 - It creates a GitHub Release and uploads `.exe` and `.zip` assets.
 - Manual `workflow_dispatch` uploads Actions artifacts but does not automatically publish a Release.
@@ -400,6 +400,14 @@ Check:
 ---
 
 ## Release Notes
+
+### V4.2.1
+
+- Removed the unreferenced `cache_store.py`; atomic JSON writes now live solely in `translation_cache.py`.
+- Moved `request_log.py` from `experimental/qml_v4/backend/` to the project root so the core engine no longer depends on the QML backend package.
+- Extended `.gitignore` so coverage and test cache artifacts stay out of the repository.
+- The release workflow now runs the full `pytest` suite and the QML smoke test, and blocks packaging on failure.
+- Synced the version in `app_info.py`, README and README_EN to V4.2.1.
 
 ### V4.1
 

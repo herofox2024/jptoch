@@ -3,9 +3,9 @@
 
 APP_NAME = "AI日译中（EPUB）"
 # 展示版本用于窗口标题和品牌露出，补丁号不必每次显示在主界面。
-APP_DISPLAY_VERSION = "4.1"
+APP_DISPLAY_VERSION = "4.2"
 # 内部版本用于更新检查、GitHub Release、安装包 AppVersion 和 Windows 文件版本。
-APP_VERSION = "4.1.1"
+APP_VERSION = "4.2.1"
 APP_VERSION_TAG = f"v{APP_VERSION}"
 APP_DISPLAY_NAME = f"{APP_NAME}V{APP_DISPLAY_VERSION}"
 

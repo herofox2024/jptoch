@@ -66,6 +66,19 @@ bridge callbacks; it should move only after those callbacks become an explicit p
 - Add direct module tests before replacing a compatibility wrapper.
 - Validate persisted and imported settings before they reach bridge fields or translator constructors.
 
+## Shared Root Modules
+
+Modules needed by both the core engine and the QML bridges must live at the project root,
+not under `experimental/qml_v4/backend`:
+
+| Module | Responsibility |
+| --- | --- |
+| `request_log.py` | Structured diagnostic request logs, secret redaction and retention |
+
+`request_log.py` has no Qt dependency. `translator.py` and the QML log/translate bridges
+both import it as a top-level module. Do not move it back under the backend package: the
+core engine must not import the QML package.
+
 ## Version Ownership
 
 - `experimental/qml_v4` is the only active desktop UI and the only release target.

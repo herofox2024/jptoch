@@ -76,12 +76,9 @@ from translation_models import (
 )
 
 try:
-    from backend import request_log as qml_request_log
-except Exception:  # pragma: no cover - non-QML entry points can run without it
-    try:
-        from experimental.qml_v4.backend import request_log as qml_request_log
-    except Exception:  # pragma: no cover
-        qml_request_log = None
+    import request_log as qml_request_log
+except Exception:  # pragma: no cover - diagnostics are optional for the core engine
+    qml_request_log = None
 
 
 GLOSSARY_EXTRACTION_MODES = {"novel", "lite"}

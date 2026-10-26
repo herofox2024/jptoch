@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from experimental.qml_v4.backend import request_log
+import request_log
 
 
 def _use_tmp_log_dir(monkeypatch, tmp_path):

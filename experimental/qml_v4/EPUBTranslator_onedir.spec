@@ -37,6 +37,7 @@ a = Analysis(
         "epub_io",
         "glossary_store",
         "text_utils",
+        "request_log",
         "style_detector",
         "logging_config",
         "backend.app_info",

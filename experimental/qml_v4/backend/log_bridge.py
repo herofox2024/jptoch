@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 try:
-    from backend import request_log
+    import request_log
 except Exception:  # pragma: no cover - keeps old launch paths compatible
     request_log = None
 
