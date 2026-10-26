@@ -134,7 +134,6 @@ a = Analysis(
         "translator",
         "epub_io",
         "glossary_store",
-        "cache_store",
         "text_utils",
         "style_detector",
         "logging_config",

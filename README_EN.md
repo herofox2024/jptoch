@@ -275,7 +275,6 @@ Log path:
 ├─ epub_io.py                  # EPUB reading, writing, TOC and layout handling
 ├─ style_detector.py           # Local novel genre/tone detection
 ├─ glossary_store.py           # Glossary loading, merging, filtering, indexing
-├─ cache_store.py              # Cache helpers and atomic JSON writes
 ├─ text_utils.py               # Translatable-text detection
 ├─ installer/                  # Inno Setup scripts
 └─ tests/                      # Regression tests

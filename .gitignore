@@ -21,6 +21,14 @@ experimental/qml_v4/_build_version_info.txt
 cache.json
 *.log
 
+# 测试与覆盖率产物
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # 用户自定义词汇表
 glossary.json
 

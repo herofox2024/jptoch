@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -357,7 +357,6 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 ├─ epub_io.py                  # EPUB 读取、写入、目录和排版兼容
 ├─ style_detector.py           # 小说类型和叙事风格本地识别
 ├─ glossary_store.py           # 术语表加载、保存、合并、去重
-├─ cache_store.py              # 缓存和 JSON 原子写入
 ├─ text_utils.py               # 文本可翻译性判断
 ├─ installer/                  # Inno Setup 脚本
 └─ tests/                      # 回归测试
@@ -407,7 +406,7 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 │  │  │   epub_io.py     │  │   Supporting Modules    │  │    │
 │  │  │  load / save     │  │  style_detector.py      │  │    │
 │  │  │  iter_text_nodes │  │  glossary_store.py      │  │    │
-│  │  │  extract_toc     │  │  cache_store.py         │  │    │
+│  │  │  extract_toc     │  │  translation_cache.py   │  │    │
 │  │  └──────────────────┘  └─────────────────────────┘  │    │
 │  └──────────────────────────────────────────────────────┘    │
 │                                                              │
