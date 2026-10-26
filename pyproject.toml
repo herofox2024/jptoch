@@ -1,0 +1,33 @@
+[tool.ruff]
+# 目标与兼容性
+target-version = "py311"
+line-length = 120
+
+# 不参与检查的目录：归档代码、打包产物、缓存
+extend-exclude = [
+    "archived",
+    "dist",
+    "build",
+    "__pycache__",
+    ".pytest_cache",
+    "experimental/qml_v4/qml",
+]
+
+[tool.ruff.lint]
+# 只启用能发现真实缺陷的规则，暂不引入纯排版风格规则（E501/E702 等）。
+# 后续可逐步加入 I（导入排序）、UP（语法升级）等，先保证基线稳定。
+select = [
+    "F",   # Pyflakes：未使用导入/变量、重定义、重复字典键等真实缺陷
+    "E9",  # 语法层面的硬错误
+]
+
+# 逐条忽略时必须写明原因，避免把真实缺陷静默掉。
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# 测试中允许导入后仅用于 fixture 或 side effect 的写法
+"tests/*" = []
+
+[tool.ruff.format]
+# 暂不启用 ruff format，避免一次性产生大量排版 diff。
+quote-style = "double"

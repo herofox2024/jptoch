@@ -924,7 +924,6 @@ def set_reading_direction(epub_path: str, chinese_mode: bool = True) -> None:
                 dc_language.string = language
             else:
                 # 创建新的 dc:language
-                ns = {"dc": "http://purl.org/dc/elements/1.1/"}
                 new_lang = opf_soup.new_tag("dc:language")
                 new_lang.string = language
                 metadata.append(new_lang)

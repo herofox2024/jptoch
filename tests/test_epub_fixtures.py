@@ -1,16 +1,13 @@
 ﻿from __future__ import annotations
 
-import os
 import sys
 import zipfile
 from pathlib import Path
 
-from bs4 import BeautifulSoup
 from ebooklib import epub
 
 from epub_io import (
     add_translation_notice_page,
-    apply_toc_translations,
     extract_toc_titles,
     extract_visible_text,
     iter_text_nodes,

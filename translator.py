@@ -62,7 +62,6 @@ from translation_cache_db import SQLiteCacheMapping, TranslationCacheDB, cache_d
 from translation_async_http import (
     HTTPX_AVAILABLE,
     AsyncHttpJsonExecutor as _AsyncHttpJsonExecutor,
-    HttpxResponseAdapter as _HttpxResponseAdapter,
 )
 from translation_json_parser import extract_json_object, extract_lenient_indexed_items
 from translation_batching import smart_batch_task_keys, smart_batch_texts, smart_split_text
@@ -1881,7 +1880,6 @@ class JaZhTranslator:
         filtered = []
         for entry in entries:
             original = str(entry.get("original", "")).strip()
-            translation = str(entry.get("translation", "")).strip()
             metadata = self._lookup_glossary_metadata(original)
             if metadata:
                 entry = {**entry, **{k: v for k, v in metadata.items() if v}}

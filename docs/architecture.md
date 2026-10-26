@@ -79,6 +79,22 @@ not under `experimental/qml_v4/backend`:
 both import it as a top-level module. Do not move it back under the backend package: the
 core engine must not import the QML package.
 
+## Static Checks
+
+`pyproject.toml` configures ruff for the whole repository. The enabled rule set is
+deliberately narrow so the baseline stays green and every finding is a real defect:
+
+| Rule | Purpose |
+| --- | --- |
+| `F` (Pyflakes) | Unused imports/variables, redefinitions, duplicate dict keys |
+| `E9` | Syntax-level hard errors |
+
+Formatting-only rules such as `E501` (line length) and `E702` (statement separators) are
+intentionally disabled: enabling them today would add over a thousand findings and hide
+real defects in noise. `archived/`, `dist/`, `build/` and the QML directory are excluded.
+
+`ruff check .` runs in the release workflow before packaging and blocks it on failure.
+
 ## Version Ownership
 
 - `experimental/qml_v4` is the only active desktop UI and the only release target.

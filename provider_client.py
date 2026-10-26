@@ -2,7 +2,7 @@
 """Small OpenAI-compatible provider client helpers used by the translator."""
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import requests
 

@@ -15,6 +15,10 @@
 - 补充 .gitignore 规则，覆盖率与测试缓存产物不再入库
 - 发布工作流增加 pytest 全量回归和 QML 冒烟测试，测试失败阻断打包
 - 同步 app_info.py、README、README_EN 版本号至 V4.2.1
+- 引入 ruff 静态检查，配置见 pyproject.toml（仅启用 Pyflakes F 与语法级 E9）
+- 修复 style_detector.py 历史推理关键词表中重复字典键导致的词条丢失
+- 清理 10 处未使用导入与 7 处未使用变量
+- 发布工作流增加 ruff 检查步骤，失败阻断打包
 
 
 ## v4.2.0

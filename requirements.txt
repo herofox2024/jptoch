@@ -1,3 +1,5 @@
+# 归档版 Qt V3.2.1 运行时依赖（archived/qt_v3/main_qt.py）
+# 当前主力版本 QML/V4 请改用 experimental/qml_v4/requirements.txt
 ebooklib
 beautifulsoup4
 lxml
@@ -6,3 +8,7 @@ tkinterdnd2
 PyQt5
 PyQt-Fluent-Widgets
 PyYAML>=6.0
+
+# 开发依赖（发布工作流会自动安装）：
+#   pytest
+#   ruff

@@ -276,6 +276,8 @@ Log path:
 ├─ style_detector.py           # Local novel genre/tone detection
 ├─ glossary_store.py           # Glossary loading, merging, filtering, indexing
 ├─ text_utils.py               # Translatable-text detection
+├─ request_log.py              # Structured diagnostics shared by core and UI (no Qt)
+├─ pyproject.toml              # ruff lint configuration
 ├─ installer/                  # Inno Setup scripts
 └─ tests/                      # Regression tests
 ```

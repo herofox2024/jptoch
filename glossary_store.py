@@ -290,7 +290,6 @@ def merge_glossaries(
     for cat in DEFAULT_GLOSSARY_CATEGORIES:
         for entry in merged[cat]:
             original = str(entry.get("original", "")).strip()
-            translation = str(entry.get("translation", "")).strip()
             if original and original not in seen:
                 seen[original] = entry
 

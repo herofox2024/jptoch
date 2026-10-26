@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -358,6 +358,8 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 ├─ style_detector.py           # 小说类型和叙事风格本地识别
 ├─ glossary_store.py           # 术语表加载、保存、合并、去重
 ├─ text_utils.py               # 文本可翻译性判断
+├─ request_log.py              # 结构化诊断日志（核心层与 UI 层共用，无 Qt 依赖）
+├─ pyproject.toml              # ruff 检查配置
 ├─ installer/                  # Inno Setup 脚本
 └─ tests/                      # 回归测试
 ```
@@ -643,11 +645,14 @@ QML/PySide6、EPUB 解析、配置加载和 Python 运行时初始化都会增�
 开发验证命令：
 
 ```powershell
+ruff check .
 python experimental/qml_v4/qml_smoke_test.py
 python -m pytest -q
 ```
 
 其中，`qml_smoke_test.py` 是 QML 冒烟测试：它以较低成本检查 QML 页面和组件能否被读取、解析和加载，适合在修改 UI 后快速发现明显的语法或引用错误。它不能替代完整功能测试；发布前仍应运行 `pytest` 和真实 EPUB 回归测试。
+
+`ruff check .` 使用仓库根目录 `pyproject.toml` 的配置，当前只启用能发现真实缺陷的规则（Pyflakes `F` 与语法级 `E9`），不包含纯排版风格规则，因此不会因行宽或分号写法产生噪音。该检查已接入发布工作流，失败会阻断打包。
 
 ---
 

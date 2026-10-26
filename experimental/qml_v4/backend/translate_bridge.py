@@ -4,7 +4,6 @@
 """
 
 import os
-import json
 import logging
 import threading
 import time
@@ -27,7 +26,6 @@ from backend.bridge_workers import (
     ClearBookCacheWorker as _ClearBookCacheWorker,
     EstimateWorker as _EstimateWorker,
     TestConnectionWorker as _TestWorker,
-    collect_translatable_texts as _collect_translatable_texts,
 )
 from backend.output_naming import (
     FILENAME_EXPLANATION_MARKERS as _OUTPUT_FILENAME_MARKERS,
@@ -365,10 +363,7 @@ class _TranslateWorker(QObject):
             ctx = run_ingest_pipeline(ctx)
 
             book = ctx.book
-            docs = ctx.docs
             toc_titles = ctx.toc_titles
-            book_service = ctx.book_service
-            book_text_plan = ctx.text_plan
             all_texts = ctx.texts
 
             # 发送风格检测信号

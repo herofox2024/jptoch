@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from PySide6.QtCore import (
-    QAbstractListModel, QModelIndex, Qt, QObject, Signal, Slot, Property, QThread,
+    QAbstractListModel, QModelIndex, Qt, QObject, Signal, Slot, Property,
 )
 
 logger = logging.getLogger(__name__)
@@ -468,7 +468,6 @@ class GlossaryModel(QAbstractListModel):
         self._apply_filter()
 
     def _apply_filter(self):
-        old_count = len(self._filtered)
         filtered = []
         for row_idx, row in enumerate(self._all_rows):
             cat = row.get("category", "")

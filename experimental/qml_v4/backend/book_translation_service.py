@@ -8,7 +8,6 @@ from bs4 import NavigableString
 
 from epub_io import extract_visible_text
 from text_utils import is_translatable
-from translator import JaZhTranslator
 import translation_quality as tq
 
 
