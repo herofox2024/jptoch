@@ -77,4 +77,35 @@ Rectangle {
         cursorShape: Qt.PointingHandCursor
         onClicked: root.clicked()
     }
+
+    // 自定义按钮需要显式声明无障碍信息，否则屏幕阅读器只能读到一个矩形。
+    Accessible.role: Accessible.Button
+    Accessible.name: root.label
+    Accessible.description: root.hint
+    Accessible.onPressAction: {
+        if (root.enabled) root.clicked()
+    }
+
+    // 支持键盘聚焦与激活，与原生 Button 一致。
+    activeFocusOnTab: true
+    focus: false
+    Keys.onReturnPressed: {
+        if (root.enabled) root.clicked()
+    }
+    Keys.onEnterPressed: {
+        if (root.enabled) root.clicked()
+    }
+    Keys.onSpacePressed: {
+        if (root.enabled) root.clicked()
+    }
+
+    // 键盘聚焦时显示与鼠标悬停一致的描边。
+    Rectangle {
+        anchors.fill: parent
+        radius: parent.radius
+        color: "transparent"
+        border.color: root.activeFocus ? AppPalette.accentColor : "transparent"
+        border.width: root.activeFocus ? 2 : 0
+        visible: root.activeFocus
+    }
 }

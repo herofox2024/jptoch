@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -360,10 +360,11 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 │  │  │  ├─ ApiConfigPage.qml  # API 配置页（供应商、Key、连接测试）
 │  │  │  ├─ GlossaryPage.qml   # 术语表页（CRUD、导入导出、搜索筛选）
 │  │  │  └─ OptionsPage.qml    # 设置页（性能、风格、校对、主题）
-│  │  └─ components/           # 可复用组件（共 32 个）
+│  │  └─ components/           # 可复用组件（共 33 个）
 │  │     ├─ Toast.qml          # Toast 通知浮层（P0 新增）
 │  │     ├─ ApiModelPresetDialog.qml    # 模型/Prompt 预设管理弹窗
 │  │     ├─ ApiLocalModelDialog.qml     # Hy-MT2 本地模型管理弹窗
+│  │     ├─ OptionsPerformancePane.qml  # 设置页性能参数面板
 │  │     └─ ThemeRegistry.qml  # 主题注册表工具（P2 新增）
 │  ├─ backend/                 # Python-QML 桥接层
 │  │  ├─ config_bridge.py      # 配置桥接（Qt Property → QML 绑定）

@@ -474,6 +474,9 @@ Page {
                         Layout.fillWidth: true
                         value: page.safeProgress()
                         indeterminate: page.isBusy() && page.safeProgress() < 0.001
+                        Accessible.role: Accessible.ProgressBar
+                        Accessible.name: "翻译进度"
+                        Accessible.description: "当前翻译进度 " + Math.round(page.safeProgress() * 100) + "%"
                         Behavior on value {
                             NumberAnimation { duration: 420; easing.type: Easing.OutCubic }
                         }

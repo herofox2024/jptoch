@@ -30,6 +30,9 @@
 - AppStyle 新增圆角与边框 token（radiusTiny/Chip/Button/Field/Card/Dialog/Pill、borderWidthHairline/Emphasis、borderSubtle）
 - 拆分 ApiConfigPage：模型/Prompt 预设弹窗与 Hy-MT2 本地模型弹窗抽成 ApiModelPresetDialog / ApiLocalModelDialog 组件，页面从 1252 行降到 588 行
 - 新组件通过属性与信号与宿主页面通信，不直接依赖全局桥接对象，便于单独预览和复用
+- 拆分 OptionsPage：性能参数与性能预设抽成 OptionsPerformancePane 组件，页面从 1191 行降到 983 行
+- 补充无障碍支持：TaskActionButton 增加 Accessible 角色/名称/描述与键盘激活（Enter/空格），支持 Tab 聚焦并显示聚焦描边；MonitorPage 进度条与 ApiConfigPage 表单控件补充可读名称
+- 修复 TaskActionButton 之前无法用键盘操作的问题
 
 
 ## v4.2.0

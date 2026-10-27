@@ -290,6 +290,8 @@ Page {
                 ComboBox {
                     id: providerCombo
                     Layout.fillWidth: true
+                    Accessible.name: "模型供应商"
+                    Accessible.description: "选择翻译所使用的 API 供应商"
                     model: providerLabels
                     currentIndex: Math.max(0, providerKeys.indexOf(page.currentProvider))
                     onCurrentIndexChanged: {
@@ -312,6 +314,7 @@ Page {
                 TextField {
                     id: apiKeyField
                     Layout.fillWidth: true
+                    Accessible.name: "API Key"
                     visible: page.needsKey
                     echoMode: TextInput.Password
                     placeholderText: page.needsKey ? "请输入 API Key" : "本地模型无需 API Key"
@@ -325,6 +328,7 @@ Page {
                 TextField {
                     id: urlField
                     Layout.fillWidth: true
+                    Accessible.name: "API URL"
                     placeholderText: "https://api.xxx.com/chat/completions"
                     text: cfg ? cfg.apiUrl : ""
                     enabled: page.isCustom || page.currentProvider === "hymt2"
@@ -336,6 +340,7 @@ Page {
                 TextField {
                     id: modelField
                     Layout.fillWidth: true
+                    Accessible.name: "模型名称"
                     placeholderText: "model-name"
                     text: cfg ? cfg.model : ""
                     selectByMouse: true
@@ -348,6 +353,7 @@ Page {
                     spacing: AppStyle.spacingLarge
                     SpinBox {
                         id: testTimeout
+                        Accessible.name: "连接测试超时（秒）"
                         from: 1
                         to: 300
                         value: 15
