@@ -31,4 +31,6 @@ RingProgress 1.0 RingProgress.qml
 ApiModelPresetDialog 1.0 ApiModelPresetDialog.qml
 ApiLocalModelDialog 1.0 ApiLocalModelDialog.qml
 OptionsPerformancePane 1.0 OptionsPerformancePane.qml
+AboutDialog 1.0 AboutDialog.qml
+AppTopBar 1.0 AppTopBar.qml
 singleton ThemeRegistry 1.0 ThemeRegistry.qml

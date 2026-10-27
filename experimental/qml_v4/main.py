@@ -363,6 +363,11 @@ def main():
     ctx.setContextProperty("AppDisplayName", APP_DISPLAY_NAME)
     ctx.setContextProperty("AppDisplayVersion", APP_DISPLAY_VERSION)
     ctx.setContextProperty("AppVersion", APP_VERSION)
+    # 「关于」弹窗展示的运行环境信息。
+    from PySide6.QtCore import qVersion as _qt_version
+    ctx.setContextProperty("AppPythonVersion", f"Python {sys.version.split()[0]}")
+    ctx.setContextProperty("AppQtVersion", f"Qt {_qt_version()} / PySide6")
+    ctx.setContextProperty("AppPlatform", sys.platform)
     ctx.setContextProperty("AppFontSans", sans_font)
     ctx.setContextProperty("AppFontTitle", title_font)
     # Keep the old QML property name for compatibility; this is now a stable title font.

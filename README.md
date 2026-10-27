@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -86,6 +86,7 @@
 - **服务容器 (P1)**：ServiceContainer 依赖注入，分阶段初始化，统一管理后端实例。
 - **运行时主题切换 (P2)**：ThemeRegistry 主题注册表，切换时平滑过渡 + Toast 通知。
 - **macOS 视觉风格**：采用 Apple 系统色板（系统蓝 `#007AFF`、分组灰 `#F2F2F7`、系统级成功/警告/危险色），大圆角面板、无衬线字体与更宽松的留白，提供浅色 / 深色 / 毛玻璃三套主题。
+- **关于信息**：窗口顶部工具条右侧「关于」可查看显示版本、内部版本、Python 与 Qt 运行环境，以及项目链接与版权说明。
 
 ---
 
@@ -361,11 +362,13 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 │  │  │  ├─ ApiConfigPage.qml  # API 配置页（供应商、Key、连接测试）
 │  │  │  ├─ GlossaryPage.qml   # 术语表页（CRUD、导入导出、搜索筛选）
 │  │  │  └─ OptionsPage.qml    # 设置页（性能、风格、校对、主题）
-│  │  └─ components/           # 可复用组件（共 33 个）
+│  │  └─ components/           # 可复用组件（共 35 个）
 │  │     ├─ Toast.qml          # Toast 通知浮层（P0 新增）
 │  │     ├─ ApiModelPresetDialog.qml    # 模型/Prompt 预设管理弹窗
 │  │     ├─ ApiLocalModelDialog.qml     # Hy-MT2 本地模型管理弹窗
 │  │     ├─ OptionsPerformancePane.qml  # 设置页性能参数面板
+│  │     ├─ AboutDialog.qml    # 关于弹窗（版本与运行环境）
+│  │     ├─ AppTopBar.qml      # 顶部工具条（关于入口）
 │  │     └─ ThemeRegistry.qml  # 主题注册表工具（P2 新增）
 │  ├─ backend/                 # Python-QML 桥接层
 │  │  ├─ config_bridge.py      # 配置桥接（Qt Property → QML 绑定）

@@ -227,9 +227,24 @@ ApplicationWindow {
         }
     }
 
-    RowLayout {
+    // 顶部工具条 + 主内容区。使用系统原生标题栏，QML 无法向标题栏注入控件，
+    // 因此「关于」等全局入口统一放在内容区顶部。
+    ColumnLayout {
         anchors.fill: parent
         spacing: AppStyle.spacingNone
+
+        AppTopBar {
+            Layout.fillWidth: true
+            appTitle: typeof AppDisplayName !== "undefined" ? AppDisplayName : "AI日译中（EPUB）"
+            versionText: typeof AppDisplayVersion !== "undefined" ? AppDisplayVersion : ""
+            glassMode: appWindow.glassMode
+            onAboutRequested: aboutDialog.open()
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: AppStyle.spacingNone
 
         Rectangle {
             Layout.preferredWidth: 184
@@ -539,6 +554,7 @@ ApplicationWindow {
             onClicked: appWindow.workspaceLogExpanded = true
         }
     }
+    }
 
     UiMetricsOverlay {
         visible: typeof UiMetricsDebug !== "undefined" && UiMetricsDebug
@@ -557,5 +573,18 @@ ApplicationWindow {
         anchors.fill: parent
         active: true
         sourceComponent: Toast { }
+    }
+
+    // ====== 关于 ======
+    AboutDialog {
+        id: aboutDialog
+        appName: typeof AppDisplayName !== "undefined" ? AppDisplayName : "AI日译中（EPUB）"
+        displayVersion: typeof AppDisplayVersion !== "undefined" ? AppDisplayVersion : "--"
+        fullVersion: typeof AppVersion !== "undefined" ? AppVersion : "--"
+        pythonVersion: typeof AppPythonVersion !== "undefined" ? AppPythonVersion : "--"
+        qtVersion: typeof AppQtVersion !== "undefined" ? AppQtVersion : "--"
+        parentWidth: appWindow.width
+        parentHeight: appWindow.height
+        copyright: "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n请支持并购买正版书籍。本项目遵循原书版权与各 API 服务商条款。"
     }
 }
