@@ -101,7 +101,60 @@ def _choose_font_family(candidates, fallback="Microsoft YaHei UI"):
     return fallback
 
 
-def _create_startup_splash(app):
+def _read_startup_theme() -> str:
+    """Read the saved theme before the config bridge exists.
+
+    The splash screen is created before ConfigBridge loads the config file, so
+    it cannot query QML. Read the same JSON directly and fall back to "light".
+    """
+    try:
+        import json
+        from pathlib import Path
+
+        path = Path.home() / ".epub_translator" / "config.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        theme = str(data.get("theme") or "light").strip().lower()
+        return theme if theme in {"light", "dark", "glass"} else "light"
+    except Exception:
+        return "light"
+
+
+# 与 AppPalette 保持一致的三套主题配色，供启动画面使用。
+_STARTUP_THEME_COLORS = {
+    "light": {
+        "card": "#ffffff",
+        "card_border": "rgba(0, 0, 0, 30)",
+        "title": "#1d1d1f",
+        "hint": "#86868b",
+        "track": "rgba(0, 122, 255, 26)",
+        "chunk_start": "#007aff",
+        "chunk_end": "#5ac8fa",
+        "shadow": (0, 0, 0, 28),
+    },
+    "dark": {
+        "card": "#2c2c2e",
+        "card_border": "rgba(255, 255, 255, 36)",
+        "title": "#f5f5f7",
+        "hint": "#98989d",
+        "track": "rgba(10, 132, 255, 46)",
+        "chunk_start": "#0a84ff",
+        "chunk_end": "#64d2ff",
+        "shadow": (0, 0, 0, 120),
+    },
+    "glass": {
+        "card": "rgba(255, 255, 255, 216)",
+        "card_border": "rgba(255, 255, 255, 184)",
+        "title": "#1d1d1f",
+        "hint": "#6e6e73",
+        "track": "rgba(0, 122, 255, 34)",
+        "chunk_start": "#007aff",
+        "chunk_end": "#5ac8fa",
+        "shadow": (16, 24, 40, 46),
+    },
+}
+
+
+def _create_startup_splash(app, theme: str = "light"):
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor
     from PySide6.QtWidgets import (
@@ -112,6 +165,8 @@ def _create_startup_splash(app):
         QFrame,
         QGraphicsDropShadowEffect,
     )
+
+    palette = _STARTUP_THEME_COLORS.get(theme, _STARTUP_THEME_COLORS["light"])
 
     splash = QWidget()
     splash.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -124,38 +179,41 @@ def _create_startup_splash(app):
     card = QFrame(splash)
     card.setObjectName("startupCard")
     card.setStyleSheet(
-        """
-        QFrame#startupCard {
-            background: #fffaf1;
-            border: 1px solid #ded1bd;
-            border-radius: 24px;
-        }
-        QLabel#startupTitle {
-            color: #1f302d;
+        f"""
+        QFrame#startupCard {{
+            background: {palette["card"]};
+            border: 1px solid {palette["card_border"]};
+            border-radius: 18px;
+        }}
+        QLabel#startupTitle {{
+            color: {palette["title"]};
             font-size: 20px;
             font-weight: 700;
-        }
-        QLabel#startupHint {
-            color: #6a746f;
+        }}
+        QLabel#startupHint {{
+            color: {palette["hint"]};
             font-size: 12px;
-        }
-        QProgressBar {
-            min-height: 8px;
-            max-height: 8px;
+        }}
+        QProgressBar {{
+            min-height: 6px;
+            max-height: 6px;
             border: 0;
-            border-radius: 4px;
-            background: #d7ece5;
-        }
-        QProgressBar::chunk {
-            border-radius: 4px;
-            background: #2f6f5f;
-        }
+            border-radius: 3px;
+            background: {palette["track"]};
+        }}
+        QProgressBar::chunk {{
+            border-radius: 3px;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                        stop:0 {palette["chunk_start"]},
+                                        stop:1 {palette["chunk_end"]});
+        }}
         """
     )
     shadow = QGraphicsDropShadowEffect(card)
-    shadow.setBlurRadius(30)
-    shadow.setOffset(0, 10)
-    shadow.setColor(QColor(23, 48, 43, 48))
+    shadow.setBlurRadius(36)
+    shadow.setOffset(0, 12)
+    s = palette["shadow"]
+    shadow.setColor(QColor(s[0], s[1], s[2], s[3]))
     card.setGraphicsEffect(shadow)
 
     card_layout = QVBoxLayout(card)
@@ -223,7 +281,8 @@ def main():
     app.setOrganizationName("epub-translator")
     if icon_path:
         app.setWindowIcon(QIcon(str(icon_path)))
-    splash = _create_startup_splash(app)
+    # 启动画面在 ConfigBridge 加载配置前就要显示，所以先直接读盘取主题。
+    splash = _create_startup_splash(app, _read_startup_theme())
 
     _set_startup_status(app, splash, "正在初始化字体")
     # Apple 风格使用无衬线系统字体（macOS 为 SF Pro / PingFang SC）。
