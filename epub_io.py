@@ -36,11 +36,23 @@ BLOCK_SPLIT_TAGS = {
     "ul",
 }
 
-DEFAULT_TRANSLATION_NOTICE_TEXT = (
-    "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n"
-    "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
-    "请支持并购买正版书籍。"
-)
+def _default_translation_notice_text() -> str:
+    """Build the default notice text without importing UI modules at module load."""
+    try:
+        from backend.app_info import APP_DISPLAY_NAME
+    except Exception:  # pragma: no cover - core module can run without the QML package
+        try:
+            from experimental.qml_v4.backend.app_info import APP_DISPLAY_NAME
+        except Exception:  # pragma: no cover
+            APP_DISPLAY_NAME = "AI日译中（EPUB）"
+    return (
+        f"本书由 {APP_DISPLAY_NAME} 辅助翻译。\n"
+        "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
+        "请支持并购买正版书籍。"
+    )
+
+
+DEFAULT_TRANSLATION_NOTICE_TEXT = _default_translation_notice_text()
 TRANSLATION_NOTICE_UID = "ai-jp-zh-translation-notice"
 TRANSLATION_NOTICE_FILE_NAME = "translation_notice.xhtml"
 

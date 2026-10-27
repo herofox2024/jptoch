@@ -28,4 +28,6 @@ GlossaryProfileSection 1.0 GlossaryProfileSection.qml
 TableHeader 1.0 TableHeader.qml
 EmptyState 1.0 EmptyState.qml
 RingProgress 1.0 RingProgress.qml
+ApiModelPresetDialog 1.0 ApiModelPresetDialog.qml
+ApiLocalModelDialog 1.0 ApiLocalModelDialog.qml
 singleton ThemeRegistry 1.0 ThemeRegistry.qml

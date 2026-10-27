@@ -8,7 +8,8 @@ GroupBox {
     id: root
 
     property var cfg: null
-    readonly property string defaultNoticeText: "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n请支持并购买正版书籍。"
+    readonly property string appDisplayName: typeof AppDisplayName !== "undefined" ? AppDisplayName : "AI日译中（EPUB）"
+    readonly property string defaultNoticeText: "本书由 " + appDisplayName + " 辅助翻译。\n译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n请支持并购买正版书籍。"
 
     signal batchAddRequested(var files, string noticeText)
 

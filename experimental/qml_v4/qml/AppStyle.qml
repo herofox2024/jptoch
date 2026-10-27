@@ -49,6 +49,21 @@ QtObject {
     readonly property int infoBarHeight: 44
     readonly property int navButtonHeight: 58
 
+    // 圆角 token。新增界面请优先使用这些语义值，
+    // 避免同一类元素在不同页面出现 10/12/14 混用。
+    readonly property int radiusTiny: 2        // 进度条、细分隔条
+    readonly property int radiusChip: 6        // 标签、状态胶囊
+    readonly property int radiusButton: 8      // 普通按钮
+    readonly property int radiusField: 10      // 输入框、下拉框
+    readonly property int radiusCard: 12       // 卡片、面板
+    readonly property int radiusDialog: 16     // 弹窗、抽屉
+    readonly property int radiusPill: 999      // 完全圆角
+
+    // 边框 token
+    readonly property int borderWidthHairline: 1
+    readonly property int borderWidthEmphasis: 2
+    readonly property color borderSubtle: AppPalette.lineColor
+
     // 响应式布局断点（视口/窗口宽度，px）
     readonly property int bpCompact: 680      // 紧凑：操作按钮 2 列
     readonly property int bpNarrow: 880       // 窄屏：隐藏次要状态

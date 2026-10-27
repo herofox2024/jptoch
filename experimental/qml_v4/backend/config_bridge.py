@@ -13,6 +13,7 @@ from typing import Any, Dict, List
 import translation_quality as tq
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 from .config_schema import validate_config
+from backend.app_info import APP_DISPLAY_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -423,7 +424,7 @@ CONFIG_FILE_NAME = "config.json"
 JAPANESE_RESIDUE_ALLOWLIST_FILE_NAME = "japanese_residue_allowlist.json"
 MODEL_PROMPT_PRESETS_FILE_NAME = "model_prompt_presets.json"
 DEFAULT_NOTICE_PAGE_TEXT = (
-    "本书由 AI日译中(EPUB) V4.1 辅助翻译。\n"
+    f"本书由 {APP_DISPLAY_NAME} 辅助翻译。\n"
     "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
     "请支持并购买正版书籍。"
 )

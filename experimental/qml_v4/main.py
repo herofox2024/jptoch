@@ -211,7 +211,7 @@ def main():
     from PySide6.QtQuickControls2 import QQuickStyle
     from PySide6.QtWidgets import QApplication
     from PySide6.QtQml import QQmlApplicationEngine
-    from backend.app_info import APP_DISPLAY_NAME, APP_NAME
+    from backend.app_info import APP_DISPLAY_NAME, APP_DISPLAY_VERSION, APP_NAME, APP_VERSION
 
     icon_path = _find_app_icon_path()
 
@@ -296,6 +296,10 @@ def main():
     ctx.setContextProperty("LogBridge", log_bridge)
     ctx.setContextProperty("LocalModelBridge", local_model_bridge)
     ctx.setContextProperty("AppDir", str(EXPERIMENT_DIR))
+    # 版本信息统一来自 backend.app_info，QML 侧不要再硬编码。
+    ctx.setContextProperty("AppDisplayName", APP_DISPLAY_NAME)
+    ctx.setContextProperty("AppDisplayVersion", APP_DISPLAY_VERSION)
+    ctx.setContextProperty("AppVersion", APP_VERSION)
     ctx.setContextProperty("AppFontSans", sans_font)
     ctx.setContextProperty("AppFontTitle", title_font)
     # Keep the old QML property name for compatibility; this is now a stable title font.

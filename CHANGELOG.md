@@ -25,6 +25,11 @@
 - 批量翻译提示词新增中文表达质量约束（避免日式直译、保留转折语气、动作描写准确），模板见 dict/system_prompt_hq_format.yaml，并对旧版自定义模板做兜底追加
 - 新增译后润色档 enable_polish（默认关闭）：检测翻译腔、语气缺失、感官动词不足，复用校对 provider 二次润色
 - 新增 tests/test_translation_polish.py 覆盖润色检测逻辑与开关行为
+- 修复窗口标题与版权提示页的版本号硬编码：统一由 backend/app_info.py 注入 AppDisplayName，避免发版后仍显示旧版本
+- 新增窗口级快捷键：Ctrl+Enter 开始翻译、Ctrl+P 暂停、Ctrl+R 恢复、Ctrl+Shift+X 停止、Ctrl+1/2/3 切换页面
+- AppStyle 新增圆角与边框 token（radiusTiny/Chip/Button/Field/Card/Dialog/Pill、borderWidthHairline/Emphasis、borderSubtle）
+- 拆分 ApiConfigPage：模型/Prompt 预设弹窗与 Hy-MT2 本地模型弹窗抽成 ApiModelPresetDialog / ApiLocalModelDialog 组件，页面从 1252 行降到 588 行
+- 新组件通过属性与信号与宿主页面通信，不直接依赖全局桥接对象，便于单独预览和复用
 
 
 ## v4.2.0

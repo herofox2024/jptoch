@@ -1,10 +1,10 @@
 import QtQuick
 import QtQuick.Controls
-    import QtQuick.Controls.Material
-    import QtQuick.Layouts
-    import "."
-    import "pages"
-    import "components"
+import QtQuick.Controls.Material
+import QtQuick.Layouts
+import "."
+import "pages"
+import "components"
 
 ApplicationWindow {
     id: appWindow
@@ -13,7 +13,7 @@ ApplicationWindow {
     height: 860
     minimumWidth: 980
     minimumHeight: 640
-    title: "AI日译中（EPUB）V4.1"
+    title: typeof AppDisplayName !== "undefined" ? AppDisplayName : "AI日译中（EPUB）"
     font.family: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
 
     readonly property string uiFont: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
@@ -75,6 +75,61 @@ ApplicationWindow {
     }
 
     readonly property color hintColor: AppPalette.mutedText
+
+    // ---- 窗口级快捷键：与任务页按钮语义一致，任意页面可用 ----
+    Shortcut {
+        sequences: ["Ctrl+Return", "Ctrl+Enter"]
+        enabled: taskLoader.item !== null && taskLoader.item.canStart
+        context: Qt.WindowShortcut
+        onActivated: {
+            if (taskLoader.item) taskLoader.item.triggerStart()
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+P"
+        enabled: taskLoader.item !== null && taskLoader.item.canPause
+        context: Qt.WindowShortcut
+        onActivated: {
+            if (taskLoader.item) taskLoader.item.triggerPause()
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+R"
+        enabled: taskLoader.item !== null && !taskLoader.item.busy && taskLoader.item.readyToStart
+        context: Qt.WindowShortcut
+        onActivated: {
+            if (taskLoader.item) taskLoader.item.triggerResume()
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+X"
+        enabled: taskLoader.item !== null && taskLoader.item.canStop
+        context: Qt.WindowShortcut
+        onActivated: {
+            if (taskLoader.item) taskLoader.item.triggerStop()
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+1"
+        context: Qt.WindowShortcut
+        onActivated: appWindow.switchPage(0)
+    }
+
+    Shortcut {
+        sequence: "Ctrl+2"
+        context: Qt.WindowShortcut
+        onActivated: appWindow.switchPage(1)
+    }
+
+    Shortcut {
+        sequence: "Ctrl+3"
+        context: Qt.WindowShortcut
+        onActivated: appWindow.switchPage(2)
+    }
 
     function switchPage(index) {
         if (appWindow.currentPageIndex === index) return

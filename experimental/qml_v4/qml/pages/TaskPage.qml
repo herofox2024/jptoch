@@ -34,6 +34,39 @@ Page {
         manualEditDialog.openWith(src, dst)
     }
 
+    // 供窗口级快捷键调用：语义与工作台上的按钮一致。
+    readonly property bool canStart: taskPage.tbridge
+        ? (taskPage.readyToStart && !taskPage.tbridge.busy)
+        : false
+    readonly property bool canPause: taskPage.tbridge ? taskPage.tbridge.busy : false
+    readonly property bool canStop: taskPage.tbridge ? taskPage.tbridge.busy : false
+
+    function triggerStart() {
+        if (taskPage.tbridge && taskPage.canStart) {
+            taskPage.tbridge.startTranslation(cfg)
+            taskPage.navigateToStatus()
+        }
+    }
+
+    function triggerPause() {
+        if (taskPage.tbridge && taskPage.canPause) {
+            taskPage.tbridge.pauseTranslation()
+        }
+    }
+
+    function triggerResume() {
+        if (taskPage.tbridge && taskPage.readyToStart && !taskPage.tbridge.busy) {
+            taskPage.tbridge.resumeTranslation(cfg)
+            taskPage.navigateToStatus()
+        }
+    }
+
+    function triggerStop() {
+        if (taskPage.tbridge && taskPage.canStop) {
+            taskPage.tbridge.stopTranslation()
+        }
+    }
+
     ScrollView {
         id: contentScroll
         anchors.fill: parent
@@ -71,7 +104,7 @@ Page {
             Rectangle {
                 Layout.preferredWidth: 128
                 Layout.preferredHeight: AppStyle.buttonHeightSmall
-                radius: 17
+                radius: AppStyle.radiusPill
                 color: AppPalette.accentSoft
                 border.color: AppPalette.borderColor
                 Label {
@@ -493,7 +526,7 @@ Page {
                     Rectangle {
                         Layout.preferredWidth: 150
                         Layout.preferredHeight: AppStyle.buttonHeightSmall
-                        radius: 16
+                        radius: AppStyle.radiusPill
                         color: taskPage.cfg && taskPage.cfg.enableLayeredGlossary ? AppStyle.statusAccentBg : AppPalette.fieldBg
                         border.color: taskPage.cfg && taskPage.cfg.enableLayeredGlossary ? AppPalette.accentColor : AppPalette.borderColor
                         Label {

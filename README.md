@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -360,8 +360,10 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 │  │  │  ├─ ApiConfigPage.qml  # API 配置页（供应商、Key、连接测试）
 │  │  │  ├─ GlossaryPage.qml   # 术语表页（CRUD、导入导出、搜索筛选）
 │  │  │  └─ OptionsPage.qml    # 设置页（性能、风格、校对、主题）
-│  │  └─ components/           # 可复用组件
+│  │  └─ components/           # 可复用组件（共 32 个）
 │  │     ├─ Toast.qml          # Toast 通知浮层（P0 新增）
+│  │     ├─ ApiModelPresetDialog.qml    # 模型/Prompt 预设管理弹窗
+│  │     ├─ ApiLocalModelDialog.qml     # Hy-MT2 本地模型管理弹窗
 │  │     └─ ThemeRegistry.qml  # 主题注册表工具（P2 新增）
 │  ├─ backend/                 # Python-QML 桥接层
 │  │  ├─ config_bridge.py      # 配置桥接（Qt Property → QML 绑定）
@@ -688,6 +690,18 @@ python -m pytest -q
 其中，`qml_smoke_test.py` 是 QML 冒烟测试：它以较低成本检查 QML 页面和组件能否被读取、解析和加载，适合在修改 UI 后快速发现明显的语法或引用错误。它不能替代完整功能测试；发布前仍应运行 `pytest` 和真实 EPUB 回归测试。
 
 `ruff check .` 使用仓库根目录 `pyproject.toml` 的配置，当前只启用能发现真实缺陷的规则（Pyflakes `F` 与语法级 `E9`），不包含纯排版风格规则，因此不会因行宽或分号写法产生噪音。该检查已接入发布工作流，失败会阻断打包。
+
+### 键盘快捷键
+
+| 快捷键 | 作用 |
+|--------|------|
+| `Ctrl+Enter` | 开始翻译（需已选择源文件和输出文件） |
+| `Ctrl+P` | 暂停当前翻译 |
+| `Ctrl+R` | 恢复已暂停的任务 |
+| `Ctrl+Shift+X` | 停止任务并清空本次缓存 |
+| `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | 切换到任务 / 状态 / 日志页 |
+
+快捷键在任意页面生效，但仅在对应操作可用时响应（例如未选择文件时 `Ctrl+Enter` 不会启动）。
 
 ---
 
