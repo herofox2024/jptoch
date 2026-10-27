@@ -41,7 +41,9 @@ ApplicationWindow {
     property bool workspaceLogExpanded: true
     readonly property bool showWorkspaceLog: workspaceLogExpanded && width >= AppStyle.bpLogVisible
 
-    Material.theme: appWindow.darkMode ? Material.Dark : Material.Light
+    // Material 主题跟随 AppPalette 的最终明暗判定，
+    // 保证 glass 等半透明主题下控件与页面底色一致。
+    Material.theme: AppPalette.dark ? Material.Dark : Material.Light
     Material.accent: AppPalette.accentColor
     Material.primary: AppPalette.accentColor
 

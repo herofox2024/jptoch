@@ -33,6 +33,11 @@
 - 拆分 OptionsPage：性能参数与性能预设抽成 OptionsPerformancePane 组件，页面从 1191 行降到 983 行
 - 补充无障碍支持：TaskActionButton 增加 Accessible 角色/名称/描述与键盘激活（Enter/空格），支持 Tab 聚焦并显示聚焦描边；MonitorPage 进度条与 ApiConfigPage 表单控件补充可读名称
 - 修复 TaskActionButton 之前无法用键盘操作的问题
+- 界面改为 macOS 视觉风格：系统蓝 #007AFF 强调色、分组灰 #F2F2F7 背景、系统级成功/警告/危险色，深浅两套对齐 Apple 系统色板
+- 圆角体系放大为 Apple 风格：面板 16、卡片 12、数组件 8；AppStyle 圆角 token 同步上调
+- 字体改为无衬线优先（SF Pro / PingFang SC → 微软雅黑），标题不再使用宋体，靠字重区分层级
+- 窗口标题栏配色同步新调色板；Material 主题明暗判定改由 AppPalette.dark 驱动，修复半透明主题下控件色偏
+- 主题名称更新为「浅色 / 深色 / 毛玻璃」
 
 
 ## v4.2.0

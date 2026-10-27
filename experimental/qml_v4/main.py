@@ -53,10 +53,11 @@ def _apply_windows_titlebar_theme(window, theme):
         import ctypes
 
         theme_name = str(theme or "light").strip().lower()
+        # 与 AppPalette 的背景/文字色保持一致，避免标题栏和窗口正文出现色差。
         colors = {
-            "dark": ("#101614", "#f2f6f4"),
-            "glass": ("#eef8fb", "#18312e"),
-            "light": ("#f8f9fa", "#202124"),
+            "dark": ("#1c1c1e", "#f5f5f7"),
+            "glass": ("#e8ecf2", "#1d1d1f"),
+            "light": ("#f2f2f7", "#1d1d1f"),
         }
         caption_hex, text_hex = colors.get(theme_name, colors["light"])
 
@@ -225,26 +226,29 @@ def main():
     splash = _create_startup_splash(app)
 
     _set_startup_status(app, splash, "正在初始化字体")
+    # Apple 风格使用无衬线系统字体（macOS 为 SF Pro / PingFang SC）。
+    # Windows 上没有 SF Pro，依次回退到最接近的人机工程学无衬线字体。
     sans_font = _choose_font_family(
         [
+            "SF Pro Text",
+            "SF Pro Display",
+            "PingFang SC",
             "HarmonyOS Sans SC",
             "Microsoft YaHei UI",
             "Microsoft YaHei",
             "Noto Sans SC",
             "Noto Sans CJK SC",
-            "LXGW WenKai Screen",
-            "霞鹜文楷屏幕阅读版",
         ]
     )
+    # 标题同样走无衬线，靠字重拉开层级，而不是换成宋体。
     title_font = _choose_font_family(
         [
-            "Noto Serif CJK SC",
-            "Source Han Serif SC",
-            "Songti SC",
-            "STSong",
+            "SF Pro Display",
+            "PingFang SC",
             "HarmonyOS Sans SC",
             "Microsoft YaHei UI",
             "Microsoft YaHei",
+            "Noto Sans SC",
             "Noto Sans CJK SC",
         ],
         fallback=sans_font,

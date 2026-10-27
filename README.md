@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -85,6 +85,7 @@
 - **翻译管线 (P1)**：Pipeline 阶段抽象，风格检测等步骤可独立开关配置。
 - **服务容器 (P1)**：ServiceContainer 依赖注入，分阶段初始化，统一管理后端实例。
 - **运行时主题切换 (P2)**：ThemeRegistry 主题注册表，切换时平滑过渡 + Toast 通知。
+- **macOS 视觉风格**：采用 Apple 系统色板（系统蓝 `#007AFF`、分组灰 `#F2F2F7`、系统级成功/警告/危险色），大圆角面板、无衬线字体与更宽松的留白，提供浅色 / 深色 / 毛玻璃三套主题。
 
 ---
 

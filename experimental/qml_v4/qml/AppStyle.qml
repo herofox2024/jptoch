@@ -49,14 +49,14 @@ QtObject {
     readonly property int infoBarHeight: 44
     readonly property int navButtonHeight: 58
 
-    // 圆角 token。新增界面请优先使用这些语义值，
+    // 圆角 token（Apple 体系）。新增界面请优先使用这些语义值，
     // 避免同一类元素在不同页面出现 10/12/14 混用。
-    readonly property int radiusTiny: 2        // 进度条、细分隔条
-    readonly property int radiusChip: 6        // 标签、状态胶囊
-    readonly property int radiusButton: 8      // 普通按钮
+    readonly property int radiusTiny: 4        // 进度条、细分隔条
+    readonly property int radiusChip: 8        // 标签、状态胶囊
+    readonly property int radiusButton: 10     // 普通按钮
     readonly property int radiusField: 10      // 输入框、下拉框
-    readonly property int radiusCard: 12       // 卡片、面板
-    readonly property int radiusDialog: 16     // 弹窗、抽屉
+    readonly property int radiusCard: 14       // 卡片、面板
+    readonly property int radiusDialog: 18     // 弹窗、抽屉
     readonly property int radiusPill: 999      // 完全圆角
 
     // 边框 token
@@ -74,17 +74,21 @@ QtObject {
 
     readonly property color statusNeutralBg: AppPalette.cardAlt
     readonly property color statusAccentBg: AppPalette.accentSoft
+    // 状态底色采用 Apple 系统色的低透明度填充（浅色 / 深色分别取色）。
     readonly property color statusWarningBg: AppPalette.glass
-                                             ? Qt.rgba(0.82, 0.55, 0.16, 0.16)
-                                             : (AppPalette.dark ? "#3b2d1c" : "#f2e4cf")
+                                             ? Qt.rgba(1.0, 0.58, 0.0, 0.16)
+                                             : (AppPalette.dark ? Qt.rgba(1.0, 0.62, 0.04, 0.20)
+                                                                : Qt.rgba(1.0, 0.58, 0.0, 0.12))
     readonly property color statusErrorBg: AppPalette.glass
-                                           ? Qt.rgba(0.80, 0.24, 0.20, 0.14)
-                                           : (AppPalette.dark ? "#3a2420" : "#f6ded9")
+                                           ? Qt.rgba(1.0, 0.23, 0.19, 0.14)
+                                           : (AppPalette.dark ? Qt.rgba(1.0, 0.27, 0.23, 0.20)
+                                                              : Qt.rgba(1.0, 0.23, 0.19, 0.10))
     readonly property color statusSuccessBg: AppPalette.glass
-                                             ? Qt.rgba(0.30, 0.72, 0.48, 0.18)
-                                             : (AppPalette.dark ? "#203f2a" : "#dcefdc")
+                                             ? Qt.rgba(0.20, 0.78, 0.35, 0.16)
+                                             : (AppPalette.dark ? Qt.rgba(0.19, 0.82, 0.35, 0.20)
+                                                                : Qt.rgba(0.20, 0.78, 0.35, 0.12))
 
-    readonly property color dangerButtonBg: Qt.rgba(0.80, 0.24, 0.20, AppPalette.glass ? 0.18 : 0.10)
+    readonly property color dangerButtonBg: Qt.rgba(1.0, 0.23, 0.19, AppPalette.glass ? 0.18 : 0.10)
     readonly property color primaryOnAccent: "#ffffff"
     readonly property color primaryOnAccentMuted: Qt.rgba(1, 1, 1, 0.82)
 }

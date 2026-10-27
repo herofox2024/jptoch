@@ -16,9 +16,9 @@ import QtQuick
 QtObject {
     // 主题预设定义（名称→标签）
     readonly property var presets: ({
-        "light": "浅色纸感",
-        "dark":  "深色墨色",
-        "glass": "iOS26 玻璃",
+        "light": "浅色",
+        "dark":  "深色",
+        "glass": "毛玻璃",
     })
 
     // 获取所有主题标签
