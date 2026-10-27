@@ -4,17 +4,12 @@
 
 发布新版本前，在这里新增对应版本小节，例如 `## v4.1.2`。GitHub Actions 会自动读取该小节，并追加提交摘要后写入 Release 页面。
 
-## v4.2.1
-- 移除冗余进度值属性并调整布局
-- 重构Windows标题栏主题适配逻辑
-- 新增 navigateToGlossary 信号用于跳转到术语表页面
-- 新增 isTranslationBusy 函数用于判断是否处于翻译操作中
-- 补充术语任务的功能说明、使用流程以及进度分离的相关细节，更新了术语表的使用步骤，新增术语任务独立进度的相关文档说明和冒烟测试的补充解释
+## v4.2.2
 - 移除无引用的 cache_store.py，原子写入能力统一由 translation_cache.py 提供
 - request_log.py 从 backend 包提升到项目根目录，核心引擎不再依赖 QML 后端
 - 补充 .gitignore 规则，覆盖率与测试缓存产物不再入库
 - 发布工作流增加 pytest 全量回归和 QML 冒烟测试，测试失败阻断打包
-- 同步 app_info.py、README、README_EN 版本号至 V4.2.1
+- 同步 app_info.py、README、README_EN 版本号至 V4.2.2
 - 引入 ruff 静态检查，配置见 pyproject.toml（仅启用 Pyflakes F 与语法级 E9）
 - 修复 style_detector.py 历史推理关键词表中重复字典键导致的词条丢失
 - 清理 10 处未使用导入与 7 处未使用变量
@@ -44,6 +39,14 @@
 - 关于弹窗支持键盘操作（Tab 聚焦、Enter/空格打开）与无障碍标签
 - 新增顶部工具条 AppTopBar：在系统原生标题栏之下留出 44px 轻量工具条承载全局入口，不影响窗口拖拽与最小化/最大化行为
 - 导航栏「项目与联系」卡片恢复原有高度，仅保留 GitHub 与 Email
+
+
+## v4.2.1
+- 移除冗余进度值属性并调整布局
+- 重构Windows标题栏主题适配逻辑
+- 新增 navigateToGlossary 信号用于跳转到术语表页面
+- 新增 isTranslationBusy 函数用于判断是否处于翻译操作中
+- 补充术语任务的功能说明、使用流程以及进度分离的相关细节，更新了术语表的使用步骤，新增术语任务独立进度的相关文档说明和冒烟测试的补充解释
 
 
 ## v4.2.0

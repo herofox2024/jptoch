@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -6,14 +6,14 @@
 
 基于大模型 API 的日文 EPUB 自动翻译工具，面向轻小说、推理小说、科幻小说等日文电子书场景，支持翻译、术语表、缓存续译、译后校对和 Windows 桌面安装包。
 
-![Version](https://img.shields.io/badge/version-V4.2.1-2f6f5f)
+![Version](https://img.shields.io/badge/version-V4.2.2-2f6f5f)
 ![UI](https://img.shields.io/badge/UI-PySide6%20%2B%20QML-203a43)
 ![Platform](https://img.shields.io/badge/platform-Windows-c47f2c)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen)
 
 **Language:** [简体中文](README.md) | [English](README_EN.md)
 
-**当前主力版本：QML/V4.2.1**  
+**当前主力版本：QML/V4.2.2**  
 **归档回退版：Qt V3.2.1**
 
 </div>
@@ -25,7 +25,7 @@
 | 内容 | 说明 |
 |------|------|
 | [版本定位](#版本定位) | 当前主线、回退版、历史入口的维护策略 |
-| [界面预览](#界面预览) | QML/V4.2.1 主要页面截图 |
+| [界面预览](#界面预览) | QML/V4.2.2 主要页面截图 |
 | [核心功能](#核心功能) | EPUB 翻译、术语表、缓存续译、译后校对 |
 | [快速开始](#快速开始) | 安装包运行和源码运行方式 |
 | [使用流程](#使用流程) | 从选择 EPUB 到生成中文 EPUB 的步骤 |
@@ -44,7 +44,7 @@
 
 | 版本 | 入口 | 状态 | 说明 |
 |------|------|------|------|
-| QML/V4.2.1 | `experimental/qml_v4/main.py` | 当前主力版本 | P0-P3 架构改造 + 性能优化 |
+| QML/V4.2.2 | `experimental/qml_v4/main.py` | 当前主力版本 | P0-P3 架构改造 + 性能优化 |
 | Qt V3.2.1 | `archived/qt_v3/main_qt.py` | 归档回退版 | 仅修安全、数据丢失和启动阻断问题 |
 | Tk 旧版 | `archived/tk_v1/app.py` | 冻结归档 | 仅保留兼容测试和源码参考 |
 
@@ -94,15 +94,15 @@
 
 ### 方式一：使用安装包
 
-已打包的 V4.2.1 安装程序位于：
+已打包的 V4.2.2 安装程序位于：
 
 ```text
-dist/installer/AI日译中(EPUB)V4.2.1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.2 安装程序.exe
 ```
 
 安装后从开始菜单或桌面快捷方式启动即可。
 
-### 方式二：从源码运行 QML/V4.2.1
+### 方式二：从源码运行 QML/V4.2.2
 
 ```powershell
 pip install -r experimental/qml_v4/requirements.txt
@@ -349,7 +349,7 @@ Hy-MT2 本地模型页还提供「Prompt 模式」：
 
 ```text
 .
-├─ experimental/qml_v4/        # QML/V4.2.1 当前主力版本
+├─ experimental/qml_v4/        # QML/V4.2.2 当前主力版本
 │  ├─ main.py                  # V4 启动入口（PySide6 + QML）
 │  ├─ qml_smoke_test.py        # QML 无窗口加载检查脚本
 │  ├─ qml/                     # QML 页面与主题
@@ -518,7 +518,7 @@ python -m PyInstaller experimental\qml_v4\EPUBTranslator_onedir_slim.spec --noco
 输出目录：
 
 ```text
-dist/AI日译中(EPUB)V4.2.1_slim/
+dist/AI日译中(EPUB)V4.2.2_slim/
 ```
 
 ### Inno Setup 安装包
@@ -534,7 +534,7 @@ dist/AI日译中(EPUB)V4.2.1_slim/
 输出安装包：
 
 ```text
-dist/installer/AI日译中(EPUB)V4.2.1 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.2 安装程序.exe
 ```
 
 ---
@@ -549,7 +549,7 @@ dist/installer/AI日译中(EPUB)V4.2.1 安装程序.exe
 
 触发方式：
 
-- 推送 `v*` 版本标签时，自动在 Windows Runner 上打包 QML/V4.2.1。
+- 推送 `v*` 版本标签时，自动在 Windows Runner 上打包 QML/V4.2.2。
 - 自动生成 onedir 便携压缩包和 Inno Setup 安装程序。
 - 自动生成发布说明：优先读取 `CHANGELOG.md` 中对应版本小节，再追加 Git 提交摘要。
 - 自动创建 GitHub Release，并把 `.exe` 安装包和 `.zip` 便携包挂到 Release 资产里。
@@ -586,12 +586,12 @@ git push origin v4.1.0
 注意：安装包名称仍由现有 Inno Setup 脚本控制，当前输出为：
 
 ```text
-AI日译中(EPUB)V4.2.1 安装程序.exe
+AI日译中(EPUB)V4.2.2 安装程序.exe
 ```
 
 ### 应用内检查更新
 
-V4.2.1 设置页提供「软件更新」区域：
+V4.2.2 设置页提供「软件更新」区域：
 
 - 点击「检查更新」会读取 GitHub 最新 Release。
 - 发现新版本后可打开发布页查看说明。
@@ -712,13 +712,39 @@ python -m pytest -q
 
 ## 版本记录
 
-### V4.2.1
+### V4.2.2
 
 - 移除无引用的 `cache_store.py`，其原子写入能力统一由 `translation_cache.py` 提供。
 - `request_log.py` 从 `experimental/qml_v4/backend/` 提升到项目根目录，核心引擎不再反向依赖 QML 后端包。
 - 补充 `.gitignore` 规则，覆盖率与测试缓存产物不再进入版本库。
 - 发布工作流增加 `pytest` 全量回归和 QML 冒烟测试，测试失败即阻断打包。
-- 同步 `app_info.py`、README、README_EN 的版本号至 V4.2.1。
+- 引入 `ruff` 静态检查（`pyproject.toml`，仅启用 Pyflakes `F` 与语法级 `E9`）并接入发布工作流。
+- 修复 `style_detector.py` 历史推理关键词表中重复字典键导致的词条丢失。
+- 统一 Python 版本到 3.12：CI、`.python-version`、ruff 目标版本三者一致，并新增守护测试拒绝预发布解释器。
+- 批量翻译提示词新增中文表达质量约束，并对旧版自定义模板做兜底追加。
+- 新增译后润色档 `enable_polish`（默认关闭）：检测翻译腔、语气缺失、感官动词不足，复用校对 provider 二次润色。
+- 修复窗口标题与版权提示页的版本号硬编码，统一由 `app_info.py` 注入。
+- 新增窗口级快捷键：`Ctrl+Enter` 开始、`Ctrl+P` 暂停、`Ctrl+R` 恢复、`Ctrl+Shift+X` 停止、`Ctrl+1/2/3` 切换页面。
+- `AppStyle` 新增圆角与边框 token；拆分 `ApiConfigPage`（1252→588 行）与 `OptionsPage`（1191→863 行）为独立组件。
+- 补充无障碍支持：按钮支持键盘激活与 Tab 聚焦，进度条与表单控件补充可读名称。
+- 界面改为 macOS 视觉风格：Apple 系统色板、大圆角、无衬线字体，提供浅色 / 深色 / 毛玻璃三套主题。
+- 修复启动画面未适配主题，并新增顶部工具条与「关于」入口。
+
+### V4.2.1
+
+- 移除冗余进度值属性并调整布局。
+- 重构 Windows 标题栏主题适配逻辑。
+- 新增 `navigateToGlossary` 信号用于跳转到术语表页面。
+- 新增 `isTranslationBusy` 函数用于判断是否处于翻译操作中。
+- 补充术语任务的功能说明、使用流程以及进度分离的相关细节。
+
+### V4.2.0
+
+- 统一内容审核错误判定逻辑。
+- 重构限流与默认参数管理。
+- 新增通用组件与工具类，重构术语表与导航逻辑。
+- 新增 `NoticePageDialog.qml` 弹窗组件用于版权提示页管理。
+- 完成 UI 优化与组件复用重构，移除顶部 header 栏布局。
 
 ### V4.1
 
