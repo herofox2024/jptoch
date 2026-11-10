@@ -62,8 +62,9 @@ Page {
     }
 
     function triggerStop() {
-        if (taskPage.tbridge && taskPage.canStop) {
-            taskPage.tbridge.stopTranslation()
+        // 快捷键不能绕过「停止」的二次确认，统一委托给控制面板。
+        if (taskPage.tbridge && taskPage.canStop && taskControlPanel) {
+            taskControlPanel.requestStop()
         }
     }
 
@@ -344,21 +345,27 @@ Page {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: AppStyle.spacingMedium
+                            // 不要在这里写 text: cfg.inp 绑定：用户一旦输入，QML 会断开
+                            // 绑定，之后拖放/载入任务历史等外部赋值就再也刷不到输入框。
+                            // 双向同步统一由 syncPathFields() 与 cfg 的 inp/out 信号负责。
                             TextField {
                                 id: inpField
+                                objectName: "inpField"
                                 Layout.fillWidth: true
                                 placeholderText: "输入 EPUB 路径"
-                                text: cfg ? cfg.inp : ""
                                 selectByMouse: true
                                 onTextChanged: {
-                                    if (cfg) cfg.inp = text
+                                    if (cfg && cfg.inp !== text) cfg.inp = text
                                     if (!activeFocus) cursorPosition = 0
                                     if (activeFocus) estimateTimer.restart()
                                 }
                                 onEditingFinished: {
                                     if (text !== "") taskPage.setInputPath(text)
                                 }
-                                Component.onCompleted: cursorPosition = 0
+                                Component.onCompleted: {
+                                    text = cfg ? cfg.inp : ""
+                                    cursorPosition = 0
+                                }
                             }
                             Button {
                                 text: "选择源文件"
@@ -424,15 +431,18 @@ Page {
                             spacing: AppStyle.spacingMedium
                             TextField {
                                 id: outField
+                                objectName: "outField"
                                 Layout.fillWidth: true
                                 placeholderText: "输出文件路径 (.epub)"
-                                text: cfg ? cfg.out : ""
                                 selectByMouse: true
                                 onTextChanged: {
-                                    if (cfg) cfg.out = text
+                                    if (cfg && cfg.out !== text) cfg.out = text
                                     if (!activeFocus) cursorPosition = 0
                                 }
-                                Component.onCompleted: cursorPosition = 0
+                                Component.onCompleted: {
+                                    text = cfg ? cfg.out : ""
+                                    cursorPosition = 0
+                                }
                             }
                             Button {
                                 text: "选择输出"
@@ -445,6 +455,7 @@ Page {
         }
 
         TaskControlPanel {
+            id: taskControlPanel
             readyToStart: taskPage.readyToStart
             busy: taskPage.busy
             viewportWidth: taskPage.width
@@ -946,6 +957,20 @@ Page {
         function onGlossaryProfilesChanged() {
             taskPage.refreshGlossaryProfiles()
         }
+
+        // 拖放、文件选择、载入任务历史都会从外部改写 cfg.inp / cfg.out，
+        // 这里把新值回填到输入框，避免界面显示旧路径。
+        function onInpChanged() {
+            if (inpField.text !== (taskPage.cfg ? taskPage.cfg.inp : "")) {
+                taskPage.syncPathFields()
+            }
+        }
+
+        function onOutChanged() {
+            if (outField.text !== (taskPage.cfg ? taskPage.cfg.out : "")) {
+                taskPage.syncPathFields()
+            }
+        }
     }
 
     function compactEstimateText(text) {
@@ -1026,6 +1051,7 @@ Page {
             if (inp) cfg.inp = inp
             if (out) cfg.out = out
             else if (inp) cfg.out = FilePathUtils.defaultOutputPath(inp)
+            taskPage.syncPathFields()
         }
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
             ToastBridge.showInfo("已载入最近任务配置")
@@ -1106,26 +1132,32 @@ Page {
         return AppPalette.accentSoft
     }
 
+    // 外部赋值（拖放、文件选择、载入任务历史、恢复默认输出路径）统一走这里，
+    // 保证输入框显示的永远是 cfg 里的真实值。
+    function syncPathFields() {
+        if (!cfg) return
+        if (inpField.text !== cfg.inp) inpField.text = cfg.inp
+        if (outField.text !== cfg.out) outField.text = cfg.out
+        Qt.callLater(function() {
+            inpField.cursorPosition = 0
+            outField.cursorPosition = 0
+        })
+    }
+
     function setInputPath(path) {
         if (cfg) {
             cfg.inp = path
             cfg.out = FilePathUtils.defaultOutputPath(path)
         }
         estimateLabel.text = "预估字符: 计算中..."
-        Qt.callLater(function() {
-            inpField.cursorPosition = 0
-            outField.cursorPosition = 0
-        })
+        taskPage.syncPathFields()
         if (taskPage.tbridge) taskPage.tbridge.startEstimateChars(path)
     }
 
     Component.onCompleted: {
         taskPage.refreshTaskHistory()
         taskPage.refreshGlossaryProfiles()
-        Qt.callLater(function() {
-            inpField.cursorPosition = 0
-            outField.cursorPosition = 0
-        })
+        taskPage.syncPathFields()
     }
 
 }

@@ -561,6 +561,7 @@ Page {
 
         TabBar {
             id: statusTabs
+            objectName: "statusTabs"
             Layout.fillWidth: true
             background: Rectangle {
                 radius: 18
@@ -572,14 +573,29 @@ Page {
             TabButton { text: "文本块进度" }
             TabButton { text: "校对详情" }
             TabButton { text: "错误诊断" }
+
+            // 点击页签 → 切换页面。两侧都用显式赋值而不是属性绑定，
+            // 否则任意一侧被程序改写都会断开绑定，同步随即失效。
+            onCurrentIndexChanged: {
+                if (statusSwipe.currentIndex !== currentIndex) {
+                    statusSwipe.currentIndex = currentIndex
+                }
+            }
         }
 
         SwipeView {
             id: statusSwipe
+            objectName: "statusSwipe"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            currentIndex: statusTabs.currentIndex
             clip: true
+
+            // 手势滑动 → 反向更新页签高亮（守卫避免来回触发）。
+            onCurrentIndexChanged: {
+                if (statusTabs.currentIndex !== currentIndex) {
+                    statusTabs.currentIndex = currentIndex
+                }
+            }
 
             Rectangle {
                 color: AppPalette.cardBg

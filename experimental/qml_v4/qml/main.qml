@@ -568,11 +568,12 @@ ApplicationWindow {
     }
 
     // ====== Toast 通知浮层 ======
-    Loader {
-        id: toastLoader
-        anchors.fill: parent
-        active: true
-        sourceComponent: Toast { }
+    // 必须挂到 Overlay 上：模态 Dialog 会被 Controls 重新挂进 Overlay（z≈1000001），
+    // 如果 Toast 留在 contentItem 里，弹窗内的成功/失败提示会被遮罩层完全盖住，
+    // 用户看不到任何反馈。Toast 自身的 z 在 Overlay 内已经高于普通弹窗。
+    Toast {
+        id: toastOverlay
+        parent: Overlay.overlay
     }
 
     // ====== 关于 ======

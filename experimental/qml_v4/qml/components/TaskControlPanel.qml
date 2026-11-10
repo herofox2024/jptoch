@@ -23,6 +23,16 @@ Rectangle {
     signal manualEditRequested()
     signal statusRequested()
 
+    // 供窗口级快捷键（Ctrl+Shift+X）调用：与「停止」按钮共用同一套确认流程，
+    // 避免快捷键绕过二次确认直接清空缓存。
+    function requestStop() {
+        if (!root.busy) return
+        stopConfirmDialog.open()
+    }
+
+    // 暴露确认框状态，便于自动化测试断言（Dialog 会被挂到 Overlay，findChild 找不到）。
+    property alias stopConfirmVisible: stopConfirmDialog.visible
+
     Layout.fillWidth: true
     Layout.preferredHeight: viewportWidth > AppStyle.bpSmall ? 336 : 418
     radius: AppPalette.radiusLarge
@@ -132,6 +142,8 @@ Rectangle {
                         onClicked: root.resumeRequested()
                     }
 
+                    // 「停止」会取消任务并丢弃本次已翻译缓存，属于不可撤销操作，
+                    // 因此必须先确认；Ctrl+Shift+X 快捷键同样走这里。
                     TaskActionButton {
                         Layout.fillWidth: true
                         Layout.preferredHeight: AppStyle.buttonHeightNormal
@@ -139,7 +151,7 @@ Rectangle {
                         hint: "取消并清空本次缓存"
                         danger: true
                         enabled: root.busy
-                        onClicked: root.stopRequested()
+                        onClicked: stopConfirmDialog.open()
                     }
 
                     TaskActionButton {
@@ -221,6 +233,59 @@ Rectangle {
                         color: root.readyToStart ? AppPalette.successColor : AppPalette.mutedText
                         font.pixelSize: AppStyle.fontSmall
                         font.weight: Font.DemiBold
+                    }
+                }
+            }
+        }
+    }
+
+    // 「停止」二次确认：该操作会丢弃本次已翻译缓存，无法撤销。
+    Dialog {
+        id: stopConfirmDialog
+        objectName: "stopConfirmDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.width - 96, 460)
+        title: "确认停止翻译？"
+        closePolicy: Popup.CloseOnEscape
+
+        contentItem: ColumnLayout {
+            width: stopConfirmDialog.availableWidth
+            spacing: AppStyle.spacingLarge
+
+            Label {
+                Layout.fillWidth: true
+                text: "停止会立即取消当前任务，并清空本次已翻译的缓存内容。"
+                color: AppPalette.textColor
+                wrapMode: Text.WordWrap
+                font.pixelSize: AppStyle.fontBody
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: "已保存到输出 EPUB 的部分不受影响；如需保留进度，请改用“暂停”。"
+                color: AppPalette.mutedText
+                wrapMode: Text.WordWrap
+                font.pixelSize: AppStyle.fontSmall
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: AppStyle.spacingMedium
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "继续翻译"
+                    onClicked: stopConfirmDialog.close()
+                }
+
+                Button {
+                    text: "停止并清空缓存"
+                    highlighted: true
+                    onClicked: {
+                        stopConfirmDialog.close()
+                        root.stopRequested()
                     }
                 }
             }
