@@ -2,10 +2,10 @@
 #define MyAppDisplayVersion "4.2"
 #endif
 #ifndef MyAppVersion
-#define MyAppVersion "4.2.2"
+#define MyAppVersion "4.2.3"
 #endif
 #ifndef MyAppFileVersion
-#define MyAppFileVersion "4.2.2.0"
+#define MyAppFileVersion "4.2.3.0"
 #endif
 #define MyAppName "AI日译中(EPUB) V" + MyAppDisplayVersion
 #define MyAppPublisher "EPUB Translator"

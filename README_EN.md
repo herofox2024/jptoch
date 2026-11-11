@@ -6,14 +6,14 @@
 
 An LLM-powered desktop tool for translating Japanese EPUB books into Simplified Chinese. It is designed for light novels, mystery novels, sci-fi novels, and other Japanese e-book workflows, with glossary management, resumable translation, post-translation proofreading, and Windows installers.
 
-![Version](https://img.shields.io/badge/version-V4.2.2-2f6f5f)
+![Version](https://img.shields.io/badge/version-V4.2.3-2f6f5f)
 ![UI](https://img.shields.io/badge/UI-PySide6%20%2B%20QML-203a43)
 ![Platform](https://img.shields.io/badge/platform-Windows-c47f2c)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen)
 
 **Language:** [简体中文](README.md) | [English](README_EN.md)
 
-**Current mainline:** QML/V4.2.2  
+**Current mainline:** QML/V4.2.3  
 **Archived fallback:** Qt V3.2.1
 
 </div>
@@ -43,7 +43,7 @@ An LLM-powered desktop tool for translating Japanese EPUB books into Simplified 
 
 | Version | Entry Point | Status | Notes |
 |---|---|---|---|
-| QML/V4.2.2 | `experimental/qml_v4/main.py` | Current mainline | Main desktop version with architecture and performance upgrades |
+| QML/V4.2.3 | `experimental/qml_v4/main.py` | Current mainline | Main desktop version with architecture and performance upgrades |
 | Qt V3.2.1 | `archived/qt_v3/main_qt.py` | Archived fallback | Security, data-loss, and startup-blocker fixes only |
 | Tk legacy | `archived/tk_v1/app.py` | Frozen archive | Kept for compatibility tests and source reference |
 
@@ -80,12 +80,12 @@ An LLM-powered desktop tool for translating Japanese EPUB books into Simplified 
 Packaged installers are expected under:
 
 ```text
-dist/installer/AI日译中(EPUB)V4.2.2 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.3 安装程序.exe
 ```
 
 Install it, then launch the app from the Start Menu or desktop shortcut.
 
-### Option 2: Run QML/V4.2.2 from source
+### Option 2: Run QML/V4.2.3 from source
 
 ```powershell
 pip install -r experimental/qml_v4/requirements.txt
@@ -153,7 +153,7 @@ Gemini free tier may still trigger rate limits even with GLM-like conservative s
 
 ### Performance
 
-V4.2.2 uses Slider + SpinBox controls and provides model-specific presets.
+V4.2.3 uses Slider + SpinBox controls and provides model-specific presets.
 
 | Parameter | Purpose | Recommendation |
 |---|---|---|
@@ -262,7 +262,7 @@ Log path:
 
 ```text
 .
-├─ experimental/qml_v4/        # QML/V4.2.2 current mainline
+├─ experimental/qml_v4/        # QML/V4.2.3 current mainline
 │  ├─ main.py                  # V4 entry point (PySide6 + QML)
 │  ├─ qml/                     # QML pages, themes, components
 │  ├─ backend/                 # Python-QML bridge layer
@@ -303,7 +303,7 @@ python -m PyInstaller experimental\qml_v4\EPUBTranslator_onedir_slim.spec --noco
 Output:
 
 ```text
-dist/AI日译中(EPUB)V4.2.2_slim/
+dist/AI日译中(EPUB)V4.2.3_slim/
 ```
 
 ### Inno Setup installer
@@ -319,7 +319,7 @@ Common local path:
 Expected installer:
 
 ```text
-dist/installer/AI日译中(EPUB)V4.2.2 安装程序.exe
+dist/installer/AI日译中(EPUB)V4.2.3 安装程序.exe
 ```
 
 ---
@@ -334,7 +334,7 @@ The project includes a GitHub Actions workflow:
 
 Behavior:
 
-- Pushing a `v*` tag builds QML/V4.2.2 on a Windows runner.
+- Pushing a `v*` tag builds QML/V4.2.3 on a Windows runner.
 - It creates a slim onedir portable package and an Inno Setup installer.
 - It creates a GitHub Release and uploads `.exe` and `.zip` assets.
 - Manual `workflow_dispatch` uploads Actions artifacts but does not automatically publish a Release.
@@ -427,6 +427,23 @@ python -m pytest -q
 ---
 
 ## Release Notes
+
+### V4.2.3
+
+- Fixed page navigation doing nothing: the `x` transition binding was broken by `anchors.fill`, and the `opacity` binding was taken over by a `Behavior`; together they made page switches neither slide nor fade.
+- Fixed task-path fields showing stale values: typing broke the `text: cfg.inp` binding, so drag-and-drop and task-history loads could not refresh the fields.
+- Fixed the status page tab highlight drifting after a swipe; `TabBar` and `SwipeView` now sync in both directions.
+- Fixed toasts being hidden behind the `Overlay` scrim inside modal dialogs.
+- Added a confirmation step before "Stop translation", shared with `Ctrl+Shift+X`.
+- Fixed glossary table header/row column misalignment and header text that did not align with cell text.
+- Fixed content overflow and clipped buttons in the katakana term list, glossary profile and About dialogs: `ScrollView` content now uses `availableWidth`, and the sizing inputs were renamed to `maxWidth`/`maxHeight`.
+- Switched the accent colour to the brand teal `#297f84`; re-tuned text colours for WCAG AA and added `accentText`/`amberText`/`successText`/`errorText` variants.
+- Consolidated corner radii into a single `AppStyle` source, removing 26 hard-coded values; card shadows now depend on theme and viewport width.
+- Reduced task-page status pills from 3 to 1 and on-screen version strings from 3 to 1; contact rows now elide in the middle and expose a tooltip.
+- File dialogs remember the last directory; the main window geometry is persisted with on-screen validation.
+- Config writes are now atomic (temp file + `os.replace`), preventing a truncated `config.json` when the process exits mid-write.
+- Added a `Strings.qml` singleton for 39 user-facing strings; removed 217 lines of dead code and 2 unreferenced components.
+- Added 32 UI regression tests covering contrast, radius sources, transition bindings, dialog layout and atomic config writes.
 
 ### V4.2.2
 
