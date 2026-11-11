@@ -58,7 +58,7 @@ Rectangle {
 
                 Label {
                     text: "LIVE FEED"
-                    color: AppPalette.accentColor
+                    color: AppPalette.accentText
                     font.pixelSize: AppStyle.fontTiny
                     font.weight: Font.DemiBold
                     font.letterSpacing: 1.0
@@ -83,7 +83,7 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 38
-            radius: 6
+            radius: AppStyle.radiusChip
             color: AppPalette.cardAlt
 
             RowLayout {
@@ -95,7 +95,7 @@ Rectangle {
                 Rectangle {
                     width: 7
                     height: 7
-                    radius: 4
+                    radius: AppStyle.radiusPill
                     color: AppPalette.successColor
                 }
 
@@ -109,7 +109,7 @@ Rectangle {
 
                 Label {
                     text: "实时"
-                    color: AppPalette.successColor
+                    color: AppPalette.successText
                     font.pixelSize: AppStyle.fontTiny
                 }
             }

@@ -20,7 +20,9 @@ Page {
     property var taskHistory: []
     property var latestFailedBlocks: []
     property string recoveryAnalysisMessage: ""
-    property string runtimeStatus: busy ? "翻译运行中" : "等待任务"
+    // 状态词由 TaskControlPanel 统一派生（见 workbenchState）；
+    // 这里只承载"当前在做什么"的运行细节，避免与状态胶囊重复表达同一件事。
+    property string runtimeStatus: busy ? Strings.stateRunningDetail : Strings.stateIdleDetail
     property var latestUnfinishedTask: ({})
     property int failedBlockProviderModeIndex: 0
     property var glossaryProfiles: []
@@ -87,7 +89,7 @@ Page {
                 Layout.fillWidth: true
                 spacing: AppStyle.spacingTight
                 Label {
-                    text: "任务"
+                    text: Strings.pageTask
                     color: AppPalette.textColor
                     font.family: taskPage.titleFont
                     font.pixelSize: AppStyle.fontPageTitle
@@ -101,21 +103,8 @@ Page {
                     Layout.fillWidth: true
                 }
             }
-
-            Rectangle {
-                Layout.preferredWidth: 128
-                Layout.preferredHeight: AppStyle.buttonHeightSmall
-                radius: AppStyle.radiusPill
-                color: AppPalette.accentSoft
-                border.color: AppPalette.borderColor
-                Label {
-                    anchors.centerIn: parent
-                    text: taskPage.busy ? "翻译运行中" : "等待任务"
-                    color: taskPage.busy ? AppPalette.accentColor : AppPalette.mutedText
-                    font.pixelSize: AppStyle.fontSmall
-                    font.weight: Font.DemiBold
-                }
-            }
+            // 页面标题区不再放状态胶囊：状态统一由「准备翻译」面板的单个胶囊表达，
+            // 避免同一屏出现三个语义重复的指示器。
         }
 
         GridLayout {
@@ -139,7 +128,7 @@ Page {
                     color: AppPalette.cardBg
                     border.color: AppPalette.lineColor
 
-                    layer.enabled: true
+                    layer.enabled: AppStyle.shadowsEnabled
                     layer.effect: MultiEffect {
                         shadowEnabled: true
                         shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -155,7 +144,7 @@ Page {
                         Rectangle {
                             Layout.preferredWidth: 34
                             Layout.preferredHeight: 34
-                            radius: 8
+                            radius: AppStyle.radiusChip
                             color: taskPage.metricToneBg(modelData.tone)
                             Label {
                                 anchors.centerIn: parent
@@ -193,7 +182,7 @@ Page {
                 border.color: dropCard.hovering ? AppPalette.amberColor : AppPalette.borderColor
                 border.width: dropCard.hovering ? 2 : 1
 
-                layer.enabled: true
+                layer.enabled: AppStyle.shadowsEnabled
                 layer.effect: MultiEffect {
                     shadowEnabled: true
                     shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -221,7 +210,7 @@ Page {
                             Label {
                                 anchors.centerIn: parent
                                 text: "EPUB"
-                                color: AppPalette.accentColor
+                                color: AppPalette.accentText
                                 font.pixelSize: AppStyle.fontTiny
                                 font.weight: Font.DemiBold
                             }
@@ -301,7 +290,7 @@ Page {
                     color: AppPalette.surfaceRaised
                     border.color: AppPalette.borderColor
 
-                    layer.enabled: true
+                    layer.enabled: AppStyle.shadowsEnabled
                     layer.effect: MultiEffect {
                         shadowEnabled: true
                         shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -326,7 +315,7 @@ Page {
                             Label {
                                 Layout.preferredWidth: 150
                                 text: taskPage.compactEstimateText(estimateLabel.text)
-                                color: AppPalette.accentColor
+                                color: AppPalette.accentText
                                 font.pixelSize: AppStyle.fontCaption
                                 font.weight: Font.DemiBold
                                 horizontalAlignment: Text.AlignRight
@@ -388,7 +377,7 @@ Page {
                     color: AppPalette.surfaceRaised
                     border.color: AppPalette.borderColor
 
-                    layer.enabled: true
+                    layer.enabled: AppStyle.shadowsEnabled
                     layer.effect: MultiEffect {
                         shadowEnabled: true
                         shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -412,7 +401,7 @@ Page {
                             }
                             Label {
                                 text: "EPUB"
-                                color: AppPalette.amberColor
+                                color: AppPalette.amberText
                                 font.pixelSize: AppStyle.fontCaption
                                 font.weight: Font.DemiBold
                             }
@@ -485,187 +474,6 @@ Page {
         }
 
         Rectangle {
-            id: glossaryLayerCard
-            visible: false
-            Layout.fillWidth: true
-            Layout.preferredHeight: glossaryLayerContent.implicitHeight + 32
-            Layout.minimumHeight: glossaryLayerContent.implicitHeight + 32
-            radius: AppPalette.radiusLarge
-            color: AppPalette.surfaceRaised
-            border.color: AppPalette.borderColor
-
-            layer.enabled: true
-            layer.effect: MultiEffect {
-                shadowEnabled: true
-                shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
-                shadowBlur: 0.25
-                shadowVerticalOffset: AppPalette.shadowYOffset
-            }
-
-            ColumnLayout {
-                id: glossaryLayerContent
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 16
-                spacing: AppStyle.spacingMedium
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: AppStyle.spacingSmall
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: AppStyle.spacingTight
-
-                        Label {
-                            text: "术语设置"
-                            color: AppPalette.textColor
-                            font.pixelSize: AppStyle.fontSubHeader
-                            font.weight: Font.DemiBold
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: "这里仅选择翻译时注入的术语 profile。提取术语、管理 profile、译后统一请到“术语表”页的“术语任务”。"
-                            color: AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontCaption
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.preferredWidth: 150
-                        Layout.preferredHeight: AppStyle.buttonHeightSmall
-                        radius: AppStyle.radiusPill
-                        color: taskPage.cfg && taskPage.cfg.enableLayeredGlossary ? AppStyle.statusAccentBg : AppPalette.fieldBg
-                        border.color: taskPage.cfg && taskPage.cfg.enableLayeredGlossary ? AppPalette.accentColor : AppPalette.borderColor
-                        Label {
-                            anchors.centerIn: parent
-                            text: taskPage.cfg && taskPage.cfg.enableLayeredGlossary ? "分层已启用" : "分层关闭"
-                            color: taskPage.cfg && taskPage.cfg.enableLayeredGlossary ? AppPalette.accentColor : AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontSmall
-                            font.weight: Font.DemiBold
-                        }
-                    }
-                }
-
-                Flow {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: implicitHeight
-                    spacing: AppStyle.spacingMedium
-
-                    CheckBox {
-                        text: "启用术语表"
-                        checked: taskPage.cfg ? taskPage.cfg.enableGlossary : true
-                        onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.enableGlossary = checked }
-                    }
-                    CheckBox {
-                        text: "启用分层术语"
-                        checked: taskPage.cfg ? taskPage.cfg.enableLayeredGlossary : false
-                        enabled: taskPage.cfg ? taskPage.cfg.enableGlossary : true
-                        onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.enableLayeredGlossary = checked }
-                    }
-                    CheckBox {
-                        text: "合并全局"
-                        checked: taskPage.cfg ? taskPage.cfg.useGlobalGlossary : true
-                        enabled: taskPage.cfg ? (taskPage.cfg.enableGlossary && taskPage.cfg.enableLayeredGlossary) : true
-                        onCheckedChanged: { if (taskPage.cfg) taskPage.cfg.useGlobalGlossary = checked }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(94, Math.min(190, glossaryProfileSelectorContent.implicitHeight + 24))
-                    radius: AppPalette.radiusMedium
-                    color: AppPalette.cardBg
-                    border.color: AppPalette.lineColor
-                    clip: true
-
-                    ColumnLayout {
-                        id: glossaryProfileSelectorContent
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: AppStyle.spacingSmall
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: AppStyle.spacingSmall
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: AppStyle.spacingTight
-
-                                Label {
-                                    text: "已提取术语（翻译时注入）"
-                                    color: AppPalette.textColor
-                                    font.pixelSize: AppStyle.fontCaption
-                                    font.weight: Font.DemiBold
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) > 0
-                                          ? "已选 " + GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) + " 个 profile；开始翻译时生效。"
-                                          : "未选择 profile；可到术语表页提取或勾选已有 profile。"
-                                    color: AppPalette.mutedText
-                                    font.pixelSize: AppStyle.fontTiny
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            Button {
-                                text: "刷新术语"
-                                onClicked: taskPage.refreshGlossaryProfiles()
-                            }
-
-                            Button {
-                                text: "清空选择"
-                                enabled: GlossaryProfileUtils.selectedGlossaryProfileCount(taskPage.cfg) > 0
-                                onClicked: GlossaryProfileUtils.clearSelectedGlossaryProfiles(taskPage.cfg)
-                            }
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            visible: taskPage.glossaryProfiles.length === 0
-                            text: "暂无可选 profile。请到术语表页提取本书术语，或刷新后再勾选。"
-                            color: AppPalette.mutedText
-                            font.pixelSize: AppStyle.fontTiny
-                            wrapMode: Text.WordWrap
-                        }
-
-                        ScrollView {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(42, Math.min(94, glossaryProfileFlow.implicitHeight + 8))
-                            visible: taskPage.glossaryProfiles.length > 0
-                            clip: true
-                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                            Flow {
-                                id: glossaryProfileFlow
-                                width: Math.max(0, parent.width)
-                                spacing: AppStyle.spacingSmall
-
-                                Repeater {
-                                    model: taskPage.glossaryProfiles
-
-                                    delegate: CheckBox {
-                                        text: taskPage.glossaryProfileLabel(modelData)
-                                        checked: GlossaryProfileUtils.isGlossaryProfileSelected(taskPage.cfg, modelData.profileId || modelData.id || "")
-                                        enabled: !!taskPage.cfg && !!taskPage.cfg.enableGlossary
-                                        onToggled: GlossaryProfileUtils.toggleGlossaryProfile(taskPage.cfg, modelData.profileId || modelData.id || "", checked)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Rectangle {
             id: glossarySummaryCard
             Layout.fillWidth: true
             Layout.preferredHeight: 104
@@ -722,7 +530,7 @@ Page {
             border.color: AppPalette.borderColor
             clip: true
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -794,7 +602,7 @@ Page {
 
                             Label {
                                 text: "失败块处理"
-                                color: taskPage.latestFailedBlocks.length > 0 ? AppPalette.amberColor : AppPalette.textColor
+                                color: taskPage.latestFailedBlocks.length > 0 ? AppPalette.amberText : AppPalette.textColor
                                 font.pixelSize: AppStyle.fontSubHeader
                                 font.weight: Font.DemiBold
                             }
@@ -833,12 +641,15 @@ Page {
 
     FileDialog {
         id: inputDialog
-        title: "选择 EPUB 文件"
-        nameFilters: ["EPUB 文件 (*.epub)"]
+        title: Strings.dialogPickSource
+        nameFilters: [Strings.filterEpub]
         fileMode: FileDialog.OpenFile
+        // 打开前定位到上次目录；没有记录时退回系统默认位置。
+        currentFolder: taskPage.rememberedFolder(cfg, "lastInputDir", cfg ? cfg.inp : "")
         onAccepted: {
             if (selectedFile) {
                 var p = FilePathUtils.normalizeFileUrl(selectedFile)
+                taskPage.rememberFolderFromFile(cfg, "lastInputDir", p)
                 taskPage.setInputPath(p)
             }
         }
@@ -846,13 +657,16 @@ Page {
 
     FileDialog {
         id: outputDialog
-        title: "保存翻译后的 EPUB"
-        nameFilters: ["EPUB 文件 (*.epub)"]
+        title: Strings.dialogSaveOutput
+        nameFilters: [Strings.filterEpub]
         fileMode: FileDialog.SaveFile
+        defaultSuffix: "epub"
+        currentFolder: taskPage.rememberedFolder(cfg, "lastOutputDir", cfg ? cfg.out : "")
         onAccepted: {
             if (selectedFile) {
                 var p = FilePathUtils.normalizeFileUrl(selectedFile)
                 if (!p.toLowerCase().endsWith(".epub")) p += ".epub"
+                taskPage.rememberFolderFromFile(cfg, "lastOutputDir", p)
                 if (cfg) cfg.out = p
             }
         }
@@ -937,7 +751,7 @@ Page {
             taskPage.refreshTaskHistory()
         }
         function onStatusChanged(message) {
-            taskPage.runtimeStatus = message || (taskPage.busy ? "翻译运行中" : "等待任务")
+            taskPage.runtimeStatus = message || (taskPage.busy ? Strings.stateRunningDetail : Strings.stateIdleDetail)
         }
         function onFailedBlocksRetranslated(result) {
             taskPage.refreshTaskHistory()
@@ -1142,6 +956,25 @@ Page {
             inpField.cursorPosition = 0
             outField.cursorPosition = 0
         })
+    }
+
+    // --- FileDialog 上次目录 ---
+    // 优先级：配置里记住的目录 > 当前路径所在目录 > 空（用系统默认）。
+    function rememberedFolder(config, key, fallbackPath) {
+        if (!config) return ""
+        var remembered = config[key] || ""
+        if (remembered !== "") {
+            return "file:///" + encodeURI(String(remembered).replace(/\\/g, "/"))
+        }
+        if (fallbackPath) return FilePathUtils.toFolderUrl(fallbackPath)
+        return ""
+    }
+
+    // 选中文件后记住它所在的目录（只存目录，不存文件名）。
+    function rememberFolderFromFile(config, key, path) {
+        if (!config) return
+        var dir = FilePathUtils.directoryOf(path)
+        if (dir !== "" && config[key] !== dir) config[key] = dir
     }
 
     function setInputPath(path) {

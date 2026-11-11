@@ -13,7 +13,7 @@ Rectangle {
 
     Layout.fillWidth: true
     Layout.preferredHeight: AppStyle.buttonHeightCompact
-    radius: 10
+    radius: AppStyle.radiusButton
     color: contactLink.hovering || contactLink.activeFocus
            ? (AppPalette.dark || contactLink.glassMode ? Qt.rgba(1, 1, 1, 0.16) : AppPalette.accentSoft)
            : (AppPalette.dark || contactLink.glassMode ? Qt.rgba(1, 1, 1, 0.07) : AppPalette.cardAlt)
@@ -38,7 +38,7 @@ Rectangle {
 
         Label {
             text: contactLink.label
-            color: AppPalette.accentColor
+            color: AppPalette.accentText
             font.pixelSize: AppStyle.fontTiny
             font.weight: Font.DemiBold
             Layout.preferredWidth: 42
@@ -50,9 +50,15 @@ Rectangle {
             text: contactLink.value
             color: AppPalette.textColor
             font.pixelSize: AppStyle.fontTiny
-            elide: Text.ElideRight
+            // 侧边栏只有 184px 宽，GitHub 账号和邮箱都会被截断。
+            // 中段省略能同时保留两端特征（账号名开头 / 邮箱域名），完整值再由 ToolTip 兜底。
+            elide: Text.ElideMiddle
         }
     }
+
+    ToolTip.visible: contactLink.hovering || contactLink.activeFocus
+    ToolTip.delay: 400
+    ToolTip.text: contactLink.label + "：" + contactLink.value + "\n点击打开"
 
     MouseArea {
         id: mouseArea

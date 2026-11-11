@@ -31,7 +31,7 @@ Rectangle {
         NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
     }
 
-    layer.enabled: true
+    layer.enabled: AppStyle.shadowsEnabled
     layer.effect: MultiEffect {
         shadowEnabled: true
         shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -52,7 +52,7 @@ Rectangle {
     Rectangle {
         width: 26
         height: 3
-        radius: 2
+        radius: width > 0 ? width / 2 : AppStyle.radiusTiny
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.leftMargin: 10

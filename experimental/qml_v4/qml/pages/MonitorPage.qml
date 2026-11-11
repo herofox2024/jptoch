@@ -370,7 +370,7 @@ Page {
                 Layout.fillWidth: true
                 spacing: AppStyle.spacingTight
                 Label {
-                    text: "状态监控"
+                    text: Strings.pageMonitor
                     color: AppPalette.textColor
                     font.family: page.titleFont
                     font.pixelSize: AppStyle.fontPageTitle
@@ -386,13 +386,13 @@ Page {
             Rectangle {
                 Layout.preferredWidth: 112
                 Layout.preferredHeight: AppStyle.buttonHeightSmall
-                radius: 17
+                radius: AppStyle.radiusPill
                 color: page.isBusy() ? AppStyle.statusAccentBg : AppStyle.statusNeutralBg
                 border.color: AppPalette.borderColor
                 Label {
                     anchors.centerIn: parent
                     text: page.isBusy() ? "运行中" : "空闲"
-                    color: page.isBusy() ? AppPalette.accentColor : AppPalette.mutedText
+                    color: page.isBusy() ? AppPalette.accentText : AppPalette.mutedText
                     font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
                 }
@@ -407,7 +407,7 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -506,7 +506,7 @@ Page {
                             Rectangle {
                                 Layout.preferredWidth: 4
                                 Layout.fillHeight: true
-                                radius: 2
+                                radius: width > 0 ? width / 2 : AppStyle.radiusTiny
                                 color: AppPalette.amberColor
                             }
 
@@ -527,7 +527,7 @@ Page {
                                     Label {
                                         Layout.fillWidth: true
                                         text: page.promptStyleMetaText()
-                                        color: AppPalette.amberColor
+                                        color: AppPalette.amberText
                                         font.pixelSize: AppStyle.fontCaption
                                         elide: Text.ElideRight
                                     }
@@ -564,7 +564,7 @@ Page {
             objectName: "statusTabs"
             Layout.fillWidth: true
             background: Rectangle {
-                radius: 18
+                radius: AppStyle.radiusDialog
                 color: AppPalette.cardAlt
                 border.color: AppPalette.lineColor
             }
@@ -685,7 +685,7 @@ Page {
                                 Rectangle {
                                     Layout.preferredWidth: 4
                                     Layout.fillHeight: true
-                                    radius: 2
+                                    radius: width > 0 ? width / 2 : AppStyle.radiusTiny
                                     color: page.qualityReportStatus === "通过" ? AppPalette.accentColor : AppPalette.amberColor
                                 }
 
@@ -874,13 +874,13 @@ Page {
                                 Layout.preferredWidth: 92
                                 Layout.preferredHeight: AppStyle.buttonHeightSmall
                                 Layout.alignment: Qt.AlignVCenter
-                                radius: 17
+                                radius: AppStyle.radiusPill
                                 color: AppPalette.accentSoft
                                 border.color: AppPalette.borderColor
                                 Label {
                                     anchors.centerIn: parent
                                     text: proofreadModel.count + " 条"
-                                    color: AppPalette.accentColor
+                                    color: AppPalette.accentText
                                     font.pixelSize: AppStyle.fontSmall
                                     font.weight: Font.DemiBold
                                 }
@@ -945,7 +945,7 @@ Page {
                                     y: 22
                                     width: 20
                                     height: 20
-                                    radius: 10
+                                    radius: AppStyle.radiusButton
                                     color: changed === "有变化" ? AppPalette.amberColor : AppPalette.accentColor
                                     border.color: AppPalette.cardBg
                                     border.width: 3
@@ -1013,7 +1013,7 @@ Page {
                                             Layout.fillWidth: true
                                             text: changedHint
                                             wrapMode: Text.WordWrap
-                                            color: changed === "有变化" ? AppPalette.amberColor : AppPalette.mutedText
+                                            color: changed === "有变化" ? AppPalette.amberText : AppPalette.mutedText
                                             font.pixelSize: AppStyle.fontSmall
                                         }
 

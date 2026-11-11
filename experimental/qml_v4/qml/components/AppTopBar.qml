@@ -12,6 +12,8 @@ Rectangle {
     id: root
 
     property string appTitle: ""
+    // 顶栏左侧展示的产品名（不含版本号，版本只在右侧「关于」出现一次）。
+    property string productName: "AI日译中（EPUB）"
     property string versionText: ""
     property bool glassMode: false
     property bool showDivider: true
@@ -40,9 +42,12 @@ Rectangle {
         anchors.rightMargin: AppStyle.spacingHuge
         spacing: AppStyle.spacingMedium
 
+        // 左侧只显示产品名。原先把完整的 AppDisplayName（含 V4.2）放在这里，
+        // 与系统标题栏、右侧「关于 v4.2」构成同屏三处版本号，信息冗余。
+        // 版本号统一收敛到右侧「关于」入口。
         Label {
             Layout.fillWidth: true
-            text: root.appTitle
+            text: root.productName
             color: AppPalette.mutedText
             font.pixelSize: AppStyle.fontSmall
             font.weight: Font.DemiBold
@@ -94,7 +99,7 @@ Rectangle {
                 Label {
                     visible: root.versionText !== ""
                     text: "v" + root.versionText
-                    color: AppPalette.accentColor
+                    color: AppPalette.accentText
                     font.pixelSize: AppStyle.fontTiny
                 }
             }

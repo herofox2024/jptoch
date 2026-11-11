@@ -27,7 +27,7 @@ Rectangle {
             id: reportTitle
             Layout.fillWidth: true
             text: root.title
-            color: root.tone === "accent" ? AppPalette.accentColor : AppPalette.mutedText
+            color: root.tone === "accent" ? AppPalette.accentText : AppPalette.mutedText
             font.pixelSize: AppStyle.fontCaption
             font.weight: Font.DemiBold
         }
@@ -36,7 +36,7 @@ Rectangle {
             id: reportText
             Layout.fillWidth: true
             text: root.body && root.body !== "" ? root.body : "-"
-            color: root.tone === "accent" ? AppPalette.accentColor : AppPalette.textColor
+            color: root.tone === "accent" ? AppPalette.accentText : AppPalette.textColor
             wrapMode: Text.WordWrap
             maximumLineCount: root.maxLines > 0 ? root.maxLines : 1000000
             elide: root.maxLines > 0 ? Text.ElideRight : Text.ElideNone

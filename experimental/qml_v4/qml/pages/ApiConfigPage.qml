@@ -249,7 +249,7 @@ Page {
             Layout.fillWidth: true
             spacing: AppStyle.spacingTight
             Label {
-                text: "API 接口配置"
+                text: Strings.pageApi
                 color: AppPalette.textColor
                 font.family: page.titleFont
                 font.pixelSize: Math.max(30, AppStyle.fontPageTitle - 8)
@@ -270,7 +270,7 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -381,7 +381,7 @@ Page {
             color: AppPalette.cardBg
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -406,7 +406,7 @@ Page {
                     Layout.fillWidth: true
                     text: page.connectionResult
                     visible: page.connectionResult !== ""
-                    color: page.connectionResult.includes("成功") ? AppPalette.successColor : AppPalette.errorColor
+                    color: page.connectionResult.includes("成功") ? AppPalette.successText : AppPalette.errorText
                     wrapMode: Text.WordWrap
                     font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
@@ -421,7 +421,7 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -449,7 +449,7 @@ Page {
 
                     Label {
                         text: "rpm / tpm / 并发 / 批量"
-                        color: AppPalette.accentColor
+                        color: AppPalette.accentText
                         font.pixelSize: AppStyle.fontTiny
                     }
                 }
@@ -494,7 +494,7 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -542,7 +542,7 @@ Page {
                             Label {
                                 Layout.fillWidth: true
                                 text: page.currentModelPromptPresetText()
-                                color: AppPalette.accentColor
+                                color: AppPalette.accentText
                                 font.pixelSize: AppStyle.fontCaption
                                 elide: Text.ElideRight
                             }
@@ -574,7 +574,7 @@ Page {
 
                             Label {
                                 text: "Hy-MT2 本地模型"
-                                color: page.localModel && page.localModel.running ? AppPalette.successColor : AppPalette.textColor
+                                color: page.localModel && page.localModel.running ? AppPalette.successText : AppPalette.textColor
                                 font.pixelSize: AppStyle.fontSubHeader
                                 font.weight: Font.DemiBold
                             }

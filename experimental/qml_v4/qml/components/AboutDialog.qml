@@ -68,7 +68,7 @@ Dialog {
                 Label {
                     Layout.fillWidth: true
                     text: "版本 " + root.displayVersion
-                    color: AppPalette.accentColor
+                    color: AppPalette.accentText
                     font.pixelSize: AppStyle.fontBodyLarge
                     font.weight: Font.DemiBold
                     horizontalAlignment: Text.AlignHCenter

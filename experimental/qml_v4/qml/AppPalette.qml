@@ -2,16 +2,24 @@ pragma Singleton
 import QtQuick
 
 /* ============================================================
-   AppPalette — 全局主题调色板（macOS 视觉体系）
+   AppPalette — 全局主题调色板（macOS 视觉体系 + 品牌青绿）
 
-   配色取自 macOS Sonoma / iOS 17 系统色板：
-     系统蓝 #007AFF（浅色）/ #0A84FF（深色）
+   主色取自 logo（assets/app_icon.png）：青绿 #297F84。
+   状态色沿用 Apple 系统色板：
      系统绿 #34C759 / #30D158，系统红 #FF3B30 / #FF453A
      系统橙 #FF9500 / #FF9F0A
      分组背景 #F2F2F7，卡片 #FFFFFF，深色卡片 #1C1C1E / #2C2C2E
-     次级文字 #86868B，分隔线 rgba(60,60,67,0.29)
 
-   所有颜色和样式值统一从这里读取。
+   颜色分层（重要）：
+     - accentColor / amberColor / successColor / errorColor
+         用于**填充、图标、描边、圆点**；
+     - accentText / amberText / successText / errorText
+         用于**小字号正文与标签**，均经 WCAG AA（>=4.5:1）校验；
+     - mutedText 同样是文字专用，已按 4.5:1 取深一档的值。
+
+   圆角不在本文件定义，统一由 AppStyle 提供（避免两套 token 并存）。
+
+   所有颜色统一从这里读取。
    主题切换通过 main.qml 中的 themeMode/darkMode Binding 驱动，
    AppPalette 的属性随 themeMode/darkMode 变化自动响应。
 
@@ -70,10 +78,12 @@ QtObject {
     readonly property color textColor: glass
         ? "#1d1d1f"
         : (dark ? "#f5f5f7" : "#1d1d1f")
-    // macOS 次级文字：浅色 60% 灰，深色 60% 白
+    // 次级文字：按 WCAG AA（4.5:1）重新取值。
+    // 旧值 #86868b 在白色卡片上只有 3.62:1、在页面底只有 3.25:1，
+    // 而 fontTiny/fontCaption(10~11px) 大量使用该颜色，属于可读性缺陷。
     readonly property color mutedText: glass
-        ? "#6e6e73"
-        : (dark ? "#98989d" : "#86868b")
+        ? "#5f5f63"
+        : (dark ? "#98989d" : "#66666b")
     readonly property color hintColor: mutedText
 
     // ---- 边框 / 分割线（Apple 的 separator 半透明灰）----
@@ -84,13 +94,21 @@ QtObject {
         ? Qt.rgba(0.36, 0.42, 0.52, 0.24)
         : (dark ? Qt.rgba(0.33, 0.33, 0.35, 0.45) : Qt.rgba(0.24, 0.24, 0.26, 0.09))
 
-    // ---- 强调色（系统蓝）----
+    // ---- 强调色（品牌青绿）----
+    // 品牌色取自 logo（assets/app_icon.png）的青绿 #297f84。
+    // 之前用 iOS 系统蓝 #007aff，与绿色 logo 打架：绿色 Logo + 蓝色主按钮 +
+    // 绿色状态文字同屏，缺少统一的主色。
+    // accentColor 用作**填充**（主按钮、选中块、进度条），白字对比度：
+    // 浅色 #297f84 = 4.71:1；深色 #3aa0a5 上改用深色文字（见 primaryOnAccent）。
     readonly property color accentColor: glass
-        ? "#007aff"
-        : (dark ? "#0a84ff" : "#007aff")
+        ? "#297f84"
+        : (dark ? "#3aa0a5" : "#297f84")
     readonly property color accentSoft: glass
-        ? Qt.rgba(0.0, 0.48, 1.0, 0.16)
-        : (dark ? Qt.rgba(0.04, 0.52, 1.0, 0.24) : Qt.rgba(0.0, 0.48, 1.0, 0.10))
+        ? Qt.rgba(0.16, 0.50, 0.52, 0.18)
+        : (dark ? Qt.rgba(0.23, 0.63, 0.65, 0.26) : Qt.rgba(0.16, 0.50, 0.52, 0.12))
+
+    // ---- 状态色 ----
+    // 鲜艳系统色：只用于**图标、描边、填充块、圆点**，不承担小字正文。
     readonly property color amberColor: glass
         ? "#ff9500"
         : (dark ? "#ff9f0a" : "#ff9500")
@@ -101,13 +119,27 @@ QtObject {
         ? "#ff3b30"
         : (dark ? "#ff453a" : "#ff3b30")
 
+    // ---- 文字安全变体（小字号正文/标签专用，均 >= 4.5:1）----
+    // 鲜艳色直接当文字用时对比度只有 2.2~4.0，10~12px 下不可读。
+    readonly property color accentText: glass
+        ? "#1c585c"
+        : (dark ? "#5cc0c5" : "#1c585c")
+    readonly property color amberText: glass
+        ? "#8f5400"
+        : (dark ? "#ff9f0a" : "#9a5a00")
+    readonly property color successText: glass
+        ? "#177a33"
+        : (dark ? "#30d158" : "#14682b")
+    readonly property color errorText: glass
+        ? "#d70015"
+        : (dark ? "#ff6961" : "#d70015")
+
+
     // ---- 品牌渐变（logo / AI 徽章 / 进度条共用）----
-    readonly property color brandGradientStart: glass
-        ? "#007aff"
-        : (dark ? "#0a84ff" : "#007aff")
+    readonly property color brandGradientStart: accentColor
     readonly property color brandGradientEnd: glass
-        ? "#5ac8fa"
-        : (dark ? "#64d2ff" : "#5ac8fa")
+        ? "#5cc0c5"
+        : (dark ? "#7fd6da" : "#4aa8ad")
 
     // ---- 阴影（Apple 风格：极轻、大扩散）----
     readonly property color shadowColor: dark
@@ -123,8 +155,11 @@ QtObject {
     readonly property color glassGlowCyan: Qt.rgba(0.0, 0.48, 1.0, glass ? 0.20 : 0.0)
     readonly property color glassGlowAmber: Qt.rgba(1.0, 0.58, 0.0, glass ? 0.14 : 0.0)
 
-    // ---- 圆角（Apple 体系：面板大圆角、卡片中圆角、小控件紧圆角）----
-    readonly property int radiusLarge: glass ? 20 : 16
-    readonly property int radiusMedium: glass ? 14 : 12
-    readonly property int radiusSmall: glass ? 10 : 8
+    // ---- 圆角 ----
+    // 圆角不再在这里定义第二套值：统一由 AppStyle 提供单一来源。
+    // 这里只保留同名别名，让历史代码（AppPalette.radiusLarge 等）平滑迁移，
+    // 避免同一个卡片在不同页面出现 8/12/14/16/22 混用。
+    readonly property int radiusLarge: AppStyle.radiusCard
+    readonly property int radiusMedium: AppStyle.radiusButton
+    readonly property int radiusSmall: AppStyle.radiusSmall
 }

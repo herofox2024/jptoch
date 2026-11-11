@@ -67,7 +67,7 @@ Dialog {
                 color: AppPalette.surfaceRaised
                 border.color: AppPalette.borderColor
 
-                layer.enabled: true
+                layer.enabled: AppStyle.shadowsEnabled
                 layer.effect: MultiEffect {
                     shadowEnabled: true
                     shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -183,7 +183,7 @@ Dialog {
                                         }
                                         Label {
                                             text: modelData.categoryLabel || "组合"
-                                            color: AppPalette.accentColor
+                                            color: AppPalette.accentText
                                             font.pixelSize: AppStyle.fontTiny
                                         }
                                     }
@@ -221,7 +221,7 @@ Dialog {
                     Label {
                         Layout.fillWidth: true
                         text: root.resultText !== "" ? root.resultText : root.presetSummaryText()
-                        color: root.resultIsError() ? AppPalette.errorColor : AppPalette.mutedText
+                        color: root.resultIsError() ? AppPalette.errorText : AppPalette.mutedText
                         wrapMode: Text.WordWrap
                         font.pixelSize: AppStyle.fontTiny
                     }

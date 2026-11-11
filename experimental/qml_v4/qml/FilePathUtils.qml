@@ -33,4 +33,21 @@ QtObject {
         base = base.replace(/\.epub$/i, "")
         return dir + base + "_zh.epub"
     }
+
+    // 取路径的所在目录（不含文件名），用于 FileDialog 定位。
+    function directoryOf(path) {
+        var normalized = String(path || "").replace(/\\/g, "/")
+        if (normalized === "") return ""
+        // 去掉末尾斜杠再取最后一段，避免把目录本身当成文件。
+        normalized = normalized.replace(/\/+$/, "")
+        var slash = normalized.lastIndexOf("/")
+        return slash > 0 ? normalized.substring(0, slash) : ""
+    }
+
+    // 把本地目录路径转成 FileDialog.currentFolder 需要的 file:// URL。
+    function toFolderUrl(path) {
+        var dir = directoryOf(path)
+        if (dir === "") return ""
+        return "file:///" + encodeURI(dir)
+    }
 }

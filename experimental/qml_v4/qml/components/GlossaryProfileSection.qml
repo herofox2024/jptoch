@@ -835,7 +835,7 @@ Item {
                                     Label {
                                         Layout.preferredWidth: 92
                                         text: section.glossaryProfileScopeLabel(scope)
-                                        color: AppPalette.accentColor
+                                        color: AppPalette.accentText
                                         font.pixelSize: AppStyle.fontCaption
                                         font.weight: Font.DemiBold
                                         elide: Text.ElideRight

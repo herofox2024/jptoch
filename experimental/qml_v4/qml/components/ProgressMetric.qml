@@ -23,7 +23,7 @@ Rectangle {
         NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
     }
 
-    layer.enabled: true
+    layer.enabled: AppStyle.shadowsEnabled
     layer.effect: MultiEffect {
         shadowEnabled: true
         shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor

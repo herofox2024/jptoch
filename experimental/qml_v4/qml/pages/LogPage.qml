@@ -166,7 +166,7 @@ Page {
             spacing: AppStyle.spacingNarrow
 
             Label {
-                text: "日志"
+                text: Strings.pageLog
                 color: AppPalette.textColor
                 font.family: page.titleFont
                 font.pixelSize: AppStyle.fontPageTitle
@@ -215,7 +215,7 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -310,7 +310,7 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -386,7 +386,7 @@ Page {
             border.color: AppPalette.borderColor
             clip: true
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor

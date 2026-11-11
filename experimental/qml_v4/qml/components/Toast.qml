@@ -148,7 +148,7 @@ Item {
             Rectangle {
                 Layout.preferredWidth: 26
                 Layout.preferredHeight: 26
-                radius: 13
+                radius: AppStyle.radiusPill
                 color: popup.fgColor
                 opacity: 0.12
                 visible: popup.iconText !== ""

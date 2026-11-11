@@ -9,12 +9,18 @@ import "components"
 ApplicationWindow {
     id: appWindow
     visible: false
+    // 默认尺寸；启动后用配置里记录的几何覆盖（见 restoreWindowGeometry）。
     width: 1420
     height: 860
     minimumWidth: 980
     minimumHeight: 640
     title: typeof AppDisplayName !== "undefined" ? AppDisplayName : "AI日译中（EPUB）"
     font.family: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
+
+    // 是否已经从配置还原过窗口几何（避免用户在拖动时被重复覆盖）。
+    property bool geometryRestored: false
+    // 防止窗口几何变化频繁触发配置写入。
+    property bool geometrySaveEnabled: false
 
     readonly property string uiFont: typeof AppFontSans !== "undefined" ? AppFontSans : "Microsoft YaHei UI"
     readonly property string titleFont: typeof AppFontTitle !== "undefined" ? AppFontTitle : uiFont
@@ -59,6 +65,14 @@ ApplicationWindow {
         target: AppPalette
         property: "darkMode"
         value: appWindow.darkMode
+        restoreMode: Binding.RestoreNone
+    }
+
+    // 把窗口宽度暴露给 AppStyle，用于按视口宽度决定是否开启卡片阴影。
+    Binding {
+        target: AppStyle
+        property: "viewportWidth"
+        value: appWindow.width
         restoreMode: Binding.RestoreNone
     }
 
@@ -140,6 +154,60 @@ ApplicationWindow {
         appWindow.currentPageIndex = index
         Qt.callLater(appWindow.activateCurrentPage)
     }
+
+    // ===== 窗口几何持久化 =====
+    // 还原时做边界校验：如果记录的几何落在当前所有屏幕之外（例如拔掉了副屏），
+    // 就退回默认尺寸，避免窗口出现在看不见的位置。
+    function restoreWindowGeometry() {
+        if (!cfg || appWindow.geometryRestored) return
+        var w = cfg.windowW
+        var h = cfg.windowH
+        if (w > 0 && h > 0) {
+            appWindow.width = Math.max(appWindow.minimumWidth, Math.min(w, screen ? screen.width : w))
+            appWindow.height = Math.max(appWindow.minimumHeight, Math.min(h, screen ? screen.height : h))
+            var x = cfg.windowX
+            var y = cfg.windowY
+            if (appWindow.windowIsOnScreen(x, y, appWindow.width, appWindow.height)) {
+                appWindow.x = x
+                appWindow.y = y
+            }
+        }
+        if (cfg.windowMaximized) appWindow.visibility = Window.Maximized
+        appWindow.geometryRestored = true
+        appWindow.geometrySaveEnabled = true
+    }
+
+    // 判断某个矩形是否与任一屏幕有足够重叠（至少露出标题栏区域）。
+    function windowIsOnScreen(x, y, w, h) {
+        var screens = Qt.application.screens
+        for (var i = 0; i < screens.length; i++) {
+            var s = screens[i]
+            var overlapX = Math.min(x + w, s.virtualX + s.width) - Math.max(x, s.virtualX)
+            var overlapY = Math.min(y + h, s.virtualY + s.height) - Math.max(y, s.virtualY)
+            if (overlapX >= 120 && overlapY >= 80) return true
+        }
+        return false
+    }
+
+    function saveWindowGeometry() {
+        if (!cfg || !appWindow.geometrySaveEnabled) return
+        // 最大化/全屏时不覆盖普通状态的几何，只记录标志位。
+        var maximized = appWindow.visibility === Window.Maximized
+        if (maximized !== cfg.windowMaximized) cfg.windowMaximized = maximized
+        if (maximized) return
+        if (cfg.windowX !== appWindow.x) cfg.windowX = appWindow.x
+        if (cfg.windowY !== appWindow.y) cfg.windowY = appWindow.y
+        if (cfg.windowW !== appWindow.width) cfg.windowW = appWindow.width
+        if (cfg.windowH !== appWindow.height) cfg.windowH = appWindow.height
+    }
+
+    onXChanged: Qt.callLater(appWindow.saveWindowGeometry)
+    onYChanged: Qt.callLater(appWindow.saveWindowGeometry)
+    onWidthChanged: Qt.callLater(appWindow.saveWindowGeometry)
+    onHeightChanged: Qt.callLater(appWindow.saveWindowGeometry)
+    onVisibilityChanged: Qt.callLater(appWindow.saveWindowGeometry)
+
+    Component.onCompleted: Qt.callLater(appWindow.restoreWindowGeometry)
 
     function pageX(i) {
         if (appWindow.currentPageIndex === i) return 0
@@ -236,6 +304,8 @@ ApplicationWindow {
         AppTopBar {
             Layout.fillWidth: true
             appTitle: typeof AppDisplayName !== "undefined" ? AppDisplayName : "AI日译中（EPUB）"
+            // 左侧只显示不含版本号的产品名，避免与系统标题栏、关于按钮三处重复。
+            productName: typeof AppName !== "undefined" ? AppName : "AI日译中（EPUB）"
             versionText: typeof AppDisplayVersion !== "undefined" ? AppDisplayVersion : ""
             glassMode: appWindow.glassMode
             onAboutRequested: aboutDialog.open()
@@ -283,7 +353,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Label {
                         text: "WORKSPACE"
-                        color: AppPalette.accentColor
+                        color: AppPalette.accentText
                         font.pixelSize: AppStyle.fontSmall
                         font.letterSpacing: 1.2
                         opacity: 0.82
@@ -309,8 +379,8 @@ ApplicationWindow {
                     spacing: AppStyle.spacingSmall
                     NavButton {
                         iconName: "task"
-                        label: "工作台"
-                        desc: "翻译与任务"
+                        label: Strings.navWorkspace
+                        desc: Strings.navWorkspaceDesc
                         pageIndex: 0
                         active: pageStack.currentIndex === 0
                         glassMode: appWindow.glassMode
@@ -318,8 +388,8 @@ ApplicationWindow {
                     }
                     NavButton {
                         iconName: "status"
-                        label: "状态"
-                        desc: "实时进度"
+                        label: Strings.navStatus
+                        desc: Strings.navStatusDesc
                         pageIndex: 1
                         active: pageStack.currentIndex === 1
                         glassMode: appWindow.glassMode
@@ -327,8 +397,8 @@ ApplicationWindow {
                     }
                     NavButton {
                         iconName: "log"
-                        label: "日志"
-                        desc: "实时诊断"
+                        label: Strings.navLog
+                        desc: Strings.navLogDesc
                         pageIndex: 2
                         active: pageStack.currentIndex === 2
                         glassMode: appWindow.glassMode
@@ -336,8 +406,8 @@ ApplicationWindow {
                     }
                     NavButton {
                         iconName: "api"
-                        label: "API"
-                        desc: "模型接口"
+                        label: Strings.navApi
+                        desc: Strings.navApiDesc
                         pageIndex: 3
                         active: pageStack.currentIndex === 3
                         glassMode: appWindow.glassMode
@@ -345,8 +415,8 @@ ApplicationWindow {
                     }
                     NavButton {
                         iconName: "glossary"
-                        label: "术语表"
-                        desc: "名词统一"
+                        label: Strings.navGlossary
+                        desc: Strings.navGlossaryDesc
                         pageIndex: 4
                         active: pageStack.currentIndex === 4
                         glassMode: appWindow.glassMode
@@ -354,8 +424,8 @@ ApplicationWindow {
                     }
                     NavButton {
                         iconName: "settings"
-                        label: "设置"
-                        desc: "性能校对"
+                        label: Strings.navSettings
+                        desc: Strings.navSettingsDesc
                         pageIndex: 5
                         active: pageStack.currentIndex === 5
                         glassMode: appWindow.glassMode
@@ -427,9 +497,15 @@ ApplicationWindow {
                 anchors.fill: parent
                 property int currentIndex: appWindow.currentPageIndex
 
+                // 页面转场用 x 位移 + 淡入淡出。
+                // 这里不能用 anchors.fill —— 锚点会接管 x，使 `x: pageX(i)` 这条
+                // 绑定失效（QML 会断开与锚点冲突的绑定），于是切页时页面既不动也不淡入。
+                // 因此用 y/height 撑满、width 跟随父宽，只把 x 留给动画。
                 Loader {
                     id: taskLoader
-                    anchors.fill: parent
+                    y: 0
+                    height: pageStack.height
+                    width: pageStack.width
                     active: appWindow.taskPageLoaded
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 0
@@ -444,13 +520,15 @@ ApplicationWindow {
                         onNavigateToSettings: appWindow.switchPage(5)
                         onNavigateToGlossary: appWindow.switchPage(4)
                     }
-                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    // 不要在这里加 Behavior on opacity：它会接管写入并让上面的 opacity 绑定失效，切页将完全不生效。
                     Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
                     id: monitorLoader
-                    anchors.fill: parent
+                    y: 0
+                    height: pageStack.height
+                    width: pageStack.width
                     active: appWindow.monitorPageLoaded
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 1
@@ -463,13 +541,15 @@ ApplicationWindow {
                             appWindow.openManualEditFromMonitor(original, translation)
                         }
                     }
-                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    // 不要在这里加 Behavior on opacity：它会接管写入并让上面的 opacity 绑定失效，切页将完全不生效。
                     Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
                     id: apiLoader
-                    anchors.fill: parent
+                    y: 0
+                    height: pageStack.height
+                    width: pageStack.width
                     active: appWindow.apiPageLoaded
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 3
@@ -478,13 +558,15 @@ ApplicationWindow {
                     sourceComponent: ApiConfigPage {
                         cfg: appWindow.cfg
                     }
-                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    // 不要在这里加 Behavior on opacity：它会接管写入并让上面的 opacity 绑定失效，切页将完全不生效。
                     Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
                     id: logLoader
-                    anchors.fill: parent
+                    y: 0
+                    height: pageStack.height
+                    width: pageStack.width
                     active: appWindow.logPageLoaded
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 2
@@ -493,13 +575,15 @@ ApplicationWindow {
                     sourceComponent: LogPage {
                         logBridge: appWindow.logBridge
                     }
-                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    // 不要在这里加 Behavior on opacity：它会接管写入并让上面的 opacity 绑定失效，切页将完全不生效。
                     Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
                     id: glossaryLoader
-                    anchors.fill: parent
+                    y: 0
+                    height: pageStack.height
+                    width: pageStack.width
                     active: appWindow.glossaryPageLoaded
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 4
@@ -511,13 +595,15 @@ ApplicationWindow {
                         tbridge: appWindow.tbridge
                     }
                     onLoaded: appWindow.activateCurrentPage()
-                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    // 不要在这里加 Behavior on opacity：它会接管写入并让上面的 opacity 绑定失效，切页将完全不生效。
                     Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
 
                 Loader {
                     id: optionsLoader
-                    anchors.fill: parent
+                    y: 0
+                    height: pageStack.height
+                    width: pageStack.width
                     active: appWindow.optionsPageLoaded
                     visible: opacity > 0.01
                     enabled: appWindow.currentPageIndex === 5
@@ -528,7 +614,7 @@ ApplicationWindow {
                         tbridge: appWindow.tbridge
                         updater: appWindow.updater
                     }
-                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    // 不要在这里加 Behavior on opacity：它会接管写入并让上面的 opacity 绑定失效，切页将完全不生效。
                     Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 }
             }

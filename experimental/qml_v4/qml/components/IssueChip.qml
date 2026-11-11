@@ -10,7 +10,7 @@ Rectangle {
 
     width: Math.max(82, chipLabel.implicitWidth + 22)
     height: AppStyle.buttonHeightCompact
-    radius: 14
+    radius: AppStyle.radiusPill
     color: tone === "error"
            ? AppStyle.statusErrorBg
            : tone === "amber"

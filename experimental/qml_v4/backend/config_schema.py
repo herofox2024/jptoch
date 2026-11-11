@@ -58,6 +58,15 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
     "recovery_fallback_api_key": "",
     "recovery_fallback_api_url": "",
     "recovery_fallback_model": "",
+    # 上次选择文件/输出目录，供 FileDialog 打开时定位（空表示交给系统默认）。
+    "last_input_dir": "",
+    "last_output_dir": "",
+    # 主窗口几何，供下次启动还原（0 表示尚未记录，使用内置默认值）。
+    "window_x": 0,
+    "window_y": 0,
+    "window_w": 0,
+    "window_h": 0,
+    "window_maximized": False,
 }
 
 INT_RANGES = {
@@ -67,6 +76,11 @@ INT_RANGES = {
     "max_text_size_for_batch": (20, 10_000),
     "api_timeout": (10, 1_800),
     "recovery_max_attempts": (1, 5),
+    # 窗口几何允许负坐标（多显示器在左侧/上方时 x/y 可能为负）。
+    "window_x": (-32_000, 32_000),
+    "window_y": (-32_000, 32_000),
+    "window_w": (0, 16_384),
+    "window_h": (0, 16_384),
 }
 
 FLOAT_RANGES = {
@@ -89,6 +103,7 @@ BOOL_KEYS = {
     "enable_prompt_examples",
     "enable_notice_page",
     "enable_recovery_agent",
+    "window_maximized",
 }
 
 ENUM_VALUES = {
@@ -116,6 +131,8 @@ LONG_TEXT_LIMITS = {
     "recovery_fallback_api_key": 8_192,
     "prompt_extra_instruction": 20_000,
     "notice_page_text": 20_000,
+    "last_input_dir": 32_767,
+    "last_output_dir": 32_767,
 }
 
 

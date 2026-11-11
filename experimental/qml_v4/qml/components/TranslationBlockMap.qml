@@ -62,13 +62,13 @@ Rectangle {
             Rectangle {
                 Layout.preferredWidth: 84
                 Layout.preferredHeight: AppStyle.buttonHeightSmall
-                radius: 17
+                radius: AppStyle.radiusDialog
                 color: AppPalette.accentSoft
                 border.color: AppPalette.borderColor
                 Label {
                     anchors.centerIn: parent
                     text: Math.round(root.ratio * 100) + "%"
-                    color: AppPalette.accentColor
+                    color: AppPalette.accentText
                     font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
                 }
@@ -145,7 +145,7 @@ Rectangle {
                     Rectangle {
                         Layout.preferredWidth: 10
                         Layout.preferredHeight: 10
-                        radius: 2
+                        radius: width > 0 ? width / 2 : AppStyle.radiusTiny
                         color: modelData.color
                         border.color: AppPalette.lineColor
                     }

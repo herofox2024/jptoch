@@ -69,7 +69,7 @@ Dialog {
                 color: AppPalette.surfaceRaised
                 border.color: AppPalette.borderColor
 
-                layer.enabled: true
+                layer.enabled: AppStyle.shadowsEnabled
                 layer.effect: MultiEffect {
                     shadowEnabled: true
                     shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -99,7 +99,7 @@ Dialog {
 
                         Label {
                             text: root.localModel && root.localModel.running ? "运行中" : "未运行"
-                            color: root.localModel && root.localModel.running ? AppPalette.successColor : AppPalette.mutedText
+                            color: root.localModel && root.localModel.running ? AppPalette.successText : AppPalette.mutedText
                             font.pixelSize: AppStyle.fontSmall
                             font.weight: Font.DemiBold
                         }

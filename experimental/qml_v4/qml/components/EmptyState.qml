@@ -27,7 +27,7 @@ ColumnLayout {
         Layout.alignment: Qt.AlignHCenter
         Layout.preferredWidth: 48
         Layout.preferredHeight: 48
-        radius: 24
+        radius: AppStyle.radiusDialog
         color: AppPalette.accentSoft
         opacity: 0.85
 

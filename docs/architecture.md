@@ -116,3 +116,48 @@ prerelease do not guarantee identical behaviour in the stable release build.
 - `archived/tk_v1` is frozen source history.
 - Current modules must not import archived UI code.
 - Release workflows, installers and current tests target QML/V4 unless a test explicitly validates the archive layout.
+
+## QML Design Tokens
+
+Visual constants have exactly one owner each:
+
+| Concern | Owner | Notes |
+| --- | --- | --- |
+| Colors / theme | `qml/AppPalette.qml` | Fill colors (`accentColor`, `successColor`…) vs. text-safe variants (`accentText`, `successText`…). Text-safe variants must meet WCAG AA (4.5:1). |
+| Spacing, type, radii, breakpoints | `qml/AppStyle.qml` | Radii live only here. `AppPalette.radiusLarge/Medium/Small` are aliases pointing at `AppStyle`; do not add a second set. |
+| User-facing copy | `qml/Strings.qml` | Page titles, nav items, primary actions, state words. Convert to `qsTr()` here when localization starts. |
+
+Rules enforced by `tests/test_qml_design_tokens.py`:
+
+- No raw numeric `radius:` for appearance; use an `AppStyle.radius*` token.
+  (Dot/pill geometry such as `width / 2` and the decorative glow circles in
+  `main.qml` are exempt.)
+- Small-size status text must use the `*Text` color variants, never the vivid
+  fill colors.
+- Card shadows are gated by `AppStyle.shadowsEnabled` — never unconditional
+  `layer.enabled: true`.
+- Page `Loader`s must not combine `anchors.fill` with `x:`, and must not put a
+  `Behavior on opacity` on the transition `opacity` binding: both silently break
+  the binding, leaving page switching non-functional.
+
+## Page Transition Model
+
+Pages are `Loader`s inside `pageStack`, always alive once `markPageLoaded()` has
+run. Visibility is driven by two bindings per loader:
+
+```qml
+opacity: appWindow.currentPageIndex === N ? 1 : 0
+x: appWindow.pageX(N)
+```
+
+Both are plain bindings. Do not attach a `Behavior` to `opacity`, and do not add
+`anchors.fill` to these loaders — either change disables the binding and the page
+stops switching.
+
+## Screenshot Regeneration
+
+`tools/capture_readme_screenshots.py` regenerates `docs/screenshots/`. It boots
+the real `main.qml` with real bridges, sets `QQuickStyle` to Material, disables
+window-geometry restore, and grabs each page after it becomes visible. Re-run it
+whenever the theme, layout, or page composition changes.
+

@@ -40,7 +40,7 @@ Item {
         id: panel
         width: root.expanded ? 330 : 134
         implicitHeight: root.expanded ? contentColumn.implicitHeight + 24 : 38
-        radius: 16
+        radius: AppStyle.radiusDialog
         color: Qt.rgba(0.05, 0.08, 0.07, 0.82)
         border.color: Qt.rgba(1, 1, 1, 0.22)
         border.width: 1

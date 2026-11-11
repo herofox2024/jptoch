@@ -129,7 +129,9 @@ def test_stop_requires_confirmation_everywhere():
     assert "stopConfirmDialog" in panel, "TaskControlPanel 缺少停止确认弹窗"
     assert "function requestStop()" in panel, "TaskControlPanel 缺少 requestStop() 统一入口"
 
-    stop_button = panel.split('label: "停止"', 1)[1][:500]
+    # 按钮文案已收敛到 Strings.actionStop，这里按该 token 定位按钮块。
+    assert "label: Strings.actionStop" in panel, "停止按钮应使用 Strings.actionStop"
+    stop_button = panel.split("label: Strings.actionStop", 1)[1][:500]
     assert "stopConfirmDialog.open()" in stop_button, "停止按钮必须打开确认弹窗"
     assert "root.stopRequested()" not in stop_button, "停止按钮不得直接触发停止"
 

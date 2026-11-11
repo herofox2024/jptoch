@@ -5,6 +5,7 @@
 
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -418,6 +419,8 @@ _CONFIG_KEYS = [
     "japanese_residue_policy",
     "enable_recovery_agent", "recovery_min_confidence", "recovery_max_attempts",
     "recovery_fallback_provider", "recovery_fallback_api_key", "recovery_fallback_api_url", "recovery_fallback_model",
+    "last_input_dir", "last_output_dir",
+    "window_x", "window_y", "window_w", "window_h", "window_maximized",
 ]
 
 CONFIG_FILE_NAME = "config.json"
@@ -607,6 +610,13 @@ class ConfigBridge(QObject):
     configChanged = Signal()
     _inpChanged = Signal()
     _outChanged = Signal()
+    _lastInputDirChanged = Signal()
+    _lastOutputDirChanged = Signal()
+    _windowXChanged = Signal()
+    _windowYChanged = Signal()
+    _windowWChanged = Signal()
+    _windowHChanged = Signal()
+    _windowMaximizedChanged = Signal()
     _apiKeyChanged = Signal()
     _providerChanged = Signal()
     _apiUrlChanged = Signal()
@@ -661,6 +671,14 @@ class ConfigBridge(QObject):
         super().__init__(parent)
         self._inp = ""
         self._out = ""
+        self._last_input_dir = ""
+        self._last_output_dir = ""
+        # 主窗口几何：0 表示尚未记录，QML 侧会退回内置默认尺寸。
+        self._window_x = 0
+        self._window_y = 0
+        self._window_w = 0
+        self._window_h = 0
+        self._window_maximized = False
         self._api_key = ""
         self._provider = "deepseek"
         self._api_url = DEEPSEEK_API_URL
@@ -783,18 +801,34 @@ class ConfigBridge(QObject):
 
     @Slot()
     def saveToDisk(self):
-        """持久化当前配置到 JSON 文件。"""
+        """持久化当前配置到 JSON 文件。
+
+        采用「写临时文件 → 原子替换」：直接 write_text 时进程若在写入中途被结束，
+        会留下截断的 config.json，下次启动解析失败并整体回退默认值，
+        用户会丢失全部 API/模型设置。同文件的
+        `_save_user_model_prompt_presets` 与 `_save_residue_allowlist` 早已用这个模式。
+        """
         path = _config_path()
         config_text = self._current_config_json()
         if path.exists() and config_text == getattr(self, "_last_saved_config_text", ""):
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(config_text, encoding="utf-8")
+            tmp_path = path.with_name(path.name + ".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                handle.write(config_text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
             self._last_saved_config_text = config_text
             logger.info(f"配置已保存: {path}")
         except Exception as e:
             logger.warning(f"保存配置失败: {e}")
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
 
     def _current_config_json(self) -> str:
         data = {}
@@ -876,6 +910,15 @@ class ConfigBridge(QObject):
         self._log_config_validation(validation, "应用")
         values = validation.values
         signal_by_key = {
+            "inp": self._inpChanged,
+            "out": self._outChanged,
+            "last_input_dir": self._lastInputDirChanged,
+            "last_output_dir": self._lastOutputDirChanged,
+            "window_x": self._windowXChanged,
+            "window_y": self._windowYChanged,
+            "window_w": self._windowWChanged,
+            "window_h": self._windowHChanged,
+            "window_maximized": self._windowMaximizedChanged,
             "api_key": self._apiKeyChanged,
             "provider": self._providerChanged,
             "api_url": self._apiUrlChanged,
@@ -1357,6 +1400,66 @@ class ConfigBridge(QObject):
     def out(self, val: str):
         if val != self._out:
             self._out = val; self._emit_changed(self._outChanged)
+
+    # --- 文件对话框的“上次目录” ---
+    # 只记录目录（不含文件名），用于下次打开对话框时定位，避免每次都从系统默认目录开始。
+    @Property(str, notify=_lastInputDirChanged)
+    def lastInputDir(self) -> str: return self._last_input_dir
+    @lastInputDir.setter
+    def lastInputDir(self, val: str):
+        val = str(val or "")
+        if val != self._last_input_dir:
+            self._last_input_dir = val; self._emit_changed(self._lastInputDirChanged)
+
+    @Property(str, notify=_lastOutputDirChanged)
+    def lastOutputDir(self) -> str: return self._last_output_dir
+    @lastOutputDir.setter
+    def lastOutputDir(self, val: str):
+        val = str(val or "")
+        if val != self._last_output_dir:
+            self._last_output_dir = val; self._emit_changed(self._lastOutputDirChanged)
+
+    # --- 主窗口几何 ---
+    # 只保存普通（非最大化/非全屏）状态下的几何，最大化状态单独用 bool 记录。
+    @Property(int, notify=_windowXChanged)
+    def windowX(self) -> int: return self._window_x
+    @windowX.setter
+    def windowX(self, val: int):
+        val = int(val)
+        if val != self._window_x:
+            self._window_x = val; self._emit_changed(self._windowXChanged)
+
+    @Property(int, notify=_windowYChanged)
+    def windowY(self) -> int: return self._window_y
+    @windowY.setter
+    def windowY(self, val: int):
+        val = int(val)
+        if val != self._window_y:
+            self._window_y = val; self._emit_changed(self._windowYChanged)
+
+    @Property(int, notify=_windowWChanged)
+    def windowW(self) -> int: return self._window_w
+    @windowW.setter
+    def windowW(self, val: int):
+        val = int(val)
+        if val != self._window_w:
+            self._window_w = val; self._emit_changed(self._windowWChanged)
+
+    @Property(int, notify=_windowHChanged)
+    def windowH(self) -> int: return self._window_h
+    @windowH.setter
+    def windowH(self, val: int):
+        val = int(val)
+        if val != self._window_h:
+            self._window_h = val; self._emit_changed(self._windowHChanged)
+
+    @Property(bool, notify=_windowMaximizedChanged)
+    def windowMaximized(self) -> bool: return self._window_maximized
+    @windowMaximized.setter
+    def windowMaximized(self, val: bool):
+        val = bool(val)
+        if val != self._window_maximized:
+            self._window_maximized = val; self._emit_changed(self._windowMaximizedChanged)
 
     @Property(str, notify=_apiKeyChanged)
     def apiKey(self) -> str: return self._api_key

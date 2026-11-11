@@ -3,7 +3,6 @@ Toast 1.0 Toast.qml
 NoticePageSettings 1.0 NoticePageSettings.qml
 StatCard 1.0 StatCard.qml
 ProgressMetric 1.0 ProgressMetric.qml
-RealtimeTextPanel 1.0 RealtimeTextPanel.qml
 TranslationBlockMap 1.0 TranslationBlockMap.qml
 IssueChip 1.0 IssueChip.qml
 ReportField 1.0 ReportField.qml
@@ -14,7 +13,6 @@ SettingsPane 1.0 SettingsPane.qml
 TaskActionButton 1.0 TaskActionButton.qml
 SummaryChip 1.0 SummaryChip.qml
 UiMetricsOverlay 1.0 UiMetricsOverlay.qml
-WorkflowShortcutPanel 1.0 WorkflowShortcutPanel.qml
 NavIcon 1.0 NavIcon.qml
 ContactLink 1.0 ContactLink.qml
 NavButton 1.0 NavButton.qml

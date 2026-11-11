@@ -144,7 +144,7 @@ Dialog {
                     delegate: Rectangle {
                         width: allowList.width
                         height: 32
-                        radius: 10
+                        radius: AppStyle.radiusButton
                         color: AppPalette.surfaceRaised
                         border.color: AppPalette.lineColor
 

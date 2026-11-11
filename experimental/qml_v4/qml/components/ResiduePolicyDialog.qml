@@ -98,7 +98,7 @@ Dialog {
             Label {
                 Layout.fillWidth: true
                 text: "保存前会先自动修复已知片假名词和地名振假名。明显应该翻译的内容应加入片假名修复词表，不应直接加入白名单。"
-                color: AppPalette.amberColor
+                color: AppPalette.amberText
                 wrapMode: Text.WordWrap
                 font.pixelSize: AppStyle.fontSmall
             }

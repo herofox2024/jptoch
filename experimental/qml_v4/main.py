@@ -363,6 +363,8 @@ def main():
     ctx.setContextProperty("AppDisplayName", APP_DISPLAY_NAME)
     ctx.setContextProperty("AppDisplayVersion", APP_DISPLAY_VERSION)
     ctx.setContextProperty("AppVersion", APP_VERSION)
+    # 不含版本号的产品名，供顶栏左侧使用（版本号只在「关于」入口出现一次）。
+    ctx.setContextProperty("AppName", APP_NAME)
     # 「关于」弹窗展示的运行环境信息。
     from PySide6.QtCore import qVersion as _qt_version
     ctx.setContextProperty("AppPythonVersion", f"Python {sys.version.split()[0]}")

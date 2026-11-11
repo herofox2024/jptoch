@@ -138,7 +138,7 @@ Page {
                 Layout.fillWidth: true
                 spacing: AppStyle.spacingTight
                 Label {
-                    text: "术语表"
+                    text: Strings.pageGlossary
                     color: AppPalette.textColor
                     font.family: page.titleFont
                     font.pixelSize: AppStyle.fontPageTitle
@@ -156,13 +156,13 @@ Page {
             Rectangle {
                 Layout.preferredWidth: 120
                 Layout.preferredHeight: AppStyle.buttonHeightSmall
-                radius: 17
+                radius: AppStyle.radiusPill
                 color: page.dirty ? AppStyle.statusWarningBg : AppStyle.statusAccentBg
                 border.color: page.dirty ? AppPalette.amberColor : AppPalette.borderColor
                 Label {
                     anchors.centerIn: parent
                     text: page.dirty ? "有未保存修改" : "已同步"
-                    color: page.dirty ? AppPalette.amberColor : AppPalette.accentColor
+                    color: page.dirty ? AppPalette.amberText : AppPalette.accentText
                     font.pixelSize: AppStyle.fontSmall
                     font.weight: Font.DemiBold
                 }
@@ -188,7 +188,7 @@ Page {
             color: AppPalette.surfaceRaised
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -213,7 +213,7 @@ Page {
                             id: searchField
                             Layout.fillWidth: true
                             Layout.preferredHeight: AppStyle.fieldHeight
-                            radius: 18
+                            radius: AppStyle.radiusDialog
                             color: AppPalette.fieldBg
                             border.color: searchInput.activeFocus ? AppPalette.accentColor : AppPalette.lineColor
                             border.width: searchInput.activeFocus ? 2 : 1
@@ -278,7 +278,7 @@ Page {
             color: AppPalette.cardBg
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -458,7 +458,7 @@ Page {
             color: AppPalette.cardBg
             border.color: AppPalette.borderColor
 
-            layer.enabled: true
+            layer.enabled: AppStyle.shadowsEnabled
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -515,7 +515,7 @@ Page {
                                 Rectangle {
                                     width: 21
                                     height: 21
-                                    radius: 6
+                                    radius: AppStyle.radiusSmall
                                     anchors.centerIn: parent
                                     color: rowDelegate.isSelected ? AppPalette.amberColor : "transparent"
                                     border.color: rowDelegate.isSelected ? AppPalette.amberColor : AppPalette.mutedText
@@ -603,7 +603,7 @@ Page {
                         color: AppPalette.surfaceRaised
                         border.color: AppPalette.borderColor
 
-                        layer.enabled: true
+                        layer.enabled: AppStyle.shadowsEnabled
                         layer.effect: MultiEffect {
                             shadowEnabled: true
                             shadowColor: AppPalette.glass ? AppPalette.shadowColorGlass : AppPalette.shadowColor
@@ -772,7 +772,7 @@ Page {
         Rectangle {
             width: 34
             height: 4
-            radius: 2
+            radius: width > 0 ? width / 2 : AppStyle.radiusTiny
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.leftMargin: 14

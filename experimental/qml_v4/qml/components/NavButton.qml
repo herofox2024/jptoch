@@ -25,7 +25,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 8
+        radius: AppStyle.radiusChip
         color: navBtn.active
                ? AppPalette.navActiveBg
                : (navBtn.glassMode && navBtn.hovering ? Qt.rgba(1, 1, 1, 0.10) : "transparent")
@@ -50,7 +50,7 @@ Item {
     Rectangle {
         width: 4
         height: 28
-        radius: 2
+        radius: width > 0 ? width / 2 : AppStyle.radiusTiny
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
         color: AppPalette.accentColor
@@ -68,7 +68,7 @@ Item {
             Layout.preferredHeight: AppStyle.buttonHeightSmall
             Rectangle {
                 anchors.fill: parent
-                radius: 7
+                radius: AppStyle.radiusChip
                 color: navBtn.active
                        ? AppPalette.accentColor
                        : AppPalette.cardAlt
@@ -88,7 +88,7 @@ Item {
             spacing: AppStyle.spacingNone
             Label {
                 text: navBtn.label
-                color: navBtn.active ? AppPalette.accentColor : AppPalette.textColor
+                color: navBtn.active ? AppPalette.accentText : AppPalette.textColor
                 font.pixelSize: AppStyle.fontBodyLarge
                 font.weight: Font.DemiBold
             }

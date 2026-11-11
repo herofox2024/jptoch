@@ -110,7 +110,7 @@ Dialog {
             Layout.fillWidth: true
             visible: dialog.recoveryAnalysisMessage !== ""
             text: dialog.recoveryAnalysisMessage
-            color: AppPalette.accentColor
+            color: AppPalette.accentText
             font.pixelSize: AppStyle.fontSmall
             wrapMode: Text.WordWrap
         }
@@ -156,7 +156,7 @@ Dialog {
                         Label {
                             Layout.preferredWidth: 76
                             text: dialog.failedBlockKindLabel(modelData.kind)
-                            color: modelData.kind === "save_residue" ? AppPalette.errorColor : AppPalette.amberColor
+                            color: modelData.kind === "save_residue" ? AppPalette.errorText : AppPalette.amberText
                             font.pixelSize: AppStyle.fontTiny
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
@@ -193,7 +193,7 @@ Dialog {
                                    (modelData.recovery_recommendation || "等待人工确认") +
                                    " | 已尝试 " + attempts + " 次"
                         }
-                        color: modelData.recovery_status === "success" ? AppPalette.successColor : AppPalette.mutedText
+                        color: modelData.recovery_status === "success" ? AppPalette.successText : AppPalette.mutedText
                         font.pixelSize: AppStyle.fontTiny
                         elide: Text.ElideRight
                     }

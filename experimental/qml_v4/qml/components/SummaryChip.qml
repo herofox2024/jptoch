@@ -11,7 +11,7 @@ Rectangle {
 
     width: Math.min(240, Math.max(88, chipRow.implicitWidth + 22))
     height: AppStyle.buttonHeightCompact
-    radius: 15
+    radius: AppStyle.radiusPill
     color: AppPalette.cardBg
     border.color: AppPalette.lineColor
 

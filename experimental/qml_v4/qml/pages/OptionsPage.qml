@@ -185,7 +185,7 @@ Page {
         spacing: AppStyle.spacingXLarge
 
         Label {
-            text: "翻译设置"
+            text: Strings.pageOptions
             color: AppPalette.textColor
             font.family: page.titleFont
             font.pixelSize: AppStyle.fontPageTitle

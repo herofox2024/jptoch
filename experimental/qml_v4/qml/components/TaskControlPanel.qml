@@ -30,6 +30,36 @@ Rectangle {
         stopConfirmDialog.open()
     }
 
+    // 状态文案的单一权威来源。
+    // 修复前同一页并排出现三个语义重复的胶囊（标题栏 / 面板右上 / 底栏），
+    // 且颜色语义不一致（橙/绿/蓝混用）。现在统一由 workbenchState 派生，
+    // 标题区只保留一个胶囊，底栏只保留说明与就绪点。
+    readonly property string workbenchState: {
+        if (root.busy) return "running"
+        if (root.readyToStart) return "ready"
+        return "empty"
+    }
+    readonly property string stateLabel: {
+        if (root.workbenchState === "running") return Strings.stateRunning
+        if (root.workbenchState === "ready") return Strings.stateReady
+        return Strings.stateEmpty
+    }
+    readonly property color stateFg: {
+        if (root.workbenchState === "running") return AppPalette.accentText
+        if (root.workbenchState === "ready") return AppPalette.successText
+        return AppPalette.mutedText
+    }
+    readonly property color stateBg: {
+        if (root.workbenchState === "running") return AppPalette.accentSoft
+        if (root.workbenchState === "ready") return AppStyle.statusSuccessBg
+        return AppStyle.statusNeutralBg
+    }
+    readonly property color stateDot: {
+        if (root.workbenchState === "running") return AppPalette.accentColor
+        if (root.workbenchState === "ready") return AppPalette.successColor
+        return AppPalette.amberColor
+    }
+
     // 暴露确认框状态，便于自动化测试断言（Dialog 会被挂到 Overlay，findChild 找不到）。
     property alias stopConfirmVisible: stopConfirmDialog.visible
 
@@ -62,16 +92,16 @@ Rectangle {
             }
 
             Rectangle {
-                Layout.preferredWidth: 86
+                Layout.preferredWidth: 96
                 Layout.preferredHeight: 24
-                radius: 12
-                color: root.readyToStart ? AppPalette.cardBg : AppStyle.statusNeutralBg
+                radius: AppStyle.radiusPill
+                color: root.stateBg
                 border.color: AppPalette.lineColor
 
                 Label {
                     anchors.centerIn: parent
-                    text: root.readyToStart ? "可开始" : "待选择"
-                    color: root.readyToStart ? AppPalette.successColor : AppPalette.mutedText
+                    text: root.stateLabel
+                    color: root.stateFg
                     font.pixelSize: AppStyle.fontCaption
                     font.weight: Font.DemiBold
                 }
@@ -87,7 +117,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: AppStyle.buttonHeightPrimary
                 primary: true
-                label: root.busy ? "翻译中..." : "开始翻译"
+                label: root.busy ? Strings.actionStarting : Strings.actionStart
                 hint: root.readyToStart ? "使用当前模型与参数启动任务" : "请先选择源文件和输出文件"
                 enabled: root.readyToStart && !root.busy
                 onClicked: root.startRequested()
@@ -127,7 +157,7 @@ Rectangle {
                     TaskActionButton {
                         Layout.fillWidth: true
                         Layout.preferredHeight: AppStyle.buttonHeightNormal
-                        label: "暂停"
+                        label: Strings.actionPause
                         hint: "保留已写入缓存"
                         enabled: root.busy
                         onClicked: root.pauseRequested()
@@ -136,7 +166,7 @@ Rectangle {
                     TaskActionButton {
                         Layout.fillWidth: true
                         Layout.preferredHeight: AppStyle.buttonHeightNormal
-                        label: "恢复"
+                        label: Strings.actionResume
                         hint: "继续断点任务"
                         enabled: root.readyToStart && !root.busy
                         onClicked: root.resumeRequested()
@@ -147,7 +177,7 @@ Rectangle {
                     TaskActionButton {
                         Layout.fillWidth: true
                         Layout.preferredHeight: AppStyle.buttonHeightNormal
-                        label: "停止"
+                        label: Strings.actionStop
                         hint: "取消并清空本次缓存"
                         danger: true
                         enabled: root.busy
@@ -157,7 +187,7 @@ Rectangle {
                     TaskActionButton {
                         Layout.fillWidth: true
                         Layout.preferredHeight: AppStyle.buttonHeightNormal
-                        label: "清缓存"
+                        label: Strings.actionClearCache
                         hint: "重新翻译当前书"
                         enabled: root.readyToStart && !root.busy
                         onClicked: root.clearCacheRequested()
@@ -166,7 +196,7 @@ Rectangle {
                     TaskActionButton {
                         Layout.fillWidth: true
                         Layout.preferredHeight: AppStyle.buttonHeightNormal
-                        label: "人工修改"
+                        label: Strings.actionManualEdit
                         hint: "编辑单条译文"
                         enabled: !root.busy
                         onClicked: root.manualEditRequested()
@@ -189,7 +219,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(AppStyle.infoBarHeight, infoBarText.paintedHeight + 18)
             Layout.bottomMargin: 2
-            radius: 22
+            radius: AppStyle.radiusPill
             color: AppPalette.fieldBg
             border.color: AppPalette.lineColor
 
@@ -204,8 +234,8 @@ Rectangle {
                 Rectangle {
                     Layout.preferredWidth: 8
                     Layout.preferredHeight: 8
-                    radius: 4
-                    color: root.readyToStart ? AppPalette.successColor : AppPalette.amberColor
+                    radius: AppStyle.radiusTiny
+                    color: root.stateDot
                 }
 
                 Label {
@@ -219,21 +249,16 @@ Rectangle {
                     elide: Text.ElideRight
                 }
 
-                Rectangle {
+                // 底栏不再重复第三个状态胶囊：状态已由标题区唯一胶囊表达，
+                // 这里只保留一句“就绪/待文件”的辅助文案。
+                Label {
                     visible: root.viewportWidth > AppStyle.bpNarrow
                     Layout.preferredWidth: 104
-                    Layout.preferredHeight: AppStyle.buttonHeightCompact
-                    radius: 14
-                    color: root.readyToStart ? AppPalette.accentSoft : AppStyle.statusNeutralBg
-                    border.color: AppPalette.lineColor
-
-                    Label {
-                        anchors.centerIn: parent
-                        text: root.readyToStart ? "工作台已就绪" : "等待文件"
-                        color: root.readyToStart ? AppPalette.successColor : AppPalette.mutedText
-                        font.pixelSize: AppStyle.fontSmall
-                        font.weight: Font.DemiBold
-                    }
+                    text: root.readyToStart ? "就绪" : "待文件"
+                    color: root.stateFg
+                    horizontalAlignment: Text.AlignRight
+                    font.pixelSize: AppStyle.fontSmall
+                    font.weight: Font.DemiBold
                 }
             }
         }
@@ -246,7 +271,7 @@ Rectangle {
         modal: true
         anchors.centerIn: parent
         width: Math.min(root.width - 96, 460)
-        title: "确认停止翻译？"
+        title: Strings.actionStopConfirmTitle
         closePolicy: Popup.CloseOnEscape
 
         contentItem: ColumnLayout {
@@ -276,12 +301,12 @@ Rectangle {
                 Item { Layout.fillWidth: true }
 
                 Button {
-                    text: "继续翻译"
+                    text: Strings.actionStopConfirmCancel
                     onClicked: stopConfirmDialog.close()
                 }
 
                 Button {
-                    text: "停止并清空缓存"
+                    text: Strings.actionStopConfirmOk
                     highlighted: true
                     onClicked: {
                         stopConfirmDialog.close()
