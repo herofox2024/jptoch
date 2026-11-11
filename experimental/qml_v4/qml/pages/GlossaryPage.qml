@@ -471,21 +471,43 @@ Page {
                 anchors.fill: parent
                 spacing: AppStyle.spacingNone
 
-                RowLayout {
+                // 表头与列表必须严格同宽。
+                // 之前表头是 ColumnLayout 的直接子项（fillWidth，宽 920），
+                // 而 ListView 的 delegate 用 listView.width（1012），
+                // 两者相差 92px；固定列从左排布，差值全压在右侧弹性列上，
+                // 于是「应用策略」下的下拉框看起来比表头右移。
+                // 这里把表头宽度绑定到列表内容宽度，保证列边界完全重合。
+                Item {
+                    // 表头宽度直接跟随列表内容宽度。用 fillWidth 会与 delegate
+                    // 的 listView.width 差出几十像素，右端弹性列随之错位。
+                    Layout.preferredWidth: listView.width
                     Layout.fillWidth: true
-                    spacing: AppStyle.spacingNone
-                    TableHeader { w: page.narrowTable ? 48 : 56; text: "选择"; first: true }
-                    TableHeader { visible: !page.narrowTable; w: 104; text: "分类" }
-                    TableHeader { w: page.narrowTable ? -1 : 210; text: "原文" }
-                    TableHeader { w: page.narrowTable ? -1 : 210; text: "译文" }
-                    TableHeader { w: page.narrowTable ? -1 : 220; text: "中文别名" }
-                    TableHeader { visible: !page.narrowTable; w: 120; text: "应用策略" }
-                    TableHeader { visible: !page.mediumTable; w: -1; text: "备注/来源"; last: true }
-                    TableHeader { visible: page.narrowTable; w: 52; text: "详情"; last: true }
+                    Layout.preferredHeight: 38
+
+                    // 整条连续色带作为背景，避免逐列 Rectangle 之间出现缝隙。
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: AppPalette.radiusLarge
+                        color: AppPalette.accentColor
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: AppStyle.spacingNone
+                        TableHeader { w: page.narrowTable ? 48 : 56; text: "选择"; first: true }
+                        TableHeader { visible: !page.narrowTable; w: 104; text: "分类" }
+                        TableHeader { w: page.narrowTable ? -1 : 210; text: "原文" }
+                        TableHeader { w: page.narrowTable ? -1 : 210; text: "译文" }
+                        TableHeader { w: page.narrowTable ? -1 : 220; text: "中文别名" }
+                        TableHeader { visible: !page.narrowTable; w: 120; text: "应用策略" }
+                        TableHeader { visible: !page.mediumTable; w: -1; text: "备注/来源"; last: true }
+                        TableHeader { visible: page.narrowTable; w: 52; text: "详情"; last: true }
+                    }
                 }
 
                 ListView {
                     id: listView
+                    objectName: "glossaryListView"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
@@ -495,6 +517,9 @@ Page {
 
                     delegate: Rectangle {
                         id: rowDelegate
+                        // 与表头严格同宽：表头在 ColumnLayout 里也是 fillWidth，
+                        // 但表头没有边框内缩，delegate 若用 listView.width 会因为
+                        // 滚动条/边框差出十几像素，导致右侧「应用策略」列错位。
                         width: listView.width
                         height: 46
                         property bool isSelected: page.selectedRows.indexOf(index) >= 0
@@ -505,7 +530,12 @@ Page {
                         border.width: isSelected ? 2 : 1
 
                         RowLayout {
-                            anchors.fill: parent
+                            // 用显式尺寸而不是 anchors.fill：anchors 会被边框内缩，
+                            // 让行内首列起点比表头右移一个 border.width。
+                            x: 0
+                            y: 0
+                            width: parent.width
+                            height: parent.height
                             spacing: AppStyle.spacingNone
 
                             Rectangle {
@@ -813,7 +843,12 @@ Page {
         property bool muted: false
         signal commit(string text)
 
+        // 同 PolicySelector：归零隐式尺寸，避免内部 TextInput 的 implicitWidth
+        // 参与 RowLayout 的列宽分配，导致行内列与表头列错位。
+        implicitWidth: 0
+        implicitHeight: 0
         Layout.preferredWidth: w > 0 ? w : -1
+        Layout.minimumWidth: w > 0 ? w : 0
         Layout.fillWidth: w < 0
         Layout.fillHeight: true
         color: "transparent"
@@ -842,7 +877,13 @@ Page {
         property bool editable: true
         signal commit(string text)
 
+        // Rectangle 自身隐式宽高为 0；内部的 ComboBox 会带来较大的 implicitWidth，
+        // 若不归零，RowLayout 在分配固定列时会把它算进最小宽度，
+        // 导致行内列比表头宽、下拉框整体右移（与表头错位）。
+        implicitWidth: 0
+        implicitHeight: 0
         Layout.preferredWidth: w > 0 ? w : -1
+        Layout.minimumWidth: w > 0 ? w : 0
         Layout.fillWidth: w < 0
         Layout.fillHeight: true
         color: "transparent"

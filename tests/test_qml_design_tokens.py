@@ -421,6 +421,44 @@ def test_page_transition_bindings_are_not_broken():
         )
 
 
+def test_glossary_table_header_aligns_with_rows():
+    """术语表表头与行内列必须严格同宽、同列宽。
+
+    回归点：表头是 ColumnLayout 的直接子项（fillWidth，实测宽 920），
+    而行内 delegate 用 `width: listView.width`（实测 1012），相差 92px；
+    固定列从左排布，差值全压在右侧弹性列上，于是「应用策略」下的
+    下拉框比表头右移一大截。
+
+    另有两点会单独造成错位：
+      - 行内 RowLayout 用 anchors.fill 会被 delegate 边框内缩；
+      - 表头/单元格的 implicitWidth 若被内部文本撑开，列宽分配会变。
+    """
+    page = (QML_DIR / "pages" / "GlossaryPage.qml").read_text(encoding="utf-8")
+    header = (QML_DIR / "components" / "TableHeader.qml").read_text(encoding="utf-8")
+
+    # 表头整体宽度必须与列表内容宽度绑定，而不是只依赖 fillWidth
+    header_block = page.split("TableHeader {", 1)[0][-900:]
+    assert "Layout.preferredWidth: listView.width" in header_block, (
+        "表头容器宽度必须绑定 listView.width，否则与行内 delegate 宽度不一致"
+    )
+
+    # 行内 RowLayout 不能用 anchors.fill（会被边框内缩）
+    row_block = page.split("delegate: Rectangle", 1)[1][:1200]
+    assert "anchors.fill: parent" not in row_block.split("RowLayout", 1)[1][:400], (
+        "行内 RowLayout 不能用 anchors.fill：会被 delegate 边框内缩，导致首列起点偏移"
+    )
+
+    # 表头与单元格都要归零隐式尺寸
+    assert "implicitWidth: 0" in header, "TableHeader 需要把 implicitWidth 归零"
+    assert "implicitWidth: 0" in page, "CellEditor / PolicySelector 需要把 implicitWidth 归零"
+
+    # 表头列宽定义与行内列宽必须一一对应
+    header_widths = re.findall(r"TableHeader \{.*?w: ([^;]+);", page)
+    assert len(header_widths) >= 8, f"表头列定义异常，解析到 {len(header_widths)} 列"
+    for token in ("56", "104", "210", "220", "120"):
+        assert token in "".join(header_widths), f"表头列宽缺少 {token}"
+
+
 def test_window_geometry_is_persisted_and_validated():
     """窗口几何必须持久化，且还原时校验是否落在可见屏幕内。"""
     main = (QML_DIR / "main.qml").read_text(encoding="utf-8")
