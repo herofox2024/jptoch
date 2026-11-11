@@ -51,14 +51,15 @@ Dialog {
     }
 
     ScrollView {
-        width: root.width - 48
-        height: root.height - 96
+        id: apiPresetScroll
+        implicitWidth: root.availableWidth
+        implicitHeight: root.availableHeight
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AsNeeded
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
         ColumnLayout {
-            width: Math.max(0, root.width - 72)
+            width: Math.max(0, apiPresetScroll.availableWidth)
             spacing: AppStyle.spacingMedium
 
             Rectangle {

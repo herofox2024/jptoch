@@ -102,7 +102,8 @@ Dialog {
     contentItem: ScrollView {
         // 尺寸交给 Dialog 的 contentWidth/contentHeight 管理，
         // 自己写 width/height = dialog.width 会与 Dialog 的 padding 打架。
-        implicitWidth: dialog.availableWidth
+        id: knownKatakanaScroll
+            implicitWidth: dialog.availableWidth
         implicitHeight: dialog.availableHeight
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -111,7 +112,7 @@ Dialog {
         // 宽度取 ScrollView 的可用宽度，而不是 dialog.width 减写死值：
         // 垂直滚动条出现时会再占十几像素，写死会让内容比可视区宽、右侧被裁。
         ColumnLayout {
-            width: Math.max(0, parent.width - 32)
+            width: Math.max(0, knownKatakanaScroll.availableWidth)
             x: 16
             spacing: AppStyle.spacingLarge
 

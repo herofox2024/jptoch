@@ -688,6 +688,7 @@ Page {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         contentItem: ScrollView {
+            id: termDetailScroll
             implicitWidth: termDetailDialog.availableWidth
             implicitHeight: termDetailDialog.availableHeight
             clip: true
@@ -695,7 +696,7 @@ Page {
             ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
             ColumnLayout {
-                width: Math.max(0, termDetailDialog.width - 72)
+                width: Math.max(0, termDetailScroll.availableWidth)
                 spacing: AppStyle.spacingMedium
 
                 ReportField { title: "分类"; body: page.detailTerm.category || "-" }

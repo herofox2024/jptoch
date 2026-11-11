@@ -71,14 +71,15 @@ Dialog {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     contentItem: ScrollView {
-        implicitWidth: dialog.availableWidth
+        id: residueAllowlistScroll
+            implicitWidth: dialog.availableWidth
         implicitHeight: dialog.availableHeight
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
         ColumnLayout {
-            width: Math.max(0, dialog.width - 32)
+            width: Math.max(0, residueAllowlistScroll.availableWidth)
             spacing: AppStyle.spacingLarge
 
             Label {

@@ -1123,6 +1123,7 @@ Page {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         contentItem: ScrollView {
+            id: qualityReportScroll
             implicitWidth: qualityReportDialog.availableWidth
             implicitHeight: qualityReportDialog.availableHeight
             clip: true
@@ -1130,7 +1131,7 @@ Page {
             ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
             ColumnLayout {
-                width: Math.max(0, qualityReportDialog.width - 32)
+                width: Math.max(0, qualityReportScroll.availableWidth)
                 spacing: AppStyle.spacingLarge
 
                 Label {

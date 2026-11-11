@@ -574,6 +574,87 @@ def test_dialog_action_button_lives_outside_scroll_area():
     )
 
 
+def _active_lines(source: str) -> list[str]:
+    """去掉纯注释行，只保留生效代码，避免断言被注释误导。"""
+    return [ln for ln in source.splitlines() if not ln.strip().startswith("//")]
+
+
+def test_scrollable_dialog_content_uses_available_width():
+    """所有 ScrollView 型弹窗内容必须用 availableWidth，不得写死减固定值。
+
+    回归点（术语 Profile 管理弹窗，一次性暴露了 4 个问题）：
+      1. 内容宽 `dialog.width - 32` 超过 ScrollView 可用宽度，横向溢出留白。
+      2. 表格高度写死 420，只有几行时留一大片空白。
+      3. 「删除」按钮压在垂直滚动条上：ColumnLayout 子项不支持
+         `Layout.rightMargin`，留位必须在宽度上做。
+      4. 空状态放在 ListView 里，非 delegate 子项不参与布局，
+         宽度约束失效，说明文字溢出右边界。
+    """
+    problems = []
+    for path in sorted(QML_DIR.rglob("*.qml")):
+        source = path.read_text(encoding="utf-8")
+        if "ScrollView {" not in source:
+            continue
+        rel = str(path.relative_to(QML_DIR))
+        for ln in _active_lines(source):
+            if re.search(r"width:\s*Math\.max\(\s*0,\s*\w+\.width\s*-\s*\d+\s*\)", ln):
+                # 只针对“弹窗里的 ScrollView 内容”：目标对象名以 Dialog 结尾，
+                # 或直接是 root/dialog。内嵌文本框（如 noticePageTextBox）不算。
+                target = re.search(r"Math\.max\(\s*0,\s*(\w+)\.width", ln)
+                name = target.group(1) if target else ""
+                is_dialog_scope = name in {"root", "dialog"} or name.endswith("Dialog")
+                if is_dialog_scope:
+                    problems.append(f"{rel}: {ln.strip()}  ← 应改用 availableWidth")
+
+    assert not problems, "ScrollView 内容宽度问题：\n" + "\n".join(problems)
+
+
+def test_empty_state_in_layout_is_constrained():
+    """所有 EmptyState 都必须显式限宽，否则长说明文字按隐式宽度溢出。
+
+    ListView / ColumnLayout 中的非 delegate 子项不参与布局管理器分配尺寸，
+    `anchors.centerIn` 只定位不约束，文本会按内容宽度撑出容器。
+    """
+    offenders = []
+    for path in sorted(QML_DIR.rglob("*.qml")):
+        # 跳过组件自身的定义文件（里面的用法示例是注释）
+        if path.name == "EmptyState.qml":
+            continue
+        source = path.read_text(encoding="utf-8")
+        if "EmptyState {" not in source:
+            continue
+        rel = path.relative_to(QML_DIR)
+        # 去掉注释行后再匹配，避免被用法示例误导
+        code = "\n".join(_active_lines(source))
+        for match in re.finditer(r"EmptyState \{(.*?)\n\s*\}", code, re.DOTALL):
+            body = match.group(1)
+            has_width = (
+                "Layout.fillWidth: true" in body
+                or "Layout.preferredWidth" in body
+                or re.search(r"^\s+width:", body, re.M) is not None
+            )
+            if not has_width:
+                offenders.append(f"{rel} 中有一处 EmptyState 未设置宽度")
+
+    assert not offenders, "EmptyState 缺少宽度约束：\n" + "\n".join(offenders)
+
+
+def test_scrollbar_does_not_overlap_action_button():
+    """表格的滚动条不得覆盖操作按钮所在的列。"""
+    section = (QML_DIR / "components" / "GlossaryProfileSection.qml").read_text(encoding="utf-8")
+    assert "usableWidth" in section, "表格应通过收窄可用宽度给滚动条留位"
+
+    # ColumnLayout 子项的 Layout.rightMargin 无效，生效代码里不应出现
+    table_area = section.split("id: profileTableColumn", 1)[1][:3000]
+    offenders = [
+        ln.strip() for ln in _active_lines(table_area) if "Layout.rightMargin" in ln
+    ]
+    assert not offenders, (
+        "ColumnLayout 子项的 Layout.rightMargin 无效，留位应在宽度上做：\n"
+        + "\n".join(offenders)
+    )
+
+
 def test_dialogs_use_explicit_max_size_props():
     """弹窗尺寸入参必须叫 maxWidth/maxHeight，不得回退成 pageWidth/pageHeight。
 

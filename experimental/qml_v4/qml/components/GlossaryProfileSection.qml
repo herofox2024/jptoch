@@ -359,6 +359,7 @@ Item {
         }
 
         contentItem: ScrollView {
+            id: glossaryWorkflowScroll
             implicitWidth: glossaryWorkflowDialog.availableWidth
             implicitHeight: glossaryWorkflowDialog.availableHeight
             clip: true
@@ -366,7 +367,7 @@ Item {
             ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
             ColumnLayout {
-                width: Math.max(0, glossaryWorkflowDialog.width - 32)
+                width: Math.max(0, glossaryWorkflowScroll.availableWidth)
                 spacing: AppStyle.spacingLarge
 
                 Rectangle {
@@ -436,7 +437,12 @@ Item {
                         }
 
                         EmptyState {
+                            // 与其他空状态一致：显式限宽并居中，
+                            // 否则长说明文字会按隐式宽度撑出容器。
                             Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.topMargin: 16
+                            Layout.bottomMargin: 16
                             visible: glossaryProfileModel.count === 0
                             iconName: "glossary"
                             description: "暂无可选 profile。可以在下方选择 EPUB 并提取术语。"
@@ -685,6 +691,7 @@ Item {
         onOpened: section.refreshGlossaryProfiles()
 
         contentItem: ScrollView {
+            id: glossaryProfileScroll
             implicitWidth: glossaryProfileDialog.availableWidth
             implicitHeight: glossaryProfileDialog.availableHeight
             clip: true
@@ -692,7 +699,9 @@ Item {
             ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
             ColumnLayout {
-                width: Math.max(0, glossaryProfileDialog.width - 32)
+                // 用 ScrollView 的可用宽度。写 dialog.width - 32 会忽略 Dialog 的
+                // padding 和滚动条占位，内容比可视区宽，右侧按钮会被裁/压到滚动条上。
+                width: Math.max(0, glossaryProfileScroll.availableWidth)
                 spacing: AppStyle.spacingLarge
 
                 Label {
@@ -790,37 +799,64 @@ Item {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 420
+                    // 高度按行数自适应：固定 420 在只有几行时会留出一大片空白。
+                    // 下限保留 3 行高度，上限 420，超出后由 ListView 自己滚动。
+                    Layout.preferredHeight: Math.min(
+                        420,
+                        40 + Math.max(3, glossaryProfileModel.count) * 54
+                    )
                     radius: AppPalette.radiusLarge
                     color: AppPalette.cardBg
                     border.color: AppPalette.borderColor
                     clip: true
 
                     ColumnLayout {
+                        id: profileTableColumn
                         anchors.fill: parent
                         spacing: AppStyle.spacingNone
 
+                        // 列宽必须与下方 delegate 完全一致。
+                        // 注意：ColumnLayout 的子项不支持 Layout.rightMargin，
+                        // 所以“给滚动条留位”必须靠收窄可用宽度实现（usableWidth）。
+                        // 固定列合计 72+200+84+150+150 = 656，其余给说明列（弹性）。
+                        readonly property int scrollBarSpace: 12
+                        readonly property real usableWidth: Math.max(
+                            0, profileTableColumn.width - scrollBarSpace
+                        )
+
                         RowLayout {
-                            Layout.fillWidth: true
+                            // 不用 fillWidth：它会覆盖 preferredWidth，让留位失效。
+                            Layout.preferredWidth: profileTableColumn.usableWidth
                             spacing: AppStyle.spacingNone
-                            TableHeader { w: 92; text: "范围"; first: true }
-                            TableHeader { w: 220; text: "名称" }
-                            TableHeader { w: 110; text: "术语数" }
-                            TableHeader { w: 180; text: "来源书名" }
-                            TableHeader { w: 170; text: "更新时间" }
+                            TableHeader { w: 72; text: "范围"; first: true }
+                            TableHeader { w: 200; text: "名称" }
+                            TableHeader { w: 84; text: "术语数" }
+                            TableHeader { w: 150; text: "来源书名" }
+                            TableHeader { w: 150; text: "更新时间" }
                             TableHeader { w: -1; text: "说明 / 操作"; last: true }
                         }
 
                         ListView {
                             id: profileListView
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
+                            Layout.preferredWidth: profileTableColumn.usableWidth
+                            // 空列表时收起，把高度让给下方的 EmptyState，
+                            // 否则空状态会被推到表格底部之外。
+                            Layout.fillHeight: profileListView.count > 0
+                            visible: profileListView.count > 0
                             clip: true
                             spacing: AppStyle.spacingTight
                             model: glossaryProfileModel
-                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                            // 空列表时不显示滚动条：常驻显示会让「暂无 profile」
+                            // 的说明文字右侧被压掉，也显得多余。
+                            ScrollBar.vertical: ScrollBar {
+                                policy: profileListView.count > 4
+                                        ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                                width: 10
+                            }
 
                             delegate: Rectangle {
+                                // 与表头列宽一致：直接用 usableWidth，
+                                // 不要再减一个魔法数，否则列边界会和表头错开。
                                 width: profileListView.width
                                 height: 52
                                 color: index % 2 === 0 ? AppPalette.surfaceRaised : AppPalette.cardBg
@@ -833,7 +869,7 @@ Item {
                                     spacing: AppStyle.spacingSmall
 
                                     Label {
-                                        Layout.preferredWidth: 92
+                                        Layout.preferredWidth: 72
                                         text: section.glossaryProfileScopeLabel(scope)
                                         color: AppPalette.accentText
                                         font.pixelSize: AppStyle.fontCaption
@@ -842,7 +878,7 @@ Item {
                                     }
 
                                     Label {
-                                        Layout.preferredWidth: 220
+                                        Layout.preferredWidth: 200
                                         text: name || "-"
                                         color: AppPalette.textColor
                                         font.pixelSize: AppStyle.fontCaption
@@ -850,7 +886,7 @@ Item {
                                     }
 
                                     Label {
-                                        Layout.preferredWidth: 110
+                                        Layout.preferredWidth: 84
                                         text: (termCount || 0) + " 条"
                                         color: AppPalette.textColor
                                         font.pixelSize: AppStyle.fontCaption
@@ -858,7 +894,7 @@ Item {
                                     }
 
                                     Label {
-                                        Layout.preferredWidth: 180
+                                        Layout.preferredWidth: 150
                                         text: sourceBook || "-"
                                         color: AppPalette.mutedText
                                         font.pixelSize: AppStyle.fontCaption
@@ -866,7 +902,7 @@ Item {
                                     }
 
                                     Label {
-                                        Layout.preferredWidth: 170
+                                        Layout.preferredWidth: 150
                                         text: section.formatTimestamp(updatedAt || createdAt)
                                         color: AppPalette.mutedText
                                         font.pixelSize: AppStyle.fontTiny
@@ -875,6 +911,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
+                                        Layout.minimumWidth: 40
                                         text: description || "-"
                                         color: AppPalette.mutedText
                                         font.pixelSize: AppStyle.fontTiny
@@ -883,18 +920,30 @@ Item {
 
                                     Button {
                                         text: "删除"
+                                        // 固定宽度，保证不被弹性列挤压；
+                                        // 右侧留 4px 与滚动条分开。
+                                        Layout.preferredWidth: 64
+                                        Layout.rightMargin: 4
                                         onClicked: section.deleteGlossaryProfile(profileId)
                                     }
                                 }
                             }
+                        }
 
-                            EmptyState {
-                                anchors.centerIn: parent
-                                visible: glossaryProfileModel.count === 0
-                                iconName: "glossary"
-                                title: "暂无 profile"
-                                description: "可在任务页点击“提取本书术语”，或点击“保存当前术语表”生成题材/系列/本书 profile。"
-                            }
+                        // 空状态放在 ListView 之外。
+                        // ListView 中的非 delegate 子项不参与布局，宽度约束会失效，
+                        // 长说明文字会溢出表格右边界（实测被裁）。
+                        EmptyState {
+                            // 不用 fillWidth（会覆盖 preferredWidth），
+                            // 用固定宽度并居中，保证长说明文字能在表格内换行。
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: Math.max(200, profileTableColumn.usableWidth - 48)
+                            Layout.topMargin: 24
+                            Layout.bottomMargin: 24
+                            visible: glossaryProfileModel.count === 0
+                            iconName: "glossary"
+                            title: "暂无 profile"
+                            description: "可在任务页点击“提取本书术语”，或点击“保存当前术语表”生成题材/系列/本书 profile。"
                         }
                     }
                 }
