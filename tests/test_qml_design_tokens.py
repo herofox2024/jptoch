@@ -529,6 +529,51 @@ def test_all_dialogs_are_centered_and_not_wider_than_window():
     assert not problems, "弹窗布局问题：\n" + "\n".join(problems)
 
 
+def test_dialog_action_button_lives_outside_scroll_area():
+    """弹窗的主操作按钮必须固定在底部，不能放在滚动内容里。
+
+    回归点（关于弹窗）：
+      1. 关闭按钮原先在 ScrollView 内的 ColumnLayout 末尾，
+         内容一长就会被滚出可视区。
+      2. 该 ColumnLayout 用 `root.width - 32` 算宽度，忽略 Dialog 的
+         padding(24×2)，算出 588 而可视区只有 572，右边界超出 16px，
+         按钮被裁掉（实测「项目与反馈」右边界 922 vs ScrollView 右缘 906）。
+      3. 用 DialogButtonBox 包 footer 会接管按钮样式，让 highlighted 失效、
+         按钮变浅灰，与“主操作”语义不符。
+    """
+    about = (QML_DIR / "components" / "AboutDialog.qml").read_text(encoding="utf-8")
+
+    # 1. 主操作在 footer 里
+    assert "footer: Item {" in about, "关闭按钮应放在 Dialog 的 footer 中，固定在底部"
+    # 只看生效代码，注释里解释“为何不用 DialogButtonBox”是允许的
+    active_box = [
+        line for line in about.splitlines()
+        if "DialogButtonBox" in line and not line.strip().startswith("//")
+    ]
+    assert not active_box, (
+        "不要用 DialogButtonBox 包 footer：它会接管按钮样式，令 highlighted 失效\n"
+        + "\n".join(active_box)
+    )
+
+    # 2. 滚动内容宽度必须跟随 ScrollView，而不是减一个写死值
+    assert "width: Math.max(0, aboutScroll.availableWidth)" in about, (
+        "滚动内容宽度必须用 ScrollView.availableWidth，不能写 root.width - 32"
+    )
+    stale_width = [
+        line for line in about.splitlines()
+        if "root.width - 32" in line and not line.strip().startswith("//")
+    ]
+    assert not stale_width, (
+        "不能用 root.width - 32 计算内容宽度：会忽略 Dialog padding\n"
+        + "\n".join(stale_width)
+    )
+
+    # 3. footer 里的按钮要有品牌色
+    assert "Material.accent: AppPalette.accentColor" in about, (
+        "footer 主按钮需要显式 Material.accent，否则退回 Material 默认色"
+    )
+
+
 def test_dialogs_use_explicit_max_size_props():
     """弹窗尺寸入参必须叫 maxWidth/maxHeight，不得回退成 pageWidth/pageHeight。
 

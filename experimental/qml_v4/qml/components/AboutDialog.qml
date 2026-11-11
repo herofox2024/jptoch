@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 import ".."
 
@@ -27,6 +28,25 @@ Dialog {
     height: Math.max(420, Math.min(root.parentHeight - 120, 620))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
+    // 关闭按钮固定在 Dialog 底部，不放进滚动区：
+    // 内容再长也不会把按钮滚走或挤出可视区。
+    // 不要用 DialogButtonBox 包起来：它会接管按钮样式，
+    // 让 highlighted 失效、按钮变成浅灰，和「主操作」的语义不符。
+    footer: Item {
+        implicitHeight: 52
+
+        Button {
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            text: "关闭"
+            highlighted: true
+            Material.accent: AppPalette.accentColor
+            Material.foreground: AppStyle.primaryOnAccent
+            onClicked: root.close()
+        }
+    }
+
     readonly property var infoRows: [
         { label: "显示版本", value: root.displayVersion },
         { label: "内部版本", value: root.fullVersion },
@@ -41,6 +61,7 @@ Dialog {
     }
 
     contentItem: ScrollView {
+        id: aboutScroll
         implicitWidth: root.availableWidth
         implicitHeight: root.availableHeight
         clip: true
@@ -48,7 +69,10 @@ Dialog {
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
         ColumnLayout {
-            width: Math.max(0, root.width - 32)
+            // 用 ScrollView 自己的可用宽度。写 root.width - 32 会忽略 Dialog
+            // 的 padding(24×2)，算出比可视区更宽的值，右侧按钮被裁（实测差 16px）；
+            // 用 parent.width 在 ScrollView 里又会拿到内容项的临时宽度。
+            width: Math.max(0, aboutScroll.availableWidth)
             spacing: AppStyle.spacingXLarge
 
             // ---- 品牌区 ----
@@ -163,21 +187,6 @@ Dialog {
                 font.pixelSize: AppStyle.fontTiny
                 wrapMode: Text.WordWrap
                 lineHeight: 1.3
-            }
-
-            Item { Layout.fillHeight: true }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: AppStyle.spacingSmall
-
-                Item { Layout.fillWidth: true }
-
-                Button {
-                    text: "关闭"
-                    highlighted: true
-                    onClicked: root.close()
-                }
             }
         }
     }
