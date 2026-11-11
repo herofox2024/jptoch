@@ -459,6 +459,37 @@ def test_glossary_table_header_aligns_with_rows():
         assert token in "".join(header_widths), f"表头列宽缺少 {token}"
 
 
+def test_glossary_header_text_aligns_with_cell_text():
+    """表头文字必须与单元格文字左对齐、同内距。
+
+    回归点有两个：
+      1. 表头原来是居中排版，而单元格左对齐 + 10px 内距，视觉上完全对不齐。
+      2. 更隐蔽的一个：曾用两个 Label（居中版/左对齐版）各写 visible 条件，
+         结果**两个都渲染**了——实测同一列出现 x=272 和 x=308 两个 Label。
+         正确做法是单个 Label + horizontalAlignment 切换。
+    """
+    page = (QML_DIR / "pages" / "GlossaryPage.qml").read_text(encoding="utf-8")
+    header = (QML_DIR / "components" / "TableHeader.qml").read_text(encoding="utf-8")
+
+    # 只能有一个 Label，用 horizontalAlignment 区分对齐方式
+    assert header.count("Label {") == 1, (
+        "TableHeader 只能有一个 Label：两个 Label 各写 visible 会同时渲染"
+    )
+    assert "horizontalAlignment:" in header, "表头应通过 horizontalAlignment 切换对齐方式"
+    assert "Text.AlignLeft" in header, "数据列表头必须左对齐"
+
+    # 表头内距必须与 CellEditor 的 leftMargin 相同
+    cell_editor = page.split("component CellEditor", 1)[1].split("component PolicySelector", 1)[0]
+    cell_padding = re.search(r"anchors\.leftMargin:\s*(\d+)", cell_editor)
+    assert cell_padding, "未找到 CellEditor 的 leftMargin"
+    header_padding = re.search(r"anchors\.leftMargin:\s*root\.centered \? 0 : (\d+)", header)
+    assert header_padding, "未找到表头 leftMargin"
+    assert header_padding.group(1) == cell_padding.group(1), (
+        f"表头内距 {header_padding.group(1)} 与单元格内距 {cell_padding.group(1)} 不一致，"
+        "文字会左右错开"
+    )
+
+
 def test_window_geometry_is_persisted_and_validated():
     """窗口几何必须持久化，且还原时校验是否落在可见屏幕内。"""
     main = (QML_DIR / "main.qml").read_text(encoding="utf-8")

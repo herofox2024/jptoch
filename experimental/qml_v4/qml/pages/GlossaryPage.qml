@@ -494,7 +494,8 @@ Page {
                     RowLayout {
                         anchors.fill: parent
                         spacing: AppStyle.spacingNone
-                        TableHeader { w: page.narrowTable ? 48 : 56; text: "选择"; first: true }
+                        // 「选择」列不放文字，表头文字与行内勾选框一起居中。
+                        TableHeader { w: page.narrowTable ? 48 : 56; text: "选择"; first: true; centered: true }
                         TableHeader { visible: !page.narrowTable; w: 104; text: "分类" }
                         TableHeader { w: page.narrowTable ? -1 : 210; text: "原文" }
                         TableHeader { w: page.narrowTable ? -1 : 210; text: "译文" }
