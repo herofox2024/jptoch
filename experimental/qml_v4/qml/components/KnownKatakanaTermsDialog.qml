@@ -1,9 +1,11 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "knownKatakanaDialog"
     id: dialog
 
     property var cfg: null
@@ -35,15 +37,26 @@ Dialog {
         dialog.countChanged(termsModel.count)
     }
 
+    // 单行 / 双行两套输入框，取当前可见的那一组。
+    function activeSourceField() {
+        return dialog.singleRowLayout ? sourceInputWide : sourceInputNarrow
+    }
+
+    function activeTargetField() {
+        return dialog.singleRowLayout ? targetInputWide : targetInputNarrow
+    }
+
     function addItem() {
         if (!dialog.cfg) return
-        var source = sourceInput.text.trim()
-        var target = targetInput.text.trim()
+        var sourceField = dialog.activeSourceField()
+        var targetField = dialog.activeTargetField()
+        var source = sourceField.text.trim()
+        var target = targetField.text.trim()
         var result = dialog.cfg.addKnownKatakanaTerm(source, target)
         dialog.statusText = result.message || ""
         if (result.ok) {
-            sourceInput.text = ""
-            targetInput.text = ""
+            sourceField.text = ""
+            targetField.text = ""
         }
         dialog.refresh()
         if (typeof ToastBridge !== "undefined" && ToastBridge) {
@@ -69,16 +82,34 @@ Dialog {
     height: Math.max(460, Math.min(dialog.pageHeight - 72, 780))
     title: "片假名术语修复词表"
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    padding: 0
+    topPadding: 0
+    bottomPadding: 0
+    leftPadding: 0
+    rightPadding: 0
+    // Dialog 默认有 padding，会把 contentItem 挤小；这里全部归零，
+    // 由 contentItem 自己控制内距，避免出现「width=920 但实际只有 720」。
+
+    // 是否单行布局，看的是**弹窗自己的宽度**，不是宿主页面宽度。
+    // 原来用 dialog.pageWidth（窗口宽 1240）判断 > 820 走单行，
+    // 但弹窗最宽只有 920，减去边距后放不下「原词+译名+按钮」，
+    // 结果最右侧的「保存修复词」被裁掉。
+    readonly property bool singleRowLayout: dialog.width >= 760
 
     contentItem: ScrollView {
-        width: dialog.width
-        height: dialog.height
+        // 尺寸交给 Dialog 的 contentWidth/contentHeight 管理，
+        // 自己写 width/height = dialog.width 会与 Dialog 的 padding 打架。
+        implicitWidth: dialog.availableWidth
+        implicitHeight: dialog.availableHeight
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
+        // 宽度取 ScrollView 的可用宽度，而不是 dialog.width 减写死值：
+        // 垂直滚动条出现时会再占十几像素，写死会让内容比可视区宽、右侧被裁。
         ColumnLayout {
-            width: Math.max(0, dialog.width - 32)
+            width: Math.max(0, parent.width - 32)
+            x: 16
             spacing: AppStyle.spacingLarge
 
             Label {
@@ -110,25 +141,68 @@ Dialog {
                 }
             }
 
+            // 单行：原词 | 译名 | 按钮
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: dialog.singleRowLayout ? implicitHeight : 0
+                visible: dialog.singleRowLayout
+                spacing: AppStyle.spacingSmall
+
+                Label { text: "片假名原词"; Layout.alignment: Qt.AlignVCenter }
+                TextField {
+                    id: sourceInputWide
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 120
+                    placeholderText: "例如 チロリ"
+                    selectByMouse: true
+                    onAccepted: dialog.addItem()
+                }
+                Label { text: "中文译名"; Layout.alignment: Qt.AlignVCenter }
+                TextField {
+                    id: targetInputWide
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 120
+                    placeholderText: "例如 烫酒壶"
+                    selectByMouse: true
+                    onAccepted: dialog.addItem()
+                }
+                Button {
+                    text: "保存修复词"
+                    // 主操作需要强调色。Dialog 不在 ApplicationWindow 的
+                    // Material 作用域内，highlighted 会退回 Material 默认品红；
+                    // 这里显式给出 Material.accent，让 highlighted 用品牌青绿。
+                    highlighted: true
+                    Material.accent: AppPalette.accentColor
+                    Material.foreground: AppStyle.primaryOnAccent
+                    Layout.preferredWidth: Math.max(96, implicitWidth)
+                    onClicked: dialog.addItem()
+                }
+            }
+
+            // 窄弹窗：标签与输入框两列，按钮独占一行。
             GridLayout {
                 Layout.fillWidth: true
-                columns: dialog.pageWidth > 820 ? 5 : 2
+                Layout.preferredHeight: !dialog.singleRowLayout ? implicitHeight : 0
+                visible: !dialog.singleRowLayout
+                columns: 2
                 rowSpacing: 8
                 columnSpacing: 12
 
-                Label { text: "片假名原词" }
+                Label { text: "片假名原词"; Layout.alignment: Qt.AlignVCenter }
                 TextField {
-                    id: sourceInput
+                    id: sourceInputNarrow
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 120
                     placeholderText: "例如 チロリ"
                     selectByMouse: true
                     onAccepted: dialog.addItem()
                 }
 
-                Label { text: "中文译名" }
+                Label { text: "中文译名"; Layout.alignment: Qt.AlignVCenter }
                 TextField {
-                    id: targetInput
+                    id: targetInputNarrow
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 120
                     placeholderText: "例如 烫酒壶"
                     selectByMouse: true
                     onAccepted: dialog.addItem()
@@ -136,8 +210,12 @@ Dialog {
 
                 Button {
                     text: "保存修复词"
+                    Layout.fillWidth: true
+                    Layout.columnSpan: 2
+                    // 同单行布局：补上 Material.accent，让 highlighted 用品牌色。
                     highlighted: true
-                    Layout.fillWidth: dialog.pageWidth <= 820
+                    Material.accent: AppPalette.accentColor
+                    Material.foreground: AppStyle.primaryOnAccent
                     onClicked: dialog.addItem()
                 }
             }

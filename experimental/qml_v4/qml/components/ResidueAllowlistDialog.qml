@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "residueAllowlistDialog"
     id: dialog
 
     property var cfg: null
@@ -67,8 +68,8 @@ Dialog {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     contentItem: ScrollView {
-        width: dialog.width
-        height: dialog.height
+        implicitWidth: dialog.availableWidth
+        implicitHeight: dialog.availableHeight
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded

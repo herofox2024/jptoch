@@ -1123,8 +1123,8 @@ Page {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         contentItem: ScrollView {
-            width: qualityReportDialog.width
-            height: qualityReportDialog.height
+            implicitWidth: qualityReportDialog.availableWidth
+            implicitHeight: qualityReportDialog.availableHeight
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical.policy: ScrollBar.AsNeeded
@@ -1185,8 +1185,8 @@ Page {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         contentItem: ColumnLayout {
-            width: diagnosticsDialog.width - 48
-            height: diagnosticsDialog.height - 96
+            implicitWidth: diagnosticsDialog.availableWidth
+            implicitHeight: diagnosticsDialog.availableHeight
             spacing: AppStyle.spacingMedium
 
             Label {

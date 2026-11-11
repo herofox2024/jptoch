@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "taskHistoryDialog"
     id: dialog
 
     property var taskHistory: []
@@ -19,10 +20,12 @@ Dialog {
 
     title: "最近任务"
     modal: true
-    width: Math.max(720, Math.min(980, dialog.pageWidth - 48))
-    height: Math.max(420, Math.min(640, dialog.pageHeight - 72))
-    x: Math.round((dialog.pageWidth - width) / 2)
-    y: Math.round((dialog.pageHeight - height) / 2)
+    // 用 anchors.centerIn 让 Controls 自己处理居中（它会挂在 Overlay 上）。
+    // 不要再手算 x/y：pageWidth 传进来的是页面宽度而非窗口宽度，手算会偏。
+    anchors.centerIn: parent
+    // 最小宽度必须让位于窗口：窄窗口下 720 会把弹窗撑出屏幕边界。
+    width: Math.max(360, Math.min(980, dialog.pageWidth - 48))
+    height: Math.max(360, Math.min(640, dialog.pageHeight - 72))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     function taskStatusLabel(status) {
@@ -128,7 +131,8 @@ Dialog {
 
                 delegate: Rectangle {
                     width: ListView.view.width
-                    height: dialog.pageWidth > AppStyle.bpSmall ? 42 : 58
+                    // 行高取决于列是否收成两行，跟随弹窗自身宽度。
+                    height: dialog.width > 720 ? 42 : 58
                     radius: AppPalette.radiusMedium
                     color: AppPalette.fieldBg
                     border.color: AppPalette.lineColor
@@ -171,8 +175,11 @@ Dialog {
                             elide: Text.ElideMiddle
                         }
 
+                        // 用弹窗自身宽度判断，而不是 pageWidth（宿主窗口宽）。
+                        // pageWidth 通常远大于弹窗实际宽度，会把本该收起的列判成
+                        // “放得下”，导致右侧列被挤压甚至裁切。
                         Label {
-                            visible: dialog.pageWidth > AppStyle.bpSmall
+                            visible: dialog.width > 720
                             Layout.preferredWidth: 190
                             text: (modelData.provider || "-") + " / " + (modelData.model || "-")
                             color: AppPalette.mutedText
@@ -181,7 +188,7 @@ Dialog {
                         }
 
                         Label {
-                            visible: dialog.pageWidth > AppStyle.bpWide
+                            visible: dialog.width > 860
                             Layout.preferredWidth: 108
                             text: dialog.taskTimeText(modelData.updated_at || modelData.started_at || modelData.created_at)
                             color: AppPalette.mutedText

@@ -9,6 +9,7 @@ import ".."
 // 只负责展示与交互；实际的 cfg 读写由宿主页面通过信号完成，
 // 这样本组件不直接依赖任何全局桥接对象，也便于单独预览。
 Dialog {
+    objectName: "apiModelPresetDialog"
     id: root
 
     property var presets: []
@@ -34,8 +35,9 @@ Dialog {
 
     title: "模型 / Prompt 预设"
     modal: true
-    width: Math.max(760, Math.min(1080, (ApplicationWindow.window ? ApplicationWindow.window.width : 1200) - 48))
-    height: Math.max(480, Math.min(720, (ApplicationWindow.window ? ApplicationWindow.window.height : 800) - 72))
+    anchors.centerIn: parent
+    width: Math.max(360, Math.min(1080, (ApplicationWindow.window ? ApplicationWindow.window.width : 1200) - 48))
+    height: Math.max(360, Math.min(720, (ApplicationWindow.window ? ApplicationWindow.window.height : 800) - 72))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     onOpened: root.refreshRequested()
 

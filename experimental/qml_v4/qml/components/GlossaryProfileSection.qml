@@ -349,7 +349,7 @@ Item {
         id: glossaryWorkflowDialog
         modal: true
         anchors.centerIn: parent
-        width: Math.max(780, Math.min(section.width - 48, 1080))
+        width: Math.max(360, Math.min(section.width - 48, 1080))
         height: Math.max(560, Math.min(section.height - 72, 840))
         title: "术语任务"
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -359,8 +359,8 @@ Item {
         }
 
         contentItem: ScrollView {
-            width: glossaryWorkflowDialog.width
-            height: glossaryWorkflowDialog.height
+            implicitWidth: glossaryWorkflowDialog.availableWidth
+            implicitHeight: glossaryWorkflowDialog.availableHeight
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical.policy: ScrollBar.AsNeeded
@@ -678,15 +678,15 @@ Item {
         id: glossaryProfileDialog
         modal: true
         anchors.centerIn: parent
-        width: Math.max(760, Math.min(section.width - 48, 1040))
+        width: Math.max(360, Math.min(section.width - 48, 1040))
         height: Math.max(520, Math.min(section.height - 72, 820))
         title: "术语 Profile 管理"
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: section.refreshGlossaryProfiles()
 
         contentItem: ScrollView {
-            width: glossaryProfileDialog.width
-            height: glossaryProfileDialog.height
+            implicitWidth: glossaryProfileDialog.availableWidth
+            implicitHeight: glossaryProfileDialog.availableHeight
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical.policy: ScrollBar.AsNeeded

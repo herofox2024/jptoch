@@ -490,6 +490,82 @@ def test_glossary_header_text_aligns_with_cell_text():
     )
 
 
+def test_all_dialogs_are_centered_and_not_wider_than_window():
+    """所有 Dialog 必须居中，且最小宽度不能让弹窗超出窗口。
+
+    扫全部 22 个 Dialog 后总结出的三类缺陷：
+      1. 有些 Dialog 既没有 anchors.centerIn 也没有 x/y —— Controls 会把它们
+         摆在 Overlay 左上角，看起来像“弹窗跑出画面”。
+      2. 手写 `x: (pageWidth - width) / 2` 的写法不可靠：pageWidth 由调用方传入，
+         实际传的是页面宽度而不是窗口宽度，居中会偏。
+      3. 最小宽度（Math.max 的第一个参数）写死成 720/760/780 时，窄窗口下
+         弹窗比窗口还宽，右侧内容被裁到屏幕外。
+    """
+    problems = []
+    for path in sorted(QML_DIR.rglob("*.qml")):
+        source = path.read_text(encoding="utf-8")
+        if not re.search(r"^\s*Dialog\s*\{", source, re.M):
+            continue
+        rel = str(path.relative_to(QML_DIR))
+
+        # 只检查顶层 Dialog 的宽度与定位
+        if "anchors.centerIn: parent" not in source and not re.search(
+            r"^\s{4}x:\s*\S", source, re.M
+        ):
+            problems.append(f"{rel}: 既没有 anchors.centerIn 也没有 x，会挂在左上角")
+
+        # 手算居中不可靠
+        if re.search(r"^\s*x:\s*Math\.round\(\(.*pageWidth", source, re.M):
+            problems.append(f"{rel}: 用 pageWidth 手算 x 居中不可靠")
+
+        # 最小宽度不得过大
+        for match in re.finditer(r"width:\s*Math\.max\(\s*(\d+)", source):
+            min_width = int(match.group(1))
+            if min_width > 640:
+                problems.append(
+                    f"{rel}: 最小宽度 {min_width} 过大，窄窗口下会超出边界"
+                )
+
+    assert not problems, "弹窗布局问题：\n" + "\n".join(problems)
+
+
+def test_dialog_buttons_are_not_clipped():
+    """弹窗里的主按钮不得被裁切。
+
+    回归点（片假名词表弹窗）：
+      1. 布局列数用 `pageWidth`（宿主窗口宽 1240）判断，而不是弹窗自身宽度
+         （最宽 920），导致右侧「保存修复词」被挤出可视区。
+      2. contentItem 写死 `width: dialog.width`，而 Dialog 带默认 padding，
+         实际可视宽度更小，内容右侧继续溢出。
+      3. `highlighted` 在脱离 ApplicationWindow 的弹窗里会退回 Material
+         默认品红，与品牌色不一致，需要显式补 Material.accent。
+    """
+    dialog = (QML_DIR / "components" / "KnownKatakanaTermsDialog.qml").read_text(encoding="utf-8")
+
+    # 1. 布局阈值必须基于弹窗自身宽度
+    assert "dialog.pageWidth > 820" not in dialog, (
+        "布局列数不能用 pageWidth 判断：它是宿主窗口宽度，比弹窗宽得多"
+    )
+    assert "readonly property bool singleRowLayout: dialog.width >=" in dialog, (
+        "单行/双行判定必须基于 dialog.width"
+    )
+
+    # 2. contentItem 尺寸交给 Dialog 管理，并归零 padding
+    assert "implicitWidth: dialog.availableWidth" in dialog, (
+        "contentItem 应用 availableWidth，而不是写死 dialog.width"
+    )
+    for side in ("top", "bottom", "left", "right"):
+        assert f"{side}Padding: 0" in dialog, f"Dialog 的 {side}Padding 应归零"
+
+    # 3. 主按钮既要有强调色，又不能退回 Material 默认品红
+    assert "Material.accent: AppPalette.accentColor" in dialog, (
+        "弹窗内 highlighted 按钮需要显式 Material.accent，否则用默认品红"
+    )
+    assert "import QtQuick.Controls.Material" in dialog, (
+        "使用 Material 附着属性必须 import QtQuick.Controls.Material"
+    )
+
+
 def test_window_geometry_is_persisted_and_validated():
     """窗口几何必须持久化，且还原时校验是否落在可见屏幕内。"""
     main = (QML_DIR / "main.qml").read_text(encoding="utf-8")

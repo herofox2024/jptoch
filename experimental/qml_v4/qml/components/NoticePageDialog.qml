@@ -1,8 +1,10 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "noticePageDialog"
     id: dialog
 
     property var cfg: null
@@ -17,18 +19,34 @@ Dialog {
     title: "版权提示页管理"
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-    contentItem: ScrollView {
-        width: dialog.width
-        height: dialog.height
-        clip: true
-        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+    contentItem: ColumnLayout {
+        width: dialog.availableWidth
+        spacing: AppStyle.spacingMedium
 
-        NoticePageSettings {
-            width: Math.max(0, dialog.width - 32)
-            cfg: dialog.cfg
-            onBatchAddRequested: function(files, noticeText) {
-                dialog.batchAddRequested(files, noticeText)
+        ScrollView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+            NoticePageSettings {
+                width: Math.max(0, dialog.availableWidth - 32)
+                cfg: dialog.cfg
+                onBatchAddRequested: function(files, noticeText) {
+                    dialog.batchAddRequested(files, noticeText)
+                }
+            }
+        }
+
+        // 这个弹窗原先没有关闭按钮，只能按 Esc 或点遮罩退出，
+        // 对触屏/不熟悉键盘的用户不友好。
+        RowLayout {
+            Layout.fillWidth: true
+            Item { Layout.fillWidth: true }
+            Button {
+                text: "关闭"
+                onClicked: dialog.close()
             }
         }
     }

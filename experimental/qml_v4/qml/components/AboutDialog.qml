@@ -6,6 +6,7 @@ import ".."
 // 「关于」弹窗：展示版本、运行环境与项目信息。
 // 所有数据由宿主通过属性注入，本组件不直接依赖后端桥接对象。
 Dialog {
+    objectName: "aboutDialog"
     id: root
 
     property string appName: ""
@@ -40,8 +41,8 @@ Dialog {
     }
 
     contentItem: ScrollView {
-        width: root.width
-        height: root.height
+        implicitWidth: root.availableWidth
+        implicitHeight: root.availableHeight
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded

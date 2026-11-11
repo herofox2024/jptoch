@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "clearCacheDialog"
     id: root
 
     property var cfg: null
@@ -11,10 +12,19 @@ Dialog {
 
     title: "清理当前 EPUB 缓存"
     modal: true
+    // 没有 anchors.centerIn 时 Controls 会把弹窗放在 Overlay 左上角。
     standardButtons: Dialog.Ok | Dialog.Cancel
+    anchors.centerIn: parent
+    // 固定宽度在窄窗口下会溢出，这里跟随窗口但保留上下限。
+    width: Math.max(
+        320,
+        Math.min(460, (ApplicationWindow.window ? ApplicationWindow.window.width : 800) - 64)
+    )
 
-    ColumnLayout {
-        width: 420
+    // 用 contentItem 而不是直接放子项：直接放子项时 Dialog 会把内容
+    // 靠左上摆放，右侧留白不均；contentItem 会按 availableWidth 正确撑开。
+    contentItem: ColumnLayout {
+        width: root.availableWidth
         spacing: AppStyle.spacingMedium
 
         Label {

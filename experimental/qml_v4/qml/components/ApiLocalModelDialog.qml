@@ -9,6 +9,7 @@ import ".."
 // 数据全部来自传入的 localModel 后端对象；本组件不直接引用全局桥接，
 // 通过信号把用户的显式动作交给宿主页面处理。
 Dialog {
+    objectName: "apiLocalModelDialog"
     id: root
 
     property var localModel: null
@@ -24,8 +25,10 @@ Dialog {
 
     title: "Hy-MT2 本地模型"
     modal: true
-    width: Math.max(780, Math.min(1100, (ApplicationWindow.window ? ApplicationWindow.window.width : 1200) - 48))
-    height: Math.max(520, Math.min(760, (ApplicationWindow.window ? ApplicationWindow.window.height : 800) - 72))
+    anchors.centerIn: parent
+    // 最小宽度不能让弹窗超出窗口（窄窗口下 780 会撑出边界）。
+    width: Math.max(360, Math.min(1100, (ApplicationWindow.window ? ApplicationWindow.window.width : 1200) - 48))
+    height: Math.max(360, Math.min(760, (ApplicationWindow.window ? ApplicationWindow.window.height : 800) - 72))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     function showResult(result) {

@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "failedBlocksDialog"
     id: dialog
 
     property var latestFailedBlocks: []
@@ -23,10 +24,11 @@ Dialog {
     onOpened: dialog.analyzeRequested()
     title: "失败块 / 日文残留"
     modal: true
-    width: Math.max(760, Math.min(1040, dialog.pageWidth - 48))
-    height: Math.max(460, Math.min(700, dialog.pageHeight - 72))
-    x: Math.round((dialog.pageWidth - width) / 2)
-    y: Math.round((dialog.pageHeight - height) / 2)
+    // 同 TaskHistoryDialog：交给 Controls 居中，不手算 x/y；
+    // 最小宽度不能让弹窗超出窗口。
+    anchors.centerIn: parent
+    width: Math.max(360, Math.min(1040, dialog.pageWidth - 48))
+    height: Math.max(360, Math.min(700, dialog.pageHeight - 72))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     function failedBlockKindLabel(kind) {
@@ -139,7 +141,9 @@ Dialog {
 
                 delegate: Rectangle {
                     width: ListView.view.width
-                    height: dialog.pageWidth > AppStyle.bpSmall ? 60 : 78
+                    // 用弹窗自身宽度而非 pageWidth：后者是宿主窗口宽，
+                    // 比弹窗宽得多，会把本该换行的行判成“放得下”。
+                    height: dialog.width > 720 ? 60 : 78
                     radius: AppPalette.radiusSmall
                     color: AppPalette.surfaceRaised
                     border.color: AppPalette.lineColor

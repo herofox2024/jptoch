@@ -4,12 +4,15 @@ import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "proofreadDetailDialog"
     id: root
 
     property var host: null
 
     title: "校对完整详情 " + (host ? host.detailIndexText : "")
     modal: true
+    // 没有 anchors.centerIn 时 Controls 会把弹窗摆在 Overlay 左上角。
+    anchors.centerIn: parent
     standardButtons: Dialog.Close
     width: Math.min((host ? host.width : 900) - 48, 900)
     height: Math.min((host ? host.height : 680) - 60, 680)

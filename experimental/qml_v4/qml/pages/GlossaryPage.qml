@@ -688,8 +688,8 @@ Page {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         contentItem: ScrollView {
-            width: termDetailDialog.width - 48
-            height: termDetailDialog.height - 96
+            implicitWidth: termDetailDialog.availableWidth
+            implicitHeight: termDetailDialog.availableHeight
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical.policy: ScrollBar.AsNeeded

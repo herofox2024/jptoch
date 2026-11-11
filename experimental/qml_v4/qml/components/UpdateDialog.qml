@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "updateDialog"
     id: dialog
 
     property var updater: null

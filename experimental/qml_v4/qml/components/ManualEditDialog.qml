@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import ".."
 
 Dialog {
+    objectName: "manualEditDialog"
     id: root
 
     property var tbridge: null
@@ -13,8 +14,14 @@ Dialog {
 
     title: "人工修改译文"
     modal: true
+    // 没有 anchors.centerIn 时 Controls 会把弹窗放在 Overlay 左上角。
+    anchors.centerIn: parent
     standardButtons: Dialog.Ok | Dialog.Cancel
-    width: 640
+    // 固定 640 在窄窗口下会溢出，这里跟随窗口宽度但保留上下限。
+    width: Math.max(
+        360,
+        Math.min(640, (ApplicationWindow.window ? ApplicationWindow.window.width : 800) - 48)
+    )
 
     function openWith(src, dst) {
         root.srcText = (src || "").trim()

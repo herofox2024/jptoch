@@ -615,8 +615,8 @@ Page {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         contentItem: ColumnLayout {
-            width: requestDetailDialog.width - 48
-            height: requestDetailDialog.height - 96
+            implicitWidth: requestDetailDialog.availableWidth
+            implicitHeight: requestDetailDialog.availableHeight
             spacing: AppStyle.spacingMedium
 
             RowLayout {
