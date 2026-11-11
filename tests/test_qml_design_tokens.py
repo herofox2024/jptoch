@@ -496,8 +496,8 @@ def test_all_dialogs_are_centered_and_not_wider_than_window():
     扫全部 22 个 Dialog 后总结出的三类缺陷：
       1. 有些 Dialog 既没有 anchors.centerIn 也没有 x/y —— Controls 会把它们
          摆在 Overlay 左上角，看起来像“弹窗跑出画面”。
-      2. 手写 `x: (pageWidth - width) / 2` 的写法不可靠：pageWidth 由调用方传入，
-         实际传的是页面宽度而不是窗口宽度，居中会偏。
+      2. 手写 `x: (maxWidth - width) / 2` 的写法不可靠：maxWidth 只是调用方
+         给的可用宽度上限，不等于窗口可视区，居中会偏。
       3. 最小宽度（Math.max 的第一个参数）写死成 720/760/780 时，窄窗口下
          弹窗比窗口还宽，右侧内容被裁到屏幕外。
     """
@@ -515,8 +515,8 @@ def test_all_dialogs_are_centered_and_not_wider_than_window():
             problems.append(f"{rel}: 既没有 anchors.centerIn 也没有 x，会挂在左上角")
 
         # 手算居中不可靠
-        if re.search(r"^\s*x:\s*Math\.round\(\(.*pageWidth", source, re.M):
-            problems.append(f"{rel}: 用 pageWidth 手算 x 居中不可靠")
+        if re.search(r"^\s*x:\s*Math\.round\(\(.*(?:maxWidth|pageWidth)", source, re.M):
+            problems.append(f"{rel}: 用 maxWidth 手算 x 居中不可靠")
 
         # 最小宽度不得过大
         for match in re.finditer(r"width:\s*Math\.max\(\s*(\d+)", source):
@@ -529,12 +529,38 @@ def test_all_dialogs_are_centered_and_not_wider_than_window():
     assert not problems, "弹窗布局问题：\n" + "\n".join(problems)
 
 
+def test_dialogs_use_explicit_max_size_props():
+    """弹窗尺寸入参必须叫 maxWidth/maxHeight，不得回退成 pageWidth/pageHeight。
+
+    名字带 page 会让人以为它是“窗口宽度”，历史上正是因为按它做布局判断，
+    才把放不下的内容判成放得下，导致右侧按钮被裁。改名后语义明确：
+    maxWidth 只是调用方给的**可用尺寸上限**，布局判断一律用 dialog.width。
+    """
+    offenders = []
+    for path in sorted(QML_DIR.rglob("*.qml")):
+        source = path.read_text(encoding="utf-8")
+        for prop in ("pageWidth", "pageHeight"):
+            if re.search(rf"\b{prop}\b", source):
+                offenders.append(f"{path.relative_to(QML_DIR)}: 仍在使用 {prop}")
+    assert not offenders, "弹窗尺寸入参应改名为 maxWidth/maxHeight：\n" + "\n".join(offenders)
+
+    # 使用 maxWidth 做宽度计算的弹窗，必须声明 maxWidth；
+    # 同理 maxHeight。只校验“用到了就必须声明”，不强制无用的属性。
+    for path in sorted(QML_DIR.rglob("*.qml")):
+        source = path.read_text(encoding="utf-8")
+        rel = path.relative_to(QML_DIR)
+        if re.search(r"\bdialog\.maxWidth\b", source):
+            assert "property int maxWidth:" in source, f"{rel} 使用了 maxWidth 但未声明"
+        if re.search(r"\bdialog\.maxHeight\b", source):
+            assert "property int maxHeight:" in source, f"{rel} 使用了 maxHeight 但未声明"
+
+
 def test_dialog_buttons_are_not_clipped():
     """弹窗里的主按钮不得被裁切。
 
     回归点（片假名词表弹窗）：
-      1. 布局列数用 `pageWidth`（宿主窗口宽 1240）判断，而不是弹窗自身宽度
-         （最宽 920），导致右侧「保存修复词」被挤出可视区。
+      1. 布局列数用 `maxWidth`（调用方给的整页宽，约 1240）判断，而不是弹窗
+         自身宽度（最宽 920），导致右侧「保存修复词」被挤出可视区。
       2. contentItem 写死 `width: dialog.width`，而 Dialog 带默认 padding，
          实际可视宽度更小，内容右侧继续溢出。
       3. `highlighted` 在脱离 ApplicationWindow 的弹窗里会退回 Material
@@ -542,9 +568,9 @@ def test_dialog_buttons_are_not_clipped():
     """
     dialog = (QML_DIR / "components" / "KnownKatakanaTermsDialog.qml").read_text(encoding="utf-8")
 
-    # 1. 布局阈值必须基于弹窗自身宽度
-    assert "dialog.pageWidth > 820" not in dialog, (
-        "布局列数不能用 pageWidth 判断：它是宿主窗口宽度，比弹窗宽得多"
+    # 1. 布局阈值必须基于弹窗自身宽度，不能用 maxWidth 这类上限值
+    assert "dialog.maxWidth > 820" not in dialog, (
+        "布局列数不能用 maxWidth 判断：它是可用宽度上限，比弹窗宽得多"
     )
     assert "readonly property bool singleRowLayout: dialog.width >=" in dialog, (
         "单行/双行判定必须基于 dialog.width"

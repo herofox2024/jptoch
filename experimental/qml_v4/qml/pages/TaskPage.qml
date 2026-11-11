@@ -689,8 +689,8 @@ Page {
         taskHistory: taskPage.taskHistory
         latestUnfinishedTask: taskPage.latestUnfinishedTask
         busy: taskPage.busy
-        pageWidth: taskPage.width
-        pageHeight: taskPage.height
+        maxWidth: taskPage.width
+        maxHeight: taskPage.height
         onRefreshRequested: taskPage.refreshTaskHistory()
         onClearRequested: taskPage.clearTaskHistory()
         onResumeLatestRequested: taskPage.resumeLatestTask()
@@ -704,8 +704,8 @@ Page {
         busy: taskPage.busy
         providerModeIndex: taskPage.failedBlockProviderModeIndex
         recoveryAnalysisMessage: taskPage.recoveryAnalysisMessage
-        pageWidth: taskPage.width
-        pageHeight: taskPage.height
+        maxWidth: taskPage.width
+        maxHeight: taskPage.height
         onAnalyzeRequested: taskPage.analyzeFailedBlocks()
         onProviderModeChanged: function(idx) { taskPage.failedBlockProviderModeIndex = idx }
         onRetranslateRequested: taskPage.retranslateFailedBlocks()

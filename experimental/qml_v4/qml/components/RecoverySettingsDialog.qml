@@ -8,16 +8,19 @@ Dialog {
     id: dialog
 
     property var cfg: null
-    property int pageWidth: 800
-    property int pageHeight: 600
+        // 调用方提供的可用尺寸上限（通常是所在页面的宽高）。
+    // 注意：它**不是**弹窗自身尺寸 —— 布局判断请一律用 dialog.width / dialog.height，
+    // 否则会把“放不下”误判成“放得下”，右侧内容被裁。
+    property int maxWidth: 800
+    property int maxHeight: 600
     readonly property var providerValues: ["", "deepseek", "longcat", "hymt2", "custom"]
     readonly property var providerLabels: ["不使用", "DeepSeek", "LongCat", "Hy-MT2", "自定义"]
     readonly property bool compactLayout: width < 640
 
     modal: true
     anchors.centerIn: parent
-    width: Math.max(440, Math.min(dialog.pageWidth - 48, 820))
-    height: Math.max(500, Math.min(dialog.pageHeight - 72, 720))
+    width: Math.max(440, Math.min(dialog.maxWidth - 48, 820))
+    height: Math.max(500, Math.min(dialog.maxHeight - 72, 720))
     title: "智能失败恢复"
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 

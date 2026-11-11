@@ -12,14 +12,17 @@ Dialog {
     property bool hasAsset: false
     property int updateDownloadPercent: 0
     property string updateStatus: ""
-    property int pageWidth: 800
+        // 调用方提供的可用尺寸上限（通常是所在页面的宽高）。
+    // 注意：它**不是**弹窗自身尺寸 —— 布局判断请一律用 dialog.width / dialog.height，
+    // 否则会把“放不下”误判成“放得下”，右侧内容被裁。
+    property int maxWidth: 800
 
     signal openReleaseRequested()
     signal startDownloadRequested()
 
     modal: true
     anchors.centerIn: parent
-    width: Math.min(dialog.pageWidth - 64, 620)
+    width: Math.min(dialog.maxWidth - 64, 620)
     title: dialog.updateInfo && dialog.updateInfo.isNewer ? "发现新版本" : "软件更新"
     closePolicy: dialog.updater && dialog.updater.downloading ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
 

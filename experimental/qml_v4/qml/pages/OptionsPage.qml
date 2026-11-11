@@ -828,8 +828,8 @@ Page {
     NoticePageDialog {
         id: noticePageDialog
         cfg: page.cfg
-        pageWidth: page.width
-        pageHeight: page.height
+        maxWidth: page.width
+        maxHeight: page.height
         onBatchAddRequested: function(files, noticeText) {
             page.batchAddNoticePages(files, noticeText)
         }
@@ -838,30 +838,30 @@ Page {
     ResiduePolicyDialog {
         id: residuePolicyDialog
         cfg: page.cfg
-        pageWidth: page.width
-        pageHeight: page.height
+        maxWidth: page.width
+        maxHeight: page.height
     }
 
     RecoverySettingsDialog {
         id: recoverySettingsDialog
         cfg: page.cfg
-        pageWidth: page.width
-        pageHeight: page.height
+        maxWidth: page.width
+        maxHeight: page.height
     }
 
     KnownKatakanaTermsDialog {
         id: knownKatakanaTermsDialog
         cfg: page.cfg
-        pageWidth: page.width
-        pageHeight: page.height
+        maxWidth: page.width
+        maxHeight: page.height
         onCountChanged: function(count) { page.knownKatakanaTermsCount = count }
     }
 
     ResidueAllowlistDialog {
         id: residueAllowlistDialog
         cfg: page.cfg
-        pageWidth: page.width
-        pageHeight: page.height
+        maxWidth: page.width
+        maxHeight: page.height
         onCountChanged: function(count) { page.residueAllowlistCount = count }
     }
 
@@ -872,7 +872,7 @@ Page {
         hasAsset: page.hasInstallerAsset()
         updateDownloadPercent: page.updateDownloadPercent
         updateStatus: page.updateStatus
-        pageWidth: page.width
+        maxWidth: page.width
         onOpenReleaseRequested: page.openUpdateRelease()
         onStartDownloadRequested: page.startUpdateDownload()
     }

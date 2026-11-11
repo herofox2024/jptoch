@@ -10,8 +10,11 @@ Dialog {
     property var cfg: null
     property string residueAllowlistPath: ""
     property string statusText: ""
-    property int pageWidth: 800
-    property int pageHeight: 600
+        // 调用方提供的可用尺寸上限（通常是所在页面的宽高）。
+    // 注意：它**不是**弹窗自身尺寸 —— 布局判断请一律用 dialog.width / dialog.height，
+    // 否则会把“放不下”误判成“放得下”，右侧内容被裁。
+    property int maxWidth: 800
+    property int maxHeight: 600
 
     signal countChanged(int count)
 
@@ -62,8 +65,8 @@ Dialog {
 
     modal: true
     anchors.centerIn: parent
-    width: Math.max(360, Math.min(dialog.pageWidth - 48, 920))
-    height: Math.max(420, Math.min(dialog.pageHeight - 72, 720))
+    width: Math.max(360, Math.min(dialog.maxWidth - 48, 920))
+    height: Math.max(420, Math.min(dialog.maxHeight - 72, 720))
     title: "日文残留白名单"
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 

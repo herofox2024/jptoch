@@ -10,8 +10,11 @@ Dialog {
     property var taskHistory: []
     property var latestUnfinishedTask: ({})
     property bool busy: false
-    property int pageWidth: 800
-    property int pageHeight: 600
+        // 调用方提供的可用尺寸上限（通常是所在页面的宽高）。
+    // 注意：它**不是**弹窗自身尺寸 —— 布局判断请一律用 dialog.width / dialog.height，
+    // 否则会把“放不下”误判成“放得下”，右侧内容被裁。
+    property int maxWidth: 800
+    property int maxHeight: 600
 
     signal refreshRequested()
     signal clearRequested()
@@ -20,12 +23,13 @@ Dialog {
 
     title: "最近任务"
     modal: true
-    // 用 anchors.centerIn 让 Controls 自己处理居中（它会挂在 Overlay 上）。
-    // 不要再手算 x/y：pageWidth 传进来的是页面宽度而非窗口宽度，手算会偏。
+    // 用 anchors.centerIn 让 Controls 自己居中（弹窗会被挂在 Overlay 上）。
+    // 不要再手算 x/y：maxWidth 只是调用方给的“可用宽度上限”，
+    // 不等于窗口可视区，手算会把弹窗摆偏。
     anchors.centerIn: parent
-    // 最小宽度必须让位于窗口：窄窗口下 720 会把弹窗撑出屏幕边界。
-    width: Math.max(360, Math.min(980, dialog.pageWidth - 48))
-    height: Math.max(360, Math.min(640, dialog.pageHeight - 72))
+    // 最小宽度必须让位于窗口：窄窗口下把下限设得太大，弹窗会撑出屏幕边界。
+    width: Math.max(360, Math.min(980, dialog.maxWidth - 48))
+    height: Math.max(360, Math.min(640, dialog.maxHeight - 72))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     function taskStatusLabel(status) {
@@ -175,9 +179,9 @@ Dialog {
                             elide: Text.ElideMiddle
                         }
 
-                        // 用弹窗自身宽度判断，而不是 pageWidth（宿主窗口宽）。
-                        // pageWidth 通常远大于弹窗实际宽度，会把本该收起的列判成
-                        // “放得下”，导致右侧列被挤压甚至裁切。
+                        // 用弹窗「自身」宽度判断，而不是 maxWidth。
+                        // maxWidth 是调用方给的上限（通常是整页宽），远大于弹窗
+                        // 实际宽度，会把本该收起的列判成“放得下”，导致右侧被裁。
                         Label {
                             visible: dialog.width > 720
                             Layout.preferredWidth: 190

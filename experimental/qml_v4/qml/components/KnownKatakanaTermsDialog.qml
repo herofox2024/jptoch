@@ -11,8 +11,11 @@ Dialog {
     property var cfg: null
     property string knownKatakanaTermsPath: ""
     property string statusText: ""
-    property int pageWidth: 800
-    property int pageHeight: 600
+        // 调用方提供的可用尺寸上限（通常是所在页面的宽高）。
+    // 注意：它**不是**弹窗自身尺寸 —— 布局判断请一律用 dialog.width / dialog.height，
+    // 否则会把“放不下”误判成“放得下”，右侧内容被裁。
+    property int maxWidth: 800
+    property int maxHeight: 600
 
     signal countChanged(int count)
 
@@ -78,8 +81,8 @@ Dialog {
 
     modal: true
     anchors.centerIn: parent
-    width: Math.max(360, Math.min(dialog.pageWidth - 48, 920))
-    height: Math.max(460, Math.min(dialog.pageHeight - 72, 780))
+    width: Math.max(360, Math.min(dialog.maxWidth - 48, 920))
+    height: Math.max(460, Math.min(dialog.maxHeight - 72, 780))
     title: "片假名术语修复词表"
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     padding: 0
@@ -90,8 +93,8 @@ Dialog {
     // Dialog 默认有 padding，会把 contentItem 挤小；这里全部归零，
     // 由 contentItem 自己控制内距，避免出现「width=920 但实际只有 720」。
 
-    // 是否单行布局，看的是**弹窗自己的宽度**，不是宿主页面宽度。
-    // 原来用 dialog.pageWidth（窗口宽 1240）判断 > 820 走单行，
+    // 是否单行布局，看的是**弹窗自己的宽度**，不是调用方给的 maxWidth。
+    // 原来用 maxWidth（整页宽，约 1240）判断 > 820 走单行，
     // 但弹窗最宽只有 920，减去边距后放不下「原词+译名+按钮」，
     // 结果最右侧的「保存修复词」被裁掉。
     readonly property bool singleRowLayout: dialog.width >= 760

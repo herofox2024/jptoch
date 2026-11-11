@@ -12,8 +12,11 @@ Dialog {
     property bool busy: false
     property int providerModeIndex: 0
     property string recoveryAnalysisMessage: ""
-    property int pageWidth: 800
-    property int pageHeight: 600
+        // 调用方提供的可用尺寸上限（通常是所在页面的宽高）。
+    // 注意：它**不是**弹窗自身尺寸 —— 布局判断请一律用 dialog.width / dialog.height，
+    // 否则会把“放不下”误判成“放得下”，右侧内容被裁。
+    property int maxWidth: 800
+    property int maxHeight: 600
 
     signal analyzeRequested()
     signal providerModeChanged(int index)
@@ -27,8 +30,8 @@ Dialog {
     // 同 TaskHistoryDialog：交给 Controls 居中，不手算 x/y；
     // 最小宽度不能让弹窗超出窗口。
     anchors.centerIn: parent
-    width: Math.max(360, Math.min(1040, dialog.pageWidth - 48))
-    height: Math.max(360, Math.min(700, dialog.pageHeight - 72))
+    width: Math.max(360, Math.min(1040, dialog.maxWidth - 48))
+    height: Math.max(360, Math.min(700, dialog.maxHeight - 72))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     function failedBlockKindLabel(kind) {
@@ -141,8 +144,8 @@ Dialog {
 
                 delegate: Rectangle {
                     width: ListView.view.width
-                    // 用弹窗自身宽度而非 pageWidth：后者是宿主窗口宽，
-                    // 比弹窗宽得多，会把本该换行的行判成“放得下”。
+                    // 用弹窗自身宽度而非 maxWidth：后者是调用方给的宽度上限，
+                    // 比弹窗实际宽度大得多，会把本该换行的行判成“放得下”。
                     height: dialog.width > 720 ? 60 : 78
                     radius: AppPalette.radiusSmall
                     color: AppPalette.surfaceRaised

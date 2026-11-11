@@ -8,8 +8,11 @@ Dialog {
     id: dialog
 
     property var cfg: null
-    property int pageWidth: 800
-    property int pageHeight: 600
+        // 调用方提供的可用尺寸上限（通常是所在页面的宽高）。
+    // 注意：它**不是**弹窗自身尺寸 —— 布局判断请一律用 dialog.width / dialog.height，
+    // 否则会把“放不下”误判成“放得下”，右侧内容被裁。
+    property int maxWidth: 800
+    property int maxHeight: 600
     readonly property var policyValues: ["balanced", "strict", "lenient"]
     readonly property var policyLabels: ["推荐模式（推荐）", "严格模式", "宽松模式"]
 
@@ -28,8 +31,8 @@ Dialog {
 
     modal: true
     anchors.centerIn: parent
-    width: Math.max(420, Math.min(dialog.pageWidth - 48, 760))
-    height: Math.max(440, Math.min(dialog.pageHeight - 72, 620))
+    width: Math.max(420, Math.min(dialog.maxWidth - 48, 760))
+    height: Math.max(440, Math.min(dialog.maxHeight - 72, 620))
     title: "保存前日文残留策略"
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
