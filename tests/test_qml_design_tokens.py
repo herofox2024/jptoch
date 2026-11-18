@@ -655,6 +655,53 @@ def test_scrollbar_does_not_overlap_action_button():
     )
 
 
+def test_monitor_page_shows_term_consistency_issues():
+    """术语一致性结果必须在监测页可见，不能只写进日志。
+
+    回归点：一致性检查是本地扫描，若只记日志用户永远看不到；
+    尤其"多种译法"是长篇最常见的质量问题（实测同一昵称出现两种译法）。
+    """
+    page = (QML_DIR / "pages" / "MonitorPage.qml").read_text(encoding="utf-8")
+
+    assert "report.termConsistency" in page, "监测页应读取 termConsistency 字段"
+    assert "术语一致性" in page, "监测页应展示术语一致性摘要"
+    assert "多种译法" in page, "应把 divergent 判定翻译成可读文案"
+    assert "item.variants" in page, "应列出不一致的具体译法"
+
+
+def test_quality_rules_forbid_classical_chinese():
+    """翻译质量规则必须明确禁止文言腔。
+
+    回归点：实测译本中「其/之」文言残留是对照译本的 2.3 倍，
+    轻小说人物对白出现「四面楚歌」这类成语会脱离身份。
+    """
+    import sys
+
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+
+    from translator import DEFAULT_BATCH_QUALITY_RULES
+
+    # 必须出现「只用现代汉语，避免文言残留」这条完整要求。
+    # 只检查"文言"二字不够：实测曾把规则改成"保持表达自然…文言虚词"仍能通过，
+    # 但那句话把约束降级成了建议。
+    assert "只用现代汉语，避免文言残留" in DEFAULT_BATCH_QUALITY_RULES, (
+        "默认质量规则应明确要求「只用现代汉语，避免文言残留」"
+    )
+    assert "四字成语" in DEFAULT_BATCH_QUALITY_RULES, "默认质量规则应限制成语堆砌"
+
+    template = (PROJECT_ROOT / "dict" / "system_prompt_hq_format.yaml").read_text(encoding="utf-8")
+    assert "只用现代汉语，避免文言残留" in template, "提示词模板应同步文言约束"
+    assert "四字成语" in template, "提示词模板应同步成语约束"
+
+
+def test_light_and_mystery_tone_forbid_idioms():
+    """轻小说与推理口吻都应限制成语/书面语。"""
+    source = (PROJECT_ROOT / "translator.py").read_text(encoding="utf-8")
+    assert "少用四字成语和书面语" in source, "轻小说口吻应限制成语"
+    assert "不要用文言虚词或堆砌成语" in source, "推理小说应限制文言与成语"
+
+
 def test_dialogs_use_explicit_max_size_props():
     """弹窗尺寸入参必须叫 maxWidth/maxHeight，不得回退成 pageWidth/pageHeight。
 

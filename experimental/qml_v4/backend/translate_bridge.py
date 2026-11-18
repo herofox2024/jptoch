@@ -314,6 +314,85 @@ def _build_quality_self_check_report(translator, cfg, proofread_style, total_tex
     )
 
 
+def _run_term_consistency_check(translator) -> dict:
+    """Scan the finished translation for cross-chapter glossary inconsistencies.
+
+    This runs locally after translation completes: no extra API calls, no extra
+    tokens. It exists because each batch only sees a slice of the glossary, so the
+    same source term can be rendered differently in different chapters
+    (observed: ``まっちょ`` became both ``阿肌`` and ``小真`` in one book).
+
+    Only terms that actually occur in this book's source text are considered.
+    The global glossary mixes entries from every book the user has translated, so
+    feeding all of it in would report dozens of "missing" terms that were never
+    part of this text at all.
+
+    Returns a JSON-serialisable dict; never raises.
+    """
+    try:
+        from translation_consistency import check_term_consistency
+    except Exception as exc:  # pragma: no cover - import guard
+        logger.warning("术语一致性检查模块不可用: %s", exc)
+        return {}
+
+    try:
+        glossary = getattr(translator, "glossary", None)
+        if not isinstance(glossary, dict) or not glossary:
+            return {}
+
+        ordered = getattr(translator, "_last_ordered_results", None)
+        texts = getattr(translator, "_last_translated_texts", None)
+        if not ordered or not texts:
+            return {}
+
+        pairs = []
+        for index, target in enumerate(ordered):
+            if index >= len(texts):
+                break
+            source = texts[index]
+            if source and target:
+                pairs.append((str(source), str(target)))
+        if not pairs:
+            return {}
+
+        # 只保留「本书原文里确实出现过」的术语：全局术语表混有多本书的条目，
+        # 全量比对会产生大量与本书无关的 missing 误报。
+        book_text = "\n".join(source for source, _ in pairs)
+        scoped: dict = {}
+        for category, entries in glossary.items():
+            if not isinstance(entries, list):
+                continue
+            kept = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                original = str(entry.get("original") or "").strip()
+                if not original or original not in book_text:
+                    continue
+                kept.append(entry)
+            if kept:
+                scoped[category] = kept
+        if not scoped:
+            return {}
+
+        report = check_term_consistency(pairs, scoped)
+        payload = report.to_dict()
+        payload["scoped_terms"] = sum(len(v) for v in scoped.values())
+        logger.info("术语一致性检查: %s", payload.get("summary", ""))
+        if report.has_issues:
+            for item in report.issues[:10]:
+                logger.info(
+                    "  术语不一致 [%s] %s：%s",
+                    item.verdict,
+                    item.original,
+                    item.detail,
+                )
+        return payload
+    except Exception as exc:
+        logger.warning("术语一致性检查失败: %s", exc)
+        return {}
+
+
 class _TranslateWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
@@ -695,6 +774,18 @@ class _TranslateWorker(QObject):
                 weak_residue_total,
                 final_out,
             )
+            # 全书术语一致性检查：纯本地扫描，不产生额外 API 调用。
+            consistency = _run_term_consistency_check(translator)
+            if consistency:
+                quality_report["termConsistency"] = consistency
+                # 有术语不一致时把摘要并入总体说明，避免用户只看到"通过"。
+                if consistency.get("counts") and any(consistency["counts"].values()):
+                    base_summary = str(quality_report.get("summary") or "").strip()
+                    note = str(consistency.get("summary") or "").strip()
+                    if base_summary and note:
+                        quality_report["summary"] = f"{base_summary}｜{note}"
+                    elif note:
+                        quality_report["summary"] = note
             logger.info("翻译质量自检报告: %s", quality_report.get("summary", ""))
             self.qualityReportReady.emit(quality_report)
             self.finished.emit(final_out)
@@ -1636,6 +1727,8 @@ class TranslateBridge(QObject):
             "enable_prompt_examples": getattr(cfg, "enablePromptExamples", True),
             "enable_notice_page": getattr(cfg, "enableNoticePage", False),
             "notice_page_text": getattr(cfg, "noticePageText", ""),
+            "notice_page_extra_note": getattr(cfg, "noticePageExtraNote", None),
+            "notice_page_show_original_title": getattr(cfg, "noticePageShowOriginalTitle", False),
             "hymt2_generation_mode": getattr(cfg, "hymt2GenerationMode", "stable"),
             "hymt2_prompt_mode": getattr(cfg, "hymt2PromptMode", "official"),
             "hymt2_runtime_mode": getattr(cfg, "hymt2RuntimeMode", "cpu"),
@@ -2332,7 +2425,24 @@ class TranslateBridge(QObject):
             for source in source_paths:
                 try:
                     book = load_book(source)
-                    add_translation_notice_page(book, notice_text)
+                    # 批量补页时这本书已经翻译完成，dc:title 是中文书名；
+                    # 若存在同名的日文原书，用它的书名作为「原书名」。
+                    original_title = ""
+                    try:
+                        from epub_io import extract_book_bibliography
+
+                        bib = extract_book_bibliography(book)
+                        original_title = str(bib.get("title") or "")
+                        # 文件名里通常保留着日文原名，作为兜底线索
+                        if not original_title:
+                            original_title = Path(source).stem
+                    except Exception:
+                        original_title = ""
+                    add_translation_notice_page(
+                        book,
+                        notice_text,
+                        original_title=original_title,
+                    )
                     src_path = Path(source)
                     out_path = _unique_epub_path(src_path.with_name(src_path.stem + "_notice.epub"))
                     save_book(str(out_path), book, chinese_mode=True)

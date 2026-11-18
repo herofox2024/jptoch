@@ -312,7 +312,8 @@ DEFAULT_GLOSSARY_CATEGORIES = ["Person", "Location", "Org", "Item", "Skill", "Cr
 DEFAULT_BATCH_QUALITY_RULES = """译文质量要求：
 - 中文表达要自然，避免日式直译：如「远处传来狗吠声」优于「远处狗吠声」。
 - 保留原文语气与情感，特别是转折、遗憾、犹豫（如「なのに」应体现为「明明…却」）。
-- 动作与状态描写要准确：如「唇を尖らせる」是「噘嘴」而非「翘嘴」。中文叙述多用「传来」「响起」「飘来」等动词补足感官主语。"""
+- 动作与状态描写要准确：如「唇を尖らせる」是「噘嘴」而非「翘嘴」。中文叙述多用「传来」「响起」「飘来」等动词补足感官主语。
+- 只用现代汉语，避免文言残留：不要用「其」「之」「亦」「乃」「皆」「此」「该」等文言虚词代替「他的」「的」「也」「就是」「都」「这」「这个」；不堆砌四字成语。"""
 
 
 PERFORMANCE_PRESETS = {
@@ -3522,6 +3523,8 @@ class JaZhTranslator:
                 "不要替读者解释谜题，不要补充原文没有明说的因果。",
                 "对数字、地点、称谓、物证、动作细节保持准确。",
                 "语气可以更清晰，但不能牺牲原文悬念。",
+                # 推理小说的证词与对白需要日常口语质感，文言腔会让叙述失真。
+                "用现代汉语叙述和对话，不要用文言虚词或堆砌成语。",
             ],
             "historical_mystery": [
                 "按历史捕物/时代推理处理，优先保证案情线索、称谓、官职、地名和时代语境准确。",
@@ -3553,6 +3556,9 @@ class JaZhTranslator:
                 "保留角色语气、吐槽感、情绪强弱和称呼关系。",
                 "不要过度书面化，不要把口语对白改得太正式。",
                 "不要擅自加入网络流行语。",
+                # 轻小说对白几乎都是日常口语，四字成语会让人物说话脱离身份。
+                # 例：「八方ふさがり」译为「走投无路」优于「四面楚歌」。
+                "少用四字成语和书面语，优先用日常口语表达；人物对白尤其不要用成语。",
             ],
             "literary": [
                 "叙述语言可以更顺畅、凝练，但不能改写原意。",
@@ -5295,6 +5301,8 @@ JSON 顶层字段：
             self._set_stat("translate_context_cache_tasks", 0)
             log_translate_summary("cache_only", planned=0)
             self._last_ordered_results = ordered_results
+            # 保留与结果对齐的原文，供译后一致性检查使用（本地计算，无 API 开销）。
+            self._last_translated_texts = list(texts)
             return results
 
         # ---- Phase 1-①: 智能分批 ----
@@ -5916,6 +5924,8 @@ JSON 顶层字段：
 
         log_translate_summary("success", planned=planned_batches)
         self._last_ordered_results = ordered_results
+        # 保留与结果对齐的原文，供译后一致性检查使用（本地计算，无 API 开销）。
+        self._last_translated_texts = list(texts)
         return results
 
     def __del__(self):

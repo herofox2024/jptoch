@@ -83,6 +83,40 @@ GroupBox {
             }
         }
 
+        // 原书名默认不显示（日文会触发残留检查）；
+        // 勾选后以 <span lang="ja"> 保留，并被标记为“授权引用”跳过检查。
+        CheckBox {
+            text: "在版权页显示日文原书名"
+            checked: root.cfg ? root.cfg.noticePageShowOriginalTitle : false
+            enabled: root.cfg ? root.cfg.enableNoticePage : false
+            onCheckedChanged: {
+                if (root.cfg) {
+                    root.cfg.noticePageShowOriginalTitle = checked
+                }
+            }
+        }
+
+        Label {
+            text: "末尾附注（可选，显示在版权页底部小字）"
+            color: AppPalette.mutedText
+            font.pixelSize: AppStyle.fontSmall
+        }
+
+        TextField {
+            id: noticeExtraNoteField
+            Layout.fillWidth: true
+            enabled: root.cfg ? root.cfg.enableNoticePage : false
+            placeholderText: "例如：本译本已做术语与语言风格统一。"
+            text: root.cfg ? (root.cfg.noticePageExtraNote || "") : ""
+            selectByMouse: true
+            font.pixelSize: AppStyle.fontBody
+            onTextChanged: {
+                if (root.cfg && root.cfg.noticePageExtraNote !== text) {
+                    root.cfg.noticePageExtraNote = text
+                }
+            }
+        }
+
         Button {
             text: "恢复默认提示"
             enabled: root.cfg ? root.cfg.enableNoticePage : false

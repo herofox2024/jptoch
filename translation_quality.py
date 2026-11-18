@@ -401,11 +401,52 @@ def strip_builtin_allowed_reading_puzzle_rows(text: str) -> str:
     return JAPANESE_READING_PUZZLE_ROW_RE.sub(replace, text)
 
 
+AUTHORIZED_JAPANESE_SPAN_RE = re.compile(
+    r"\[\[ja:(?P<body>.*?)\]\]",
+    re.DOTALL,
+)
+"""Delimited Japanese literal: ``[[ja:失恋の準備をお願いします]]``.
+
+Why a delimiter instead of markup: residue checks run on *plain text* extracted
+from HTML, so any ``<span lang="ja">`` wrapper is already gone by then. A textual
+delimiter survives extraction, which is what makes an explicit exception
+possible.
+
+Deliberately narrow (``[[ja:`` ... ``]]``) so it cannot be triggered by normal
+prose. Used by the notice page to show the original Japanese title, and by
+bilingual poem rendering.
+"""
+
+
+def mark_authorized_japanese(text: str) -> str:
+    """Wrap a Japanese literal with the authorized-span delimiter."""
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    # 避免重复标记
+    if AUTHORIZED_JAPANESE_SPAN_RE.fullmatch(value):
+        return value
+    return f"[[ja:{value}]]"
+
+
+def strip_authorized_japanese_spans(text: str) -> str:
+    """Remove explicitly authorized Japanese literals before residue detection.
+
+    Anything between ``[[ja:`` and ``]]`` is treated as intentional original-text
+    citation rather than untranslated residue. The surrounding text is still
+    checked, so a leaked sentence next to a marked title is still caught.
+    """
+    if not text or "[[" not in text:
+        return text or ""
+    return AUTHORIZED_JAPANESE_SPAN_RE.sub("", text)
+
+
 def strip_allowed_japanese_notation(text: str) -> str:
     """Ignore approved literal Japanese snippets that are not untranslated residue."""
     if not text:
         return ""
-    stripped = ALLOWED_LATIN_MIDDLE_DOT_RE.sub("", text)
+    stripped = strip_authorized_japanese_spans(text)
+    stripped = ALLOWED_LATIN_MIDDLE_DOT_RE.sub("", stripped)
     stripped = ALLOWED_JAPANESE_SHAPE_NOTATION_RE.sub("", stripped)
     stripped = strip_builtin_bilingual_poem_originals(stripped)
     stripped = strip_builtin_allowed_quoted_literals(stripped)

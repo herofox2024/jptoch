@@ -415,7 +415,8 @@ _CONFIG_KEYS = [
     "direction", "enable_thinking", "enable_proofread", "enable_polish", "proofread_genre", "proofread_tone",
     "proofread_provider", "proofread_api_key", "proofread_api_url", "proofread_model",
     "allow_text_cache_reuse", "prompt_extra_instruction", "enable_prompt_examples", "theme",
-    "enable_notice_page", "notice_page_text", "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
+    "enable_notice_page", "notice_page_text", "notice_page_extra_note", "notice_page_show_original_title",
+    "hymt2_generation_mode", "hymt2_prompt_mode", "hymt2_runtime_mode",
     "japanese_residue_policy",
     "enable_recovery_agent", "recovery_min_confidence", "recovery_max_attempts",
     "recovery_fallback_provider", "recovery_fallback_api_key", "recovery_fallback_api_url", "recovery_fallback_model",
@@ -431,6 +432,8 @@ DEFAULT_NOTICE_PAGE_TEXT = (
     "译文仅供个人学习、研究与阅读辅助使用，请勿传播或用于商业用途。\n"
     "请支持并购买正版书籍。"
 )
+# 版权页末尾的小字附注：说明这个译本做过哪些统一处理。
+DEFAULT_NOTICE_PAGE_EXTRA_NOTE = "本译本已做术语与语言风格统一（人物昵称全书一致、去除文言腔与对白成语化）。"
 _RESIDUE_QUOTE_CHARS = "「」『』“”\"'（）()【】[]〈〉《》"
 
 
@@ -651,6 +654,8 @@ class ConfigBridge(QObject):
     _enablePromptExamplesChanged = Signal()
     _enableNoticePageChanged = Signal()
     _noticePageTextChanged = Signal()
+    _noticePageExtraNoteChanged = Signal()
+    _noticePageShowOriginalTitleChanged = Signal()
     glossaryProfilesChanged = Signal()
     _hymt2GenerationModeChanged = Signal()
     _hymt2PromptModeChanged = Signal()
@@ -715,6 +720,8 @@ class ConfigBridge(QObject):
         self._enable_prompt_examples = True
         self._enable_notice_page = False
         self._notice_page_text = DEFAULT_NOTICE_PAGE_TEXT
+        self._notice_page_extra_note = DEFAULT_NOTICE_PAGE_EXTRA_NOTE
+        self._notice_page_show_original_title = False
         self._hymt2_generation_mode = "stable"
         self._hymt2_prompt_mode = "official"
         self._hymt2_runtime_mode = "cpu"
@@ -787,6 +794,8 @@ class ConfigBridge(QObject):
                 self._enable_notice_page = False
             if not str(getattr(self, "_notice_page_text", "") or "").strip():
                 self._notice_page_text = DEFAULT_NOTICE_PAGE_TEXT
+            if getattr(self, "_notice_page_extra_note", None) is None:
+                self._notice_page_extra_note = DEFAULT_NOTICE_PAGE_EXTRA_NOTE
             if getattr(self, "_hymt2_generation_mode", "") not in {"stable", "official"}:
                 self._hymt2_generation_mode = "stable"
             if getattr(self, "_hymt2_prompt_mode", "") not in {"official", "project"}:
@@ -1736,6 +1745,23 @@ class ConfigBridge(QObject):
         val = str(val or "")
         if val != self._notice_page_text:
             self._notice_page_text = val; self._emit_changed(self._noticePageTextChanged)
+
+    @Property(str, notify=_noticePageExtraNoteChanged)
+    def noticePageExtraNote(self) -> str: return self._notice_page_extra_note
+    @noticePageExtraNote.setter
+    def noticePageExtraNote(self, val: str):
+        val = str(val or "")
+        if val != self._notice_page_extra_note:
+            self._notice_page_extra_note = val; self._emit_changed(self._noticePageExtraNoteChanged)
+
+    @Property(bool, notify=_noticePageShowOriginalTitleChanged)
+    def noticePageShowOriginalTitle(self) -> bool: return self._notice_page_show_original_title
+    @noticePageShowOriginalTitle.setter
+    def noticePageShowOriginalTitle(self, val: bool):
+        val = bool(val)
+        if val != self._notice_page_show_original_title:
+            self._notice_page_show_original_title = val
+            self._emit_changed(self._noticePageShowOriginalTitleChanged)
 
     @Property(str, notify=_hymt2GenerationModeChanged)
     def hymt2GenerationMode(self) -> str: return self._hymt2_generation_mode

@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Generator, Tuple, Any, Optional
+from typing import Generator, Tuple, Any, Dict, Optional
 from urllib.parse import unquote
 
 from bs4 import BeautifulSoup, NavigableString, Tag
@@ -52,14 +52,80 @@ def _default_translation_notice_text() -> str:
     )
 
 
+def default_notice_extra_note() -> str:
+    """Default footnote describing what this edition normalised.
+
+    Shown at the bottom of the notice page, in smaller type. Kept separate from
+    the legal text so users can edit the disclaimer without losing it.
+    """
+    return "本译本已做术语与语言风格统一（人物昵称全书一致、去除文言腔与对白成语化）。"
+
+
 DEFAULT_TRANSLATION_NOTICE_TEXT = _default_translation_notice_text()
 TRANSLATION_NOTICE_UID = "ai-jp-zh-translation-notice"
 TRANSLATION_NOTICE_FILE_NAME = "translation_notice.xhtml"
 
 
+def extract_book_bibliography(book: epub.EpubBook) -> Dict[str, str]:
+    """Read title / author / publisher from EPUB metadata.
+
+    Used by the notice page so the version info is accompanied by the actual
+    book identity instead of a bare "translated by ..." line.
+
+    Returns a dict with any of: ``title``, ``author``, ``publisher``, ``language``.
+    Missing values are simply absent; never raises.
+    """
+    result: Dict[str, str] = {}
+
+    def _first(namespace: str, name: str) -> str:
+        try:
+            values = book.get_metadata(namespace, name) or []
+        except Exception:
+            return ""
+        for value in values:
+            # ebooklib returns [(text, attributes_dict), ...]
+            if isinstance(value, (tuple, list)) and value:
+                text = str(value[0] or "").strip()
+            else:
+                text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
+    try:
+        title = _first("DC", "title")
+        if title:
+            result["title"] = title
+        creator = _first("DC", "creator")
+        if creator:
+            result["author"] = creator
+        publisher = _first("DC", "publisher")
+        if publisher:
+            result["publisher"] = publisher
+        language = _first("DC", "language")
+        if language:
+            result["language"] = language
+    except Exception as exc:  # pragma: no cover - metadata access is defensive
+        logger.debug("读取书目信息失败: %s", exc)
+    return result
+
+
 def extract_visible_text(node: Any) -> str:
-    """Extract display text while skipping ruby annotations and hidden tags."""
+    """Extract display text while skipping ruby annotations and hidden tags.
+
+    Elements marked ``lang="ja"`` are emitted wrapped in the authorized-span
+    delimiter (``[[ja:...]]``). The notice page uses that to keep the Japanese
+    original title while telling the residue checker the Japanese is intentional
+    rather than untranslated text.
+    """
     parts = []
+
+    def _is_authorized_japanese(current: Any) -> bool:
+        try:
+            lang = str(current.get("lang") or current.get("xml:lang") or "").lower()
+        except Exception:
+            return False
+        return lang.startswith("ja")
 
     def _walk(current):
         if isinstance(current, NavigableString):
@@ -68,6 +134,18 @@ def extract_visible_text(node: Any) -> str:
         if not isinstance(current, Tag):
             return
         if current.name in HIDDEN_TEXT_TAGS:
+            return
+        authorized = _is_authorized_japanese(current)
+        if authorized:
+            inner = []
+            for child in current.children:
+                if isinstance(child, NavigableString):
+                    inner.append(str(child))
+                elif isinstance(child, Tag) and child.name not in HIDDEN_TEXT_TAGS:
+                    inner.append(child.get_text())
+            literal = "".join(inner).strip()
+            if literal:
+                parts.append(f"[[ja:{literal}]]")
             return
         for child in current.children:
             _walk(child)
@@ -712,7 +790,70 @@ def set_book_title_metadata(book: epub.EpubBook, title: str) -> bool:
     return True
 
 
-def _translation_notice_html(notice_text: str) -> str:
+def _to_simplified(text: str) -> str:
+    """Best-effort conversion of Japanese/traditional kanji to Simplified Chinese.
+
+    EPUB metadata frequently carries the original Japanese author and publisher
+    (e.g. ``浅倉秋成`` / ``講談社``). They contain no kana so the residue checker
+    passes them, but printing traditional forms on a Simplified Chinese notice
+    page is still wrong.
+
+    Uses a small explicit map instead of a full conversion table: these values are
+    short proper nouns, and a dependency-free lookup keeps the core module light.
+    Unknown characters are left untouched.
+    """
+    mapping = {
+        "倉": "仓", "講": "讲", "談": "谈", "淺": "浅",
+        "島": "岛", "澤": "泽", "邊": "边", "國": "国", "學": "学",
+        "會": "会", "實": "实", "寫": "写", "說": "说", "讀": "读",
+        "書": "书", "畫": "画", "點": "点", "數": "数", "據": "据",
+        "東": "东", "戶": "户", "馬": "马", "鳥": "鸟", "魚": "鱼",
+        "龍": "龙", "鳳": "凤", "藝": "艺", "術": "术", "廣": "广",
+        "場": "场", "館": "馆", "閣": "阁", "產": "产", "業": "业",
+        "經": "经", "濟": "济", "週": "周", "間": "间", "開": "开",
+        "關": "关", "門": "门", "題": "题", "報": "报", "紙": "纸",
+        "筆": "笔", "記": "记", "話": "话", "語": "语", "譯": "译",
+        "誤": "误", "訂": "订", "嶋": "岛", "齋": "斋", "藤": "藤",
+    }
+    return "".join(mapping.get(ch, ch) for ch in (text or ""))
+
+
+def _looks_like_japanese_title(text: str) -> bool:
+    """True when the string contains Japanese kana (i.e. it is an original title)."""
+    return bool(re.search(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]", text or ""))
+
+
+def _looks_like_chinese_title(text: str) -> bool:
+    """True when the string reads as Chinese rather than leftover Japanese.
+
+    A title with no CJK characters at all (e.g. an English name) is treated as
+    acceptable, since it carries no residue risk. Kana anywhere disqualifies it.
+    """
+    value = (text or "").strip()
+    if not value:
+        return False
+    if _looks_like_japanese_title(value):
+        return False
+    return bool(re.search(r"[\u4e00-\u9fff]", value)) or bool(re.search(r"[A-Za-z]", value))
+
+
+def _translation_notice_html(
+    notice_text: str,
+    bibliography: Optional[Dict[str, str]] = None,
+    extra_note: str = "",
+    show_original_title: bool = False,
+) -> str:
+    """Build the notice page markup.
+
+    Layout: a book-identity block (only the fields actually present), a rule, then
+    the free-form notice lines. Keeping the identity block optional means callers
+    that only pass plain text still get a valid, minimal page.
+
+    ``show_original_title`` keeps the Japanese original title on the page. It is
+    wrapped in ``<span lang="ja">`` for readers and additionally marker-delimited
+    when the visible text is produced, so the residue checker treats it as an
+    authorized citation rather than untranslated text.
+    """
     text = (notice_text or DEFAULT_TRANSLATION_NOTICE_TEXT).strip() or DEFAULT_TRANSLATION_NOTICE_TEXT
     paragraphs = [
         f"<p>{html.escape(line.strip())}</p>"
@@ -720,26 +861,106 @@ def _translation_notice_html(notice_text: str) -> str:
         if line.strip()
     ]
     body = "\n        ".join(paragraphs) or f"<p>{html.escape(DEFAULT_TRANSLATION_NOTICE_TEXT)}</p>"
+
+    meta_rows = []
+    bib = dict(bibliography or {})
+
+    # dc:title 在翻译前是原文标题。含假名说明它是日文原题，
+    # 不能当「中文书名」用。
+    chinese_title = str(bib.get("title") or "").strip()
+    japanese_original = ""
+    if chinese_title and _looks_like_japanese_title(chinese_title):
+        japanese_original = chinese_title
+        chinese_title = ""
+
+    # 「原书名」：调用方显式给了就用它；否则在开关打开时回退到日文原题。
+    original_title_value = str(bib.get("original_title") or "").strip()
+    if not original_title_value and show_original_title:
+        original_title_value = japanese_original
+
+    # 日文原题只有在开关打开时才渲染，并用 <span lang="ja"> 标记，
+    # 既让阅读器按日文字体排版，也便于后续识别为"授权引用"。
+    original_is_japanese = bool(original_title_value) and _looks_like_japanese_title(original_title_value)
+    if original_is_japanese and not show_original_title:
+        original_title_value = ""
+
+    for label, value in (
+        ("原书名", original_title_value),
+        ("中文书名", chinese_title),
+        ("作者", _to_simplified(str(bib.get("author") or "").strip())),
+        ("出版", _to_simplified(str(bib.get("publisher") or "").strip())),
+    ):
+        if not value:
+            continue
+        if label == "原书名" and original_is_japanese:
+            rendered = (
+                f'<span lang="ja" class="notice-ja">{html.escape(value)}</span>'
+            )
+        else:
+            rendered = html.escape(value)
+        meta_rows.append(
+            f'<p class="notice-meta">{html.escape(label)}：{rendered}</p>'
+        )
+
+    meta_block = ""
+    if meta_rows:
+        meta_block = (
+            '<div class="notice-book">\n        '
+            + "\n        ".join(meta_rows)
+            + '\n      </div>\n      <hr/>'
+        )
+
+    extra_block = ""
+    if extra_note.strip():
+        extra_block = f'\n      <p class="notice-tip">{html.escape(extra_note.strip())}</p>'
+
     return f"""<html>
   <head>
     <style>
       body {{ margin: 2.5em; line-height: 1.8; font-family: serif; }}
       h1 {{ font-size: 1.4em; margin-bottom: 1.5em; }}
       p {{ margin: 0 0 0.9em 0; }}
+      .notice-book p {{ margin: 0.2em 0; }}
+      hr {{ margin: 1.2em 0; border: none; border-top: 1px solid #ccc; }}
+      .notice-tip {{ margin-top: 1.2em; font-size: 0.85em; opacity: 0.75; }}
     </style>
   </head>
   <body>
     <section epub:type="notice">
       <h1>版权提示</h1>
-      {body}
+      {meta_block}
+      {body}{extra_block}
     </section>
   </body>
 </html>
 """
 
 
-def add_translation_notice_page(book: epub.EpubBook, notice_text: Optional[str] = None) -> None:
-    """Insert a standalone notice page after the cover when it can be detected."""
+def add_translation_notice_page(
+    book: epub.EpubBook,
+    notice_text: Optional[str] = None,
+    *,
+    original_title: str = "",
+    extra_note: str = "",
+    show_original_title: bool = False,
+) -> None:
+    """Insert a standalone notice page after the cover when it can be detected.
+
+    Parameters
+    ----------
+    notice_text:
+        Free-form notice body (one line per paragraph). Falls back to the default.
+    original_title:
+        The source book's original title. EPUB metadata holds the *translated*
+        title after ``set_book_title_metadata`` runs, so the original has to be
+        passed in explicitly if it should appear on the page.
+    extra_note:
+        Optional footnote, used for "this edition was normalised" style remarks.
+    show_original_title:
+        When True, a Japanese original title is kept on the page wrapped in
+        ``<span lang="ja">`` and marked as an authorized citation, so residue
+        checks ignore it. When False (default) Japanese titles are omitted.
+    """
     def _resolve_spine_entry(entry: Any) -> Any:
         candidate = entry[0] if isinstance(entry, tuple) and entry else entry
         if isinstance(candidate, str):
@@ -806,7 +1027,15 @@ def add_translation_notice_page(book: epub.EpubBook, notice_text: Optional[str] 
             existing = item
             break
 
-    content = _translation_notice_html(notice_text)
+    content = _translation_notice_html(
+        notice_text,
+        bibliography={
+            "original_title": original_title,
+            **extract_book_bibliography(book),
+        },
+        extra_note=extra_note,
+        show_original_title=show_original_title,
+    )
     if existing is None:
         existing = epub.EpubHtml(
             uid=TRANSLATION_NOTICE_UID,

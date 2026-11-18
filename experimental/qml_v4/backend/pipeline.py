@@ -213,18 +213,25 @@ class LoadEpubStage(PipelineStage):
             logger.debug("[epub_load] stage disabled; skipping")
             return ctx
 
-        from epub_io import extract_toc_titles, iter_text_nodes, load_book
+        from epub_io import extract_book_bibliography, extract_toc_titles, iter_text_nodes, load_book
 
         input_path = ctx.config["inp"]
         ctx.book = load_book(input_path)
+        # 后面对 dc:title 会做翻译替换，这里先留住原始书目信息，
+        # 供版权提示页展示「原书名 / 作者 / 出版」。
+        # 原始 dc:title 往往就是日文原题，另存一份供「显示日文原书名」使用。
+        bibliography = extract_book_bibliography(ctx.book)
+        ctx.extra["bibliography"] = bibliography
+        ctx.extra["original_title"] = str(bibliography.get("title") or "")
         ctx.docs = list(iter_text_nodes(ctx.book))
         ctx.toc_titles = extract_toc_titles(ctx.book)
         ctx.extra["title"] = ctx.extra.get("title") or str(input_path)
         ctx.extra["toc_titles"] = ctx.toc_titles
         logger.info(
-            "[epub_load] docs=%s, toc_titles=%s",
+            "[epub_load] docs=%s, toc_titles=%s, bibliography=%s",
             len(ctx.docs),
             len(ctx.toc_titles),
+            ctx.extra["bibliography"],
         )
         return ctx
 
@@ -417,8 +424,31 @@ class FinalizeBookContentStage(PipelineStage):
             apply_toc_translations(ctx.book, ctx.toc_translations)
 
         if bool(ctx.config.get("enable_notice_page", False)):
-            add_translation_notice_page(ctx.book, ctx.config.get("notice_page_text") or "")
-            logger.info("[book_finalize] translation notice page added")
+            from epub_io import default_notice_extra_note
+
+            bibliography = ctx.extra.get("bibliography") or {}
+            # 配置里没写附注时用默认文案；显式设成空串表示用户不想要附注。
+            extra_note = ctx.config.get("notice_page_extra_note")
+            if extra_note is None:
+                extra_note = default_notice_extra_note()
+            add_translation_notice_page(
+                ctx.book,
+                ctx.config.get("notice_page_text") or "",
+                # 优先用配置里显式写的原书名，否则用翻译前记录的 dc:title
+                original_title=str(
+                    ctx.config.get("notice_page_original_title")
+                    or ctx.extra.get("original_title")
+                    or ""
+                ),
+                extra_note=str(extra_note),
+                show_original_title=bool(
+                    ctx.config.get("notice_page_show_original_title", False)
+                ),
+            )
+            logger.info(
+                "[book_finalize] translation notice page added (bibliography=%s)",
+                bibliography,
+            )
 
         logger.info("[book_finalize] toc_translations=%s", len(ctx.toc_translations))
         return ctx

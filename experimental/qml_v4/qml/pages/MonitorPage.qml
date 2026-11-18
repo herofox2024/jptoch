@@ -206,6 +206,39 @@ Page {
         page.qualityReportWarnings = report.warningsText || "未发现需要阻塞保存的问题。"
         page.qualityReportSuggestions = report.suggestionsText || ""
         page.qualityReportGeneratedAt = report.generatedAt || ""
+
+        // 术语一致性检查结果：纯本地扫描，无额外 API 开销。
+        // 有术语不一致时单独列出来，避免用户只看到“通过”。
+        var consistency = report.termConsistency || null
+        if (consistency && consistency.counts) {
+            var counts = consistency.counts
+            var total = (counts.divergent || 0) + (counts.deviating || 0) + (counts.missing || 0)
+            if (total > 0) {
+                var lines = ["术语一致性：发现 " + total + " 个术语问题"]
+                var issues = consistency.issues || []
+                for (var i = 0; i < Math.min(issues.length, 10); i++) {
+                    var item = issues[i]
+                    var verdict = item.verdict === "divergent" ? "多种译法"
+                                : (item.verdict === "missing" ? "未用术语表译名" : "与术语表不符")
+                    // 多种译法时列出实际出现的译法，方便直接定位
+                    var variants = ""
+                    if (item.verdict === "divergent" && item.variants && item.variants.length > 0) {
+                        var names = []
+                        for (var j = 0; j < Math.min(item.variants.length, 3); j++) {
+                            names.push(item.variants[j].translation)
+                        }
+                        variants = "（" + names.join(" / ") + "）"
+                    }
+                    lines.push("· " + item.original + " → " + verdict + variants)
+                }
+                if (issues.length > 10) {
+                    lines.push("· 另有 " + (issues.length - 10) + " 个未列出")
+                }
+                var base = page.qualityReportSuggestions
+                page.qualityReportSuggestions = lines.join("\n")
+                    + (base !== "" ? "\n\n" + base : "")
+            }
+        }
     }
 
     function clearRuntimeState(statusText) {
