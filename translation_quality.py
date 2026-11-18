@@ -744,6 +744,40 @@ def repair_known_katakana_terms(src: str, dst: str) -> str:
     return translated
 
 
+def normalize_chinese_punctuation(text: str) -> str:
+    """Convert Japanese quote glyphs to Simplified-Chinese double quotes.
+
+    The model occasionally leaves ``「」`` in Chinese output. A handful of them
+    survived every prior pass in real books (measured: 3 in one 130k-character
+    title), which is a visible defect: the reader sees Japanese brackets in the
+    middle of Chinese prose.
+
+    Only quotes are converted. ``『』`` becomes ``“”`` as well, since Chinese
+    prose does not distinguish the two levels. Brackets that are part of a
+    deliberately preserved Japanese citation are left untouched.
+    """
+    value = str(text or "")
+    if not value:
+        return ""
+
+    # 已标记为授权引用的日文片段要跳过，避免改坏原样保留的日文
+    placeholders: List[str] = []
+
+    def _stash(match: re.Match) -> str:
+        placeholders.append(match.group(0))
+        return f"\x00{len(placeholders) - 1}\x00"
+
+    value = AUTHORIZED_JAPANESE_SPAN_RE.sub(_stash, value)
+
+    # 「」『』 → “”（成对替换：先开后半）
+    value = value.replace("「", "“").replace("」", "”")
+    value = value.replace("『", "“").replace("』", "”")
+
+    for index, original in enumerate(placeholders):
+        value = value.replace(f"\x00{index}\x00", original)
+    return value
+
+
 def postprocess_translation(src: str, dst: Optional[str]) -> str:
     translated = str(dst or "").strip()
     if not translated:
@@ -755,7 +789,9 @@ def postprocess_translation(src: str, dst: Optional[str]) -> str:
     translated = repair_common_japanese_residue_terms(translated)
     translated = repair_furigana_reading_residue(translated)
     translated = repair_inline_furigana_reading_residue(translated)
-    return repair_known_katakana_terms(src, translated)
+    translated = repair_known_katakana_terms(src, translated)
+    # 标点归一化放在最后：任何前置修复都可能重新引入日式引号。
+    return normalize_chinese_punctuation(translated)
 
 
 def repair_save_time_japanese_residue(src: str, dst: str) -> str:
