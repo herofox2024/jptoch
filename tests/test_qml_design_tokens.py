@@ -669,6 +669,34 @@ def test_monitor_page_shows_term_consistency_issues():
     assert "item.variants" in page, "应列出不一致的具体译法"
 
 
+def test_monitor_page_can_apply_glossary_updates():
+    """一致性检查发现的问题必须能在界面上真正写回，而不只是展示。
+
+    回归点：闭环的最后一环是按钮。如果只有后端接口没有入口，
+    用户看到「有 3 条可写回」却无法操作，闭环就是断的。
+    """
+    page = (QML_DIR / "pages" / "MonitorPage.qml").read_text(encoding="utf-8")
+
+    # 保存原始提案数据（不能只存文本，否则无法回传给后端）
+    assert "glossaryUpdatePlan" in page, "应保存写回提案的原始数据"
+    assert "consistency.glossaryUpdates" in page, "应从报告中读取 glossaryUpdates"
+
+    # 必须真正调用后端接口，而不只是定义了函数
+    assert "applyConsistencyUpdates" in page, "应调用 configBridge 的写回接口"
+    # 按钮的 onClicked 必须指向写回函数（只检查字符串存在会被变异测试骗过）
+    assert "onClicked: page.applyGlossaryUpdates()" in page, (
+        "写回按钮必须实际触发 applyGlossaryUpdates"
+    )
+
+    # 必须要求用户先选好 profile，不能瞎猜目标
+    assert "selectedGlossaryProfileIds" in page, "写回目标应取用户选中的 profile"
+    assert "请先在「术语表」页选择" in page, "未选 profile 时应提示用户"
+
+    # 按钮要出现，且带数量提示
+    assert "统一术语译名" in page, "应提供写回按钮"
+    assert "glossaryUpdateCount" in page, "按钮应显示可写回条数"
+
+
 def test_quality_rules_forbid_classical_chinese():
     """翻译质量规则必须明确禁止文言腔。
 

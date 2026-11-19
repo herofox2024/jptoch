@@ -406,6 +406,115 @@ def _run_term_consistency_check(translator) -> dict:
         return {}
 
 
+def _unify_terms_before_save(ctx, translator) -> dict:
+    """Unify term renderings in the documents before the EPUB is written.
+
+    This is the *pre-save* half of the term loop. The consistency scanner used to
+    run only after ``save_book``, so its findings could not help the book being
+    written — the user had to re-translate to benefit. Running here means the file
+    they receive is already consistent.
+
+    The rewrite works on the parsed HTML in ``ctx.docs``: the alternative
+    renderings are known from a scan of the finished text, and only sentences
+    whose Japanese source contains the term are touched.
+
+    Returns a report dict; never raises.
+    """
+    try:
+        from translation_consistency import check_term_consistency
+        from translation_consistency_unify import unify_term_renderings
+    except Exception as exc:  # pragma: no cover
+        logger.warning("术语统一模块不可用: %s", exc)
+        return {}
+
+    glossary = getattr(translator, "glossary", None)
+    ordered = getattr(translator, "_last_ordered_results", None)
+    texts = getattr(translator, "_last_translated_texts", None)
+    if not isinstance(glossary, dict) or not glossary or not ordered or not texts:
+        return {}
+
+    pairs = []
+    for index, target in enumerate(ordered):
+        if index >= len(texts):
+            break
+        source = texts[index]
+        if source and target:
+            pairs.append((str(source), str(target)))
+    if not pairs:
+        return {}
+
+    # 先扫描出这本书实际有哪些多个译法
+    report = check_term_consistency(pairs, glossary)
+    if not report.has_issues:
+        return {}
+
+    # 收集「术语 -> 其他译法」，只处理 divergent（多种译法）
+    variants_by_term = {}
+    for issue in report.issues:
+        if issue.verdict != "divergent":
+            continue
+        others = [
+            v.translation for v in issue.variants if v.translation and v.translation != issue.expected
+        ]
+        if others:
+            variants_by_term[issue.original] = others
+    if not variants_by_term:
+        return {}
+
+    _, result = unify_term_renderings(pairs, glossary, variants_by_term=variants_by_term)
+    if not result.replacements:
+        return {
+            "summary": result.summary(),
+            "skipped": result.skipped[:20],
+        }
+
+    # 一次性算出「旧译文 -> 新译文」的映射，再逐段替换。
+    # 不能逐段重跑 unify：那样每段都要全表扫描，既慢又容易把
+    # min_winning_count 的判定打乱。
+    new_pairs, _ = unify_term_renderings(pairs, glossary, variants_by_term=variants_by_term)
+    mapping = {}
+    for index, (_source, old_target) in enumerate(pairs):
+        if index >= len(new_pairs):
+            break
+        new_target = new_pairs[index][1]
+        if new_target and new_target != old_target:
+            mapping[old_target] = new_target
+
+    changed = 0
+    for old_text, new_text in mapping.items():
+        changed += _replace_in_docs(ctx.docs, old_text, new_text)
+
+    payload = result.to_dict()
+    payload["docs_changed"] = changed
+    logger.info("保存前术语统一: %s（文档改写 %s 处）", result.summary(), changed)
+    return payload
+
+
+def _replace_in_docs(docs, old_text: str, new_text: str) -> int:
+    """Replace a translated sentence inside the parsed documents.
+
+    The documents keep their original <p> structure, so the translated sentence is
+    the whole text of some element. Matching against the element's text (rather
+    than a raw string replace) avoids touching markup.
+    """
+    if not old_text or not new_text or old_text == new_text:
+        return 0
+
+    replaced = 0
+    for _item, soup, _tags in docs or []:
+        for tag in soup.find_all(string=True):
+            if tag.parent is None or tag.parent.name in {"script", "style"}:
+                continue
+            current = str(tag)
+            if current.strip() == old_text.strip() and current.strip():
+                tag.replace_with(new_text)
+                replaced += 1
+                break
+        if replaced:
+            break
+    return replaced
+
+
 class _TranslateWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
@@ -618,6 +727,15 @@ class _TranslateWorker(QObject):
                     " | ".join(repair_report.samples),
                 )
 
+            # 保存前统一术语译名：此时译文已回填到文档，但还没写盘。
+            # 在这里修正，用户拿到的就是一致版本，不需要重译。
+            unify_report = {}
+            try:
+                unify_report = _unify_terms_before_save(ctx, translator)
+            except Exception as exc:
+                logger.warning("保存前术语统一失败（不影响保存）: %s", exc)
+                unify_report = {}
+
             residue_scan = ctx.residue_scan
             residue_total = residue_scan.blocking_total
             residue_samples = residue_scan.blocking_samples
@@ -791,6 +909,9 @@ class _TranslateWorker(QObject):
             consistency = _run_term_consistency_check(translator)
             if consistency:
                 quality_report["termConsistency"] = consistency
+                # 保存前已自动统一过的内容也要写进报告
+                if unify_report:
+                    quality_report["termUnify"] = unify_report
                 # 有术语不一致时把摘要并入总体说明，避免用户只看到"通过"。
                 if consistency.get("counts") and any(consistency["counts"].values()):
                     base_summary = str(quality_report.get("summary") or "").strip()

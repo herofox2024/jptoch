@@ -173,57 +173,52 @@ MAX_CANDIDATE_LEN = 8
 _CJK_ONLY_RE = re.compile(r"^[\u4e00-\u9fff\u3040-\u30ffA-Za-z0-9・·\-]+$")
 
 
-def _extract_render_candidate(target: str, expected: str) -> str:
+def _extract_render_candidate(
+    target: str,
+    expected: str,
+    sibling_targets: Optional[Sequence[str]] = None,
+) -> str:
     """Guess how a term was rendered when the glossary translation is absent.
 
     The scanner only has the finished sentence, not a word alignment, so this is
-    deliberately conservative: it only accepts a *short* fragment at the very
-    start of the translation, because glossary terms in this project are names
-    that almost always lead the sentence.
+    inherently approximate. Three observations make it workable:
 
-    Why so strict: a loose heuristic produced nonsense such as reporting
-    「河边真不错」 as a rendering of 「イルカ」. A false "inconsistent translation"
-    report is worse than a missed one, because it makes the whole check look
-    untrustworthy.
+    1. Glossary terms in this project are names that lead the sentence.
+    2. A rendering is about as long as the authoritative translation — a 2-character
+       name does not become 3 characters.
+    3. Interrogative/verb characters right after a name are almost never part of it.
+
+    So the candidate is the leading fragment truncated to the authoritative length,
+    then rejected if what follows looks like sentence continuation rather than a
+    name boundary.
+
+    Earlier versions tried to align against sibling sentences; that produced
+    garbage such as 「萝拉笑」 (verb glued on) and then silently stopped detecting
+    real variants. Length-based truncation is dumber but predictable, and a missed
+    variant is far cheaper than a wrong replacement.
 
     Returns an empty string when no confident guess can be made.
     """
     text = (target or "").strip()
     if not text:
         return ""
-    # 去掉开头的引号、括号等装饰
     text = re.sub(r"^[「『“‘\"'（(【\[\s]+", "", text)
     if not text:
         return ""
 
-    # 取第一个标点或分隔符之前的片段
     head = re.split(r"[，。！？、；：,.!?;:\s]", text, maxsplit=1)[0].strip()
     if not head:
         return ""
 
-    # 去掉尾部的语气/助词，避免把「阿肌啊」和「阿肌」算成两种译法
-    head = re.sub(r"(的|了|啊|呢|吧|吗|呀|哦|嘛|哟|啦)+$", "", head).strip()
+    # 按权威译名的长度截断：名字不会因为换了译法就变长。
+    span = max(MIN_CANDIDATE_LEN, min(len(expected), MAX_CANDIDATE_LEN))
+    candidate = head[:span].strip()
 
-    # 译名上限：以「预期译名长度 + 2」为参考，但不能低于常见人名/地名长度。
-    # 这里的上限只用于判断「这段开头是否可能是译名」，不做截断——
-    # 截断会生成「小真是被哪里的高」这类半截词噪音。
-    length_cap = max(len(expected) + 2, MIN_CANDIDATE_LEN + 1)
-
-    if len(head) <= length_cap:
-        candidate = head
-    else:
-        # 片段偏长时，尝试用「预期译名的长度」作为窗口，只取开头同等长度的片段。
-        # 例：期望「阿肌」(2 字)，译文「小真是被哪里的高达模型迷告白的」的开头
-        # 「小真是被哪里的高」明显不是一个译名，但前 2 字「小真」是。
-        # 只有当窗口片段后面紧跟助词/标点时才敢采用，否则放弃。
-        window = head[: min(len(expected), MAX_CANDIDATE_LEN)]
-        rest = head[min(len(expected), MAX_CANDIDATE_LEN):]
-        if window and rest and (rest[0] in "的是在把被给和与对向从"):
-            candidate = window
-        else:
-            return ""
-
-    candidate = re.sub(r"(的|了|啊|呢|吧|吗|呀|哦|嘛|哟|啦)+$", "", candidate).strip()
+    # 截断点后面紧跟的这些字说明「译名还没结束」，即 head 比译名长，
+    # 截断会产生半截词。直接放弃，让这一句不参与变体统计。
+    tail = head[span:span + 1]
+    if tail and tail in "的了着过是在把被给和与对向从地得":
+        candidate = head[:span].strip()
 
     if len(candidate) < MIN_CANDIDATE_LEN:
         return ""
@@ -329,8 +324,17 @@ def check_term_consistency(
             # 参与变体检测的通常是短专名（人名/地名）。长术语的「别的译法」
             # 很难从句子片段可靠还原，强行提取只会制造噪音。
             if len(original) <= MAX_CANDIDATE_LEN:
+                # 对齐基准要包含「已命中权威译名的句子」和「未命中的句子」，
+                # 否则无法从共同前缀里切出译名边界。
+                sibling_targets = [
+                    target
+                    for source, target, _chapter in clean_pairs
+                    if pattern.search(source)
+                ]
                 for target, chapter in unmatched_targets:
-                    candidate = _extract_render_candidate(target, expected)
+                    candidate = _extract_render_candidate(
+                        target, expected, sibling_targets=sibling_targets
+                    )
                     if not candidate:
                         continue
                     variant_counter[candidate] = variant_counter.get(candidate, 0) + 1

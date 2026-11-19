@@ -22,6 +22,48 @@ def _glossary(**kwargs):
     return base
 
 
+def test_variant_extraction_does_not_glue_verbs():
+    """变体提取不能把动词粘进译名。
+
+    回归点：早期用「预期译名长度 + 2」做上限，2 字的「劳拉」允许到 4 字，
+    于是「萝拉笑了」被提取成「萝拉笑」，后续替换把原句改成「劳拉了」——
+    丢掉了动词。现在按权威译名长度精确截断。
+    """
+    glossary = _glossary(Person=[{"original": "ローラ", "translation": "劳拉"}])
+    pairs = [
+        ("ローラは笑った。", "萝拉笑了。"),
+        ("ローラが来た。", "劳拉来了。"),
+        ("ローラと話した。", "我和劳拉说过话。"),
+        ("またローラだ。", "又是劳拉。"),
+    ]
+
+    report = check_term_consistency(pairs, glossary)
+    assert report.divergent_count == 1
+
+    issue = report.issues[0]
+    rendered = {v.translation for v in issue.variants}
+    assert "萝拉" in rendered, f"应提取出干净的「萝拉」，实际: {rendered}"
+    # 关键：不能出现「萝拉笑」这种带动词的脏数据
+    assert not any(v.startswith("萝拉") and len(v) > 2 for v in rendered), rendered
+
+
+def test_unify_preserves_surrounding_words():
+    """统一译名时不能吞掉译名后面的文字。"""
+    from translation_consistency_unify import unify_term_renderings
+
+    glossary = _glossary(Person=[{"original": "ローラ", "translation": "劳拉"}])
+    pairs = [
+        ("ローラは笑った。", "萝拉笑了。"),
+        ("ローラが来た。", "劳拉来了。"),
+        ("またローラだ。", "又是劳拉。"),
+    ]
+
+    new_pairs, _ = unify_term_renderings(
+        pairs, glossary, variants_by_term={"ローラ": ["萝拉"]}
+    )
+    assert new_pairs[0][1] == "劳拉笑了。", "「笑了」必须保留"
+
+
 def test_detects_multiple_renderings_of_same_term():
     """同一术语出现多种译法是本书的核心缺陷，必须能被检出。"""
     glossary = _glossary(Person=[{"original": "まっちょ", "translation": "阿肌"}])

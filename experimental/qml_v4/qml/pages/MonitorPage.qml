@@ -52,6 +52,15 @@ Page {
     property string qualityReportWarnings: ""
     property string qualityReportSuggestions: ""
     property string qualityReportGeneratedAt: ""
+    // 术语写回提案：一致性检查发现「同一术语多种译法」时生成。
+    // 保存原始数据供「应用到术语表」按钮使用，不能只存文本。
+    property var glossaryUpdatePlan: null
+    readonly property int glossaryUpdateCount: {
+        if (!glossaryUpdatePlan || !glossaryUpdatePlan.updates)
+            return 0
+        return glossaryUpdatePlan.updates.length
+    }
+    property string glossaryApplyStatus: ""
     property string diagnosticsText: ""
     property bool qualityDetailsExpanded: false
     property bool blockMapExpanded: true
@@ -234,11 +243,43 @@ Page {
                 if (issues.length > 10) {
                     lines.push("· 另有 " + (issues.length - 10) + " 个未列出")
                 }
+                // 有可写回条目时补一句提示，让用户知道可以一键统一
+                var plan = consistency.glossaryUpdates || null
+                page.glossaryUpdatePlan = plan
+                if (plan && plan.updates && plan.updates.length > 0) {
+                    lines.push("")
+                    lines.push("可写回术语表 " + plan.updates.length + " 条（点击下方按钮统一译名）")
+                }
                 var base = page.qualityReportSuggestions
                 page.qualityReportSuggestions = lines.join("\n")
                     + (base !== "" ? "\n\n" + base : "")
+            } else {
+                page.glossaryUpdatePlan = null
             }
         }
+    }
+
+    function applyGlossaryUpdates() {
+        if (!page.glossaryUpdatePlan || !page.glossaryUpdatePlan.updates
+                || page.glossaryUpdatePlan.updates.length === 0) {
+            page.glossaryApplyStatus = "没有可写回的条目"
+            return
+        }
+        if (!appWindow || !appWindow.configBridge) {
+            page.glossaryApplyStatus = "配置未就绪"
+            return
+        }
+        // 写回目标：优先用用户在术语表页选中的那个 profile。
+        // 没有选中时不能猜——写错 profile 会污染别的书。
+        var ids = appWindow.configBridge.selectedGlossaryProfileIds || []
+        if (!ids || ids.length === 0) {
+            page.glossaryApplyStatus = "请先在「术语表」页选择本书的 profile"
+            return
+        }
+        var profileId = String(ids[0])
+        var result = appWindow.configBridge.applyConsistencyUpdates(
+            profileId, page.glossaryUpdatePlan, false)
+        page.glossaryApplyStatus = (result && result.message) ? result.message : "已处理"
     }
 
     function clearRuntimeState(statusText) {
@@ -793,7 +834,26 @@ Page {
                                 onClicked: qualityReportDialog.open()
                             }
 
+                            // 术语写回：把「同一术语多种译法」收敛成一个权威译名。
+                            // 只在确实有可写回条目时出现，避免平时占位。
+                            Button {
+                                visible: page.glossaryUpdateCount > 0
+                                text: "统一术语译名（" + page.glossaryUpdateCount + " 条）"
+                                onClicked: page.applyGlossaryUpdates()
+                            }
+
                             Item { Layout.fillWidth: true }
+                        }
+
+                        // 写回结果反馈：成功/需要先选 profile 等
+                        Label {
+                            visible: page.qualityDetailsExpanded
+                                     && page.glossaryApplyStatus !== ""
+                            Layout.fillWidth: true
+                            text: page.glossaryApplyStatus
+                            color: AppPalette.mutedText
+                            font.pixelSize: AppStyle.fontSmall
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }
@@ -1202,6 +1262,22 @@ Page {
 
                 RowLayout {
                     Layout.fillWidth: true
+                    spacing: AppStyle.spacingMedium
+
+                    // 与页面内按钮等价，方便在完整报告里直接处理
+                    Button {
+                        visible: page.glossaryUpdateCount > 0
+                        text: "统一术语译名（" + page.glossaryUpdateCount + " 条）"
+                        onClicked: page.applyGlossaryUpdates()
+                    }
+                    Label {
+                        visible: page.glossaryApplyStatus !== ""
+                        Layout.fillWidth: true
+                        text: page.glossaryApplyStatus
+                        color: AppPalette.mutedText
+                        font.pixelSize: AppStyle.fontSmall
+                        elide: Text.ElideRight
+                    }
                     Item { Layout.fillWidth: true }
                     Button { text: "关闭"; onClicked: qualityReportDialog.close() }
                 }
