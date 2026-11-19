@@ -41,7 +41,12 @@ PROVIDER_DEFAULTS: Dict[str, ProviderDefaults] = {
         env_keys=("DEEPSEEK_API_KEY",),
         rpm=36,
         tpm=120000,
-        max_workers=6,
+        # 并发从 6 降到 4。实测（《黄金色的祈祷》3455 段）：
+        # 并发 6 时请求速率顶到 33/36（92%），37 次撞限流、等待占 53.5%；
+        # 而大书模式已把 batch_size 提到 12，单请求承载更多文本，
+        # 并发 6 属于过剩——同时到期只会让请求集中撞墙。
+        # 配合 _wait_provider_rate_budget 里的平滑发送，这个组合不会再排队。
+        max_workers=4,
         batch_size=6,
     ),
     "doubao": ProviderDefaults(

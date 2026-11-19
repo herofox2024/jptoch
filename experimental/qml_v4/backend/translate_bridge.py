@@ -621,6 +621,18 @@ class _TranslateWorker(QObject):
                     int(stats.get("japanese_residue_remaining", 0)),
                 )
 
+                # 限流等待时把原因推给界面：否则用户看到进度不动，
+                # 会以为程序卡死。实测一次等待最长可达 42 秒。
+                try:
+                    wait_info = translator.get_rate_wait_info() if translator else {}
+                except Exception:
+                    wait_info = {}
+                if wait_info and wait_info.get("waiting"):
+                    remaining = wait_info.get("remaining") or 0
+                    self.statusChanged.emit(
+                        f"正在等待 API 配额（约 {remaining:.0f} 秒）— 这是限流保护，不是卡死"
+                    )
+
             last_progress_emit_ts = 0.0
             last_progress_completed = -1
             progress_emit_interval = 0.5

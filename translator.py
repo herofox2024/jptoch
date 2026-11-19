@@ -939,6 +939,12 @@ class JaZhTranslator:
         self._provider_rate_lock = threading.RLock()
         self._provider_rate_requests: deque[float] = deque()
         self._provider_rate_tokens: deque[Tuple[float, int]] = deque()
+        # 平滑发送：记录上次放行时刻，把并发请求铺成等间隔
+        self._provider_last_send_ts = 0.0
+        # 限流等待状态（供界面显示「正在等待配额」而不是看起来卡死）
+        self._rate_wait_until = 0.0
+        self._rate_wait_seconds = 0.0
+        self._rate_wait_context = ""
         self._async_http_executor = None
         if HTTPX_AVAILABLE and self.provider in self.FAST_BATCH_PROVIDERS:
             try:
@@ -1117,6 +1123,32 @@ class JaZhTranslator:
 
         estimated_tokens = max(1, int(estimated_tokens or 1))
         estimated_requests = max(1, int(estimated_requests or 1))
+
+        # 平滑发送：把「N 个并发一起打」摊成「每 60/rpm 秒发一个」。
+        #
+        # 为什么需要这一步：滑动窗口配额是「过去 60 秒最多 rpm 次」，
+        # 而并发线程会同时醒来、同时发请求，于是在窗口末尾一起撞墙，
+        # 触发一次几十秒的集中等待。实测（《黄金色的祈祷》）：
+        #   总耗时 532 秒，其中 284 秒（53.5%）在限流等待，
+        #   而请求速率利用率其实只有 92% —— 配额没用满，只是用得太集中。
+        # 匀速发送后，每个请求都落在窗口的均匀位置，几乎不会再触发等待。
+        if rpm > 0:
+            interval = self.RATE_WINDOW_SECONDS / float(rpm)
+            with self._provider_rate_lock:
+                last = float(getattr(self, "_provider_last_send_ts", 0.0) or 0.0)
+                now = time.time()
+                gap = 0.0
+                if last > 0:
+                    gap = interval - (now - last)
+                if gap > 0:
+                    # 占住下一个时隙，避免其他线程在同一时刻放行
+                    self._provider_last_send_ts = last + interval
+                else:
+                    self._provider_last_send_ts = now
+            if gap > 0:
+                if self.cancel_event.wait(gap):
+                    raise RuntimeError("翻译已取消")
+
         now = time.time()
         with self._provider_rate_lock:
             while True:
@@ -1155,9 +1187,41 @@ class JaZhTranslator:
                     tpm,
                     wait_seconds,
                 )
+                # 让界面知道此刻是在等配额，而不是卡死
+                self._set_rate_wait_status(wait_seconds, context)
                 if self.cancel_event.wait(wait_seconds):
                     raise RuntimeError("翻译已取消")
                 now = time.time()
+
+    def _set_rate_wait_status(self, wait_seconds: float, context: str) -> None:
+        """Record the current throttle wait so the UI can show a reason.
+
+        Stored on the instance rather than pushed through a callback: the worker
+        already polls translator state for its periodic stat updates, so this keeps
+        the hot path free of signal plumbing.
+        """
+        try:
+            with self._provider_rate_lock:
+                self._rate_wait_until = time.time() + max(0.0, float(wait_seconds))
+                self._rate_wait_seconds = float(wait_seconds)
+                self._rate_wait_context = str(context or "")
+        except Exception:
+            pass
+
+    def get_rate_wait_info(self) -> Dict[str, Any]:
+        """Current throttle wait for UI display. Returns remaining seconds (0 if none)."""
+        try:
+            until = float(getattr(self, "_rate_wait_until", 0.0) or 0.0)
+            remaining = max(0.0, until - time.time())
+            if remaining <= 0:
+                return {"waiting": False, "remaining": 0.0, "context": ""}
+            return {
+                "waiting": True,
+                "remaining": round(remaining, 1),
+                "context": str(getattr(self, "_rate_wait_context", "") or ""),
+            }
+        except Exception:
+            return {"waiting": False, "remaining": 0.0, "context": ""}
 
     @classmethod
     def _wait_global_rate_limit(cls, cancel_event: threading.Event) -> None:
