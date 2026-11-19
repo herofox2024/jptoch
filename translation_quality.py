@@ -64,6 +64,26 @@ COMMON_JAPANESE_RESIDUE_REPAIRS = {
     "另一个男人的もの": "另一个男人的女人",
 }
 JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
+
+# Kanji that exist only in Japanese (or whose Japanese form differs from the
+# Simplified Chinese one). Used to tell "a stray kana in Chinese text" apart from
+# Kanji whose Japanese form differs from Chinese. A "translated" sentence should
+# never contain these; their presence plus an embedded kana means the line is still
+# Japanese. This is what separates a real leak from a stray foreign term:
+#   「数理情報工学の権威、久珠場俊隆博士死去」 → 権/場 present, kana between kanji → leak
+#   「这句话里有一处小さ假名」                → only Chinese kanji → stray term, allowed
+JAPANESE_SPECIFIC_KANJI = frozenset(
+    "權場學國會實寫點數據東戶馬鳥魚龍鳳藝術廣館閣產業經濟週間開關門題報紙筆記話語譯誤訂齋嶋"
+    "々ヶヵゝゞ佗塲奧彥惠愼應拂搖曉殘氣渴焰狀發盡眞益稻稅橫檢歸殼沒淚滿燒爲爾畢畫異發盡"
+    "龜齒歲萬與專門陣陸覽鹽麥黃黑"
+)
+
+# A kana sitting between two kanji (「工学の権威」) is the shape of Japanese
+# grammar. Chinese prose never embeds a lone kana there.
+JAPANESE_KANA_BETWEEN_KANJI_RE = re.compile(
+    r"[\u3400-\u9fff][\u3040-\u3096\u30a1-\u30fa\uff66-\uff9f][\u3400-\u9fff]"
+)
+
 KNOWN_KATAKANA_TERMS_FILE = "known_katakana_terms.json"
 DEFAULT_KNOWN_KATAKANA_TERMS: Dict[str, str] = {
     "チロリ": "烫酒壶",
@@ -479,11 +499,38 @@ def has_likely_o_name_prefix_residue(text: str) -> bool:
 
 
 def has_weak_japanese_residue(text: str) -> bool:
+    """Single stray kana that should not block saving.
+
+    The intent is to ignore tiny accidents like a lone 「の」 in an otherwise Chinese
+    sentence. That leniency must **not** extend to a sentence that is substantially
+    Japanese.
+
+    Real case this fixes: 「数理情報工学の権威、久珠場俊隆博士死去」 contains only one
+    kana (「の」) and used to be classified as weak residue, so it saved as-is even
+    though the whole line is untranslated Japanese.
+
+    The distinguishing signal is **how much text surrounds the kana**, not the kanji
+    density: every Chinese sentence is ~100% kanji, so density says nothing. What
+    differs is that Japanese residue carries kana between kanji over a long span,
+    while a typo is a short accidental insertion.
+    """
     stripped = strip_allowed_japanese_notation(text or "")
     if not JAPANESE_KANA_RE.search(stripped):
         return False
     if JAPANESE_O_NAME_PREFIX_RE.search(stripped) or has_likely_o_name_prefix_residue(stripped):
         return False
+
+    # 判定「成句日文」的决定性信号是**日文特有汉字**。
+    #
+    # 只看假名分不开两种情况：
+    #   「数理情報工学の権威、久珠場俊隆博士死去」  ← 権・場 是日文写法，整句未译
+    #   「这句话里有一处小さ假名」                  ← 全是中文汉字，只是混入一个日文词
+    # 两者假名占比都很低（0.06 / 0.09），但前者含 権/場 这类日文专用字形，
+    # 中文译文里不该出现。
+    japanese_kanji = [ch for ch in stripped if ch in JAPANESE_SPECIFIC_KANJI]
+    if japanese_kanji and JAPANESE_KANA_BETWEEN_KANJI_RE.search(stripped):
+        return False
+
     fragments = [frag for frag in JAPANESE_KANA_FRAGMENT_RE.findall(stripped) if frag.strip()]
     if not fragments:
         return False
