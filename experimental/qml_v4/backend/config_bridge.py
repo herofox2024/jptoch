@@ -1251,6 +1251,82 @@ class ConfigBridge(QObject):
             logger.warning("保存术语 profile 失败: %s", exc)
             return {"ok": False, "message": f"保存失败: {exc}"}
 
+    @Slot(str, "QVariantMap", bool, result="QVariantMap")
+    def applyConsistencyUpdates(self, profile_id: str, plan: dict, overwrite: bool = False):
+        """把一致性检查给出的译名提案写回指定 profile。
+
+        这是闭环的最后一环：翻译完成后发现问题 -> 用户确认 -> 写回术语表，
+        下次翻译就会自动沿用统一译名。
+
+        默认不覆盖已有条目——人工整理过的译名优先，统计推断只补空缺。
+        """
+        try:
+            from glossary_profiles import load_profile, save_profile
+            from translation_consistency_apply import (
+                GlossaryUpdatePlan,
+                GlossaryUpdate,
+                apply_updates_to_terms,
+            )
+
+            profile = load_profile(_data_dir(), str(profile_id or "").strip())
+            if not profile:
+                return {"ok": False, "message": "未找到该术语 profile"}
+
+            raw_updates = (plan or {}).get("updates") or []
+            if not raw_updates:
+                return {"ok": False, "message": "没有可写回的条目"}
+
+            rebuild = GlossaryUpdatePlan()
+            for item in raw_updates:
+                if not isinstance(item, dict):
+                    continue
+                original = str(item.get("original") or "").strip()
+                translation = str(item.get("translation") or "").strip()
+                if not original or not translation:
+                    continue
+                rebuild.updates.append(
+                    GlossaryUpdate(
+                        original=original,
+                        translation=translation,
+                        category=str(item.get("category") or "Item"),
+                        reason=str(item.get("reason") or "most_frequent"),
+                        winning_count=int(item.get("winning_count") or 0),
+                        total_variants=int(item.get("total_variants") or 0),
+                        alternatives=[
+                            str(a) for a in (item.get("alternatives") or []) if str(a).strip()
+                        ],
+                    )
+                )
+
+            merged = apply_updates_to_terms(
+                rebuild,
+                profile.get("terms") or {},
+                overwrite=bool(overwrite),
+            )
+            saved = save_profile(
+                _data_dir(),
+                name=str(profile.get("name") or ""),
+                scope=str(profile.get("scope") or "book"),
+                terms=merged,
+                profile_id=str(profile.get("id") or ""),
+                description=str(profile.get("description") or ""),
+                source_book=str(profile.get("source_book") or ""),
+                merge_existing=False,
+            )
+            self.glossaryProfilesChanged.emit()
+            return {
+                "ok": True,
+                "message": (
+                    f"已写回 {len(rebuild.updates)} 条到「{saved.get('name', '')}」"
+                    + ("（覆盖已有译名）" if overwrite else "（保留已有译名）")
+                ),
+                "id": saved.get("id", ""),
+                "termCount": int(saved.get("term_count") or 0),
+            }
+        except Exception as exc:
+            logger.warning("写回术语 profile 失败: %s", exc)
+            return {"ok": False, "message": f"写回失败: {exc}"}
+
     @Slot(result=str)
     def buildPromptPreview(self) -> str:
         try:

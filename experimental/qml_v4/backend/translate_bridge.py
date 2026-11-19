@@ -378,6 +378,19 @@ def _run_term_consistency_check(translator) -> dict:
         report = check_term_consistency(pairs, scoped)
         payload = report.to_dict()
         payload["scoped_terms"] = sum(len(v) for v in scoped.values())
+
+        # 附带「可写回术语表」的提案：把散落的多译法收敛成一条权威译名。
+        # 只生成提案，不落盘——写回需要用户确认（可能是人工整理过的术语表）。
+        try:
+            from translation_consistency_apply import build_glossary_updates
+
+            plan = build_glossary_updates(payload)
+            if plan.has_updates or plan.needs_review:
+                payload["glossaryUpdates"] = plan.to_dict()
+                logger.info("术语写回提案: %s", plan.summary())
+        except Exception as exc:
+            logger.warning("生成术语写回提案失败: %s", exc)
+
         logger.info("术语一致性检查: %s", payload.get("summary", ""))
         if report.has_issues:
             for item in report.issues[:10]:
