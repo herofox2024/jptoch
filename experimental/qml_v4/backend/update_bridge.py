@@ -55,15 +55,27 @@ def _is_newer_version(remote: str, current: str) -> bool:
 
 
 def _safe_file_name(name: str) -> str:
+    """把远端资产的名称收敛成一个可安全落盘的文件名。
+
+    必须挡住三类情况，否则安装包会写到意外位置或根本写不出去：
+    - 路径分隔符（`../`、`a/b`）导致目录穿越
+    - Windows 非法字符（`<>:"|?*` 与控制字符）
+    - 清洗后只剩扩展名（`///` → `.exe`）：这是没有主文件名的无效文件名
+    """
+    fallback = "AI日译中(EPUB)更新安装程序.exe"
     name = str(name or "").strip()
     if not name:
-        name = "AI日译中(EPUB)更新安装程序.exe"
+        name = fallback
     invalid = '<>:"/\\|?*'
     cleaned = "".join("_" if char in invalid or ord(char) < 32 else char for char in name)
     cleaned = " ".join(cleaned.split()).strip(" ._")
     if not cleaned.lower().endswith(".exe"):
         cleaned += ".exe"
-    return cleaned[:180] or "AI日译中(EPUB)更新安装程序.exe"
+    cleaned = cleaned[:180]
+    # 只剩 ".exe"（主文件名为空）在 Windows 上是无效文件名，回退到默认名。
+    if cleaned.strip(" ._.exeEXE") == "":
+        return fallback
+    return cleaned or fallback
 
 
 def _asset_size_text(size_bytes: int) -> str:
