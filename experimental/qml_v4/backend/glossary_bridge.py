@@ -378,6 +378,9 @@ class GlossaryModel(QAbstractListModel):
                 "total": len(self._all_rows),
             }
         except Exception as e:
+            # 转成 ValueError 是为了让 QML 拿到可读消息，但原始异常类型会被丢掉，
+            # 因此这里必须留一条带堆栈的记录。
+            logger.warning("导入术语 JSON 失败: %s", path_str, exc_info=True)
             raise ValueError(str(e))
 
     def import_csv(self, path_str: str):
@@ -412,6 +415,7 @@ class GlossaryModel(QAbstractListModel):
                 "total": len(self._all_rows),
             }
         except Exception as e:
+            logger.warning("导入术语 CSV 失败: %s", path_str, exc_info=True)
             raise ValueError(str(e))
 
     def export_json(self, path_str: str):
@@ -459,6 +463,7 @@ class GlossaryModel(QAbstractListModel):
             self.load_from_disk()
             return len(self._all_rows)
         except Exception as e:
+            logger.warning("从备份恢复术语表失败: %s", path_str, exc_info=True)
             raise ValueError(str(e))
 
     def search(self, query: str, category_filter: str, source_filter: str):
@@ -513,6 +518,8 @@ class GlossaryBridge(QObject):
             count = self._model.load_from_disk()
             self.loaded.emit(count)
         except Exception as e:
+            # 加载失败会让术语表在界面上变空，用户很可能以为数据丢了。
+            logger.warning("加载术语表失败", exc_info=True)
             self.errorOccurred.emit(f"加载术语表失败: {e}")
 
     @Slot()

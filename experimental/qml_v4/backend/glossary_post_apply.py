@@ -359,7 +359,9 @@ def apply_glossary_to_epub(
                     key = ("metadata:title", source_text, change["translation"])
                     aggregate[key] += count
     except Exception:
-        pass
+        # 元数据标题替换失败不应中断整个术语后处理，但要可追溯：
+        # 否则用户会看到「术语已应用」而书名其实没被改。
+        logger.warning("术语后处理：替换元数据书名失败，跳过该处", exc_info=True)
 
     if replacement_total <= 0:
         completed_units = total_units

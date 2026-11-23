@@ -553,6 +553,8 @@ def _clean_string_list(value: Any) -> List[str]:
         try:
             value = value.toVariant()
         except Exception:
+            # 转换失败等价于「这项配置被清空」，用户会突然丢白名单/术语设置。
+            logger.warning("转换字符串列表配置失败，按空列表处理", exc_info=True)
             value = []
     if not isinstance(value, (list, tuple)):
         return []
@@ -599,13 +601,14 @@ def _invalidate_translator_residue_allowlist_cache() -> None:
         JaZhTranslator._japanese_residue_allowlist_mtime = None
         JaZhTranslator._japanese_residue_allowlist_checked_at = 0.0
     except Exception:
-        pass
+        # 失效失败会让白名单一直用旧缓存，用户改完白名单不生效——必须留痕。
+        logger.warning("失效翻译器日文残留白名单缓存失败", exc_info=True)
     try:
         import translation_quality as tq
 
         tq.invalidate_japanese_residue_allowlist_cache()
     except Exception:
-        pass
+        logger.warning("失效 translation_quality 白名单缓存失败", exc_info=True)
 
 
 class ConfigBridge(QObject):
@@ -837,7 +840,7 @@ class ConfigBridge(QObject):
                 if tmp_path.exists():
                     tmp_path.unlink()
             except Exception:
-                pass
+                logger.debug("删除配置临时文件失败: %s", tmp_path, exc_info=True)
 
     def _current_config_json(self) -> str:
         data = {}

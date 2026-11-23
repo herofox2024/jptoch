@@ -44,6 +44,9 @@ def _default_translation_notice_text() -> str:
         try:
             from experimental.qml_v4.backend.app_info import APP_DISPLAY_NAME
         except Exception:  # pragma: no cover
+            # 注意：这是运行在源码树根目录时的常见路径，回退值是预期行为，
+            # 因此用 debug 级别，避免每次生成版权页都刷一条告警。
+            logger.debug("未能导入 APP_DISPLAY_NAME，使用内置产品名", exc_info=True)
             APP_DISPLAY_NAME = "AI日译中（EPUB）"
     return (
         f"本书由 {APP_DISPLAY_NAME} 辅助翻译。\n"
@@ -81,6 +84,9 @@ def extract_book_bibliography(book: epub.EpubBook) -> Dict[str, str]:
         try:
             values = book.get_metadata(namespace, name) or []
         except Exception:
+            # 元数据缺失是常态（很多 EPUB 没有 dc:creator），按不存在处理；
+            # 但 DUBLIN CORE 读取异常会让书名/作者静默变空，值得留痕。
+            logger.debug("读取 EPUB 元数据失败: %s:%s", namespace, name, exc_info=True)
             return ""
         for value in values:
             # ebooklib returns [(text, attributes_dict), ...]
@@ -124,6 +130,7 @@ def extract_visible_text(node: Any) -> str:
         try:
             lang = str(current.get("lang") or current.get("xml:lang") or "").lower()
         except Exception:
+            logger.debug("读取节点 lang 属性失败，按非日文处理", exc_info=True)
             return False
         return lang.startswith("ja")
 
@@ -559,6 +566,9 @@ def repair_epub(path: str) -> str:
         return temp_epub
 
     except Exception as e:
+        # 这里会重新抛出更明确的错误，但原始异常类型对定位很关键
+        # （例如 BadZipFile vs PermissionError 的处理方式完全不同）。
+        logger.error("EPUB 修复失败: %s", temp_epub, exc_info=True)
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise RuntimeError(f"EPUB 修复失败: {e}")
     finally:
@@ -641,6 +651,9 @@ def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
         try:
             book = epub.read_epub(repaired_path)
         except Exception:
+            # 修复后仍读不出来，说明文件确实不可用；这里会向上抛，
+            # 但要记录一次，否则日志里只有「尝试自动修复」而没有失败结局。
+            logger.error("修复后的 EPUB 仍无法读取: %s", repaired_path, exc_info=True)
             # repaired temp should not leak when read still fails
             repaired_dir = os.path.dirname(repaired_path)
             shutil.rmtree(repaired_dir, ignore_errors=True)

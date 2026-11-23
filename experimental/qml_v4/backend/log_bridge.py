@@ -2,6 +2,7 @@
 """QML bridge for viewing the application log in real time."""
 
 import logging
+import sys
 import threading
 import time
 from pathlib import Path
@@ -43,7 +44,11 @@ class _QtLogHandler(logging.Handler):
             self._bridge.enqueueLogLine(self.format(record))
         except Exception:
             # Never let UI log forwarding break the actual logging pipeline.
-            pass
+            # Use the standard error stream directly to avoid recursing back into
+            # this handler, but still leave a trace instead of swallowing silently.
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
 
 
 class LogBridge(QObject):
@@ -128,6 +133,11 @@ class LogBridge(QObject):
             lines = text.splitlines()
             return prefix + "\n".join(lines[-max_lines:])
         except Exception as exc:
+            # 这里是「读日志」自身失败，无法再写日志文件（可能正是它坏了），
+            # 走 stderr 兜底，避免递归。
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
             return f"读取日志失败: {exc}"
 
     @Slot(result=dict)
@@ -155,6 +165,9 @@ class LogBridge(QObject):
             self.currentLogPathChanged.emit()
             return {"ok": True, "message": "当前运行日志已清空"}
         except Exception as exc:
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
             return {"ok": False, "message": f"清空运行日志失败: {exc}"}
 
     @Slot(result=bool)

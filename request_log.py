@@ -9,6 +9,7 @@ package. It lives at the project root next to ``provider_client``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from provider_client import contains_content_moderation_signal
+
+logger = logging.getLogger(__name__)
 
 _LOCK = threading.RLock()
 _MAX_LINES_PER_FILE = 2000
@@ -62,6 +65,9 @@ def compact_text(value: Any, limit: int = _SNIPPET_LIMIT) -> str:
         try:
             value = json.dumps(value, ensure_ascii=False, default=str)
         except Exception:
+            # 序列化失败会走 str() 兜底，但那可能把整个对象 repr 写进日志
+            # （含密钥等敏感内容），而下面还会 redact，仍需记录一次。
+            logger.debug("诊断日志序列化失败，回退到 str()", exc_info=True)
             value = str(value)
     text = redact(re.sub(r"\s+", " ", value).strip())
     limit = max(80, int(limit or _SNIPPET_LIMIT))
@@ -180,7 +186,9 @@ def record_event(**fields: Any) -> Dict[str, Any]:
                 _prune_current_file(path)
                 _prune_files()
     except Exception:
-        pass
+        # record_event 本身是诊断设施：写盘失败不能让翻译流程中断，
+        # 但完全静默会让「日志里查不到那次请求」变得无从解释。
+        logger.warning("写入请求诊断日志失败（诊断可选）", exc_info=True)
     return entry
 
 

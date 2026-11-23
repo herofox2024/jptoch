@@ -8,12 +8,15 @@ enabled.  Review/abort decisions never reach the executor.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 from translation_models import RecoveryAction, RecoveryDecision, RecoveryExecutionResult, RecoveryIssue
 
 from .recovery_agent import RecoveryAgent
 from .recovery_executor import RecoveryExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class RecoveryWorkflow:
@@ -79,6 +82,9 @@ class RecoveryWorkflow:
             try:
                 result = self.run(issue, decision)
             except Exception as exc:
+                logger.warning(
+                    "恢复工作流异常，转人工复核: %s", key, exc_info=True
+                )
                 result = RecoveryExecutionResult(
                     status="needs_review",
                     action=RecoveryAction.REQUIRE_USER_REVIEW.value,

@@ -26,7 +26,9 @@ if str(ROOT) not in sys.path:
 from translation_quality import (
     classify_japanese_residue,
     has_blocking_japanese_residue,
+    has_kana_free_japanese_residue,
     has_weak_japanese_residue,
+    mark_authorized_japanese,
 )
 
 # 实际漏译的两处（正文标题、目录条目）
@@ -98,3 +100,49 @@ def test_japanese_kanji_plus_kana_between_kanji_is_the_signal():
     assert has_blocking_japanese_residue("学術の権威")
     # 只有夹击假名，无日文特有汉字
     assert not has_blocking_japanese_residue("这是の测试")
+
+
+def test_kana_free_japanese_is_not_silently_passed():
+    """零假名的日文短句不能被判成「无残留」。
+
+    回归点：原判定的入口是 `JAPANESE_KANA_RE.search()`，没有假名就直接返回
+    「no_japanese_residue」。于是纯汉字日文既不进分类器、也不进残留下报告，
+    整条质检链路对它完全失明。
+
+    真实故障（《一千零一夜馆杀人事件》成书）：目录与正文里的
+    「久珠場俊隆博士死去」保存后仍是日文，读者直接看到。
+    """
+    assert has_kana_free_japanese_residue("日々是好日")
+    assert has_kana_free_japanese_residue("久珠場俊隆博士死去。日々是好日")
+
+    result = classify_japanese_residue("日々是好日")
+    assert result["reason"] == "kana_free_japanese_residue", result
+    assert result["blocking"] is True
+    # 记为 low：进报告让用户看见，但 balanced 策略下不硬拦正常译稿。
+    # 实测唯一误报是「佐々木」这类日文专有名词，若记 medium 会打断正常保存。
+    assert result["risk"] == "low"
+    assert has_blocking_japanese_residue("日々是好日")
+
+
+def test_kana_free_detection_does_not_touch_normal_chinese():
+    """收窄判定的回归保护：普通中文不得被新规则命中。
+
+    这里只锁「々」是刻意的：`JAPANESE_SPECIFIC_KANJI` 里混着大量繁体中文标准字
+    （學/實/會/報…），实测台繁译本每本 5～15 行纯汉字会被它命中；
+    若改成按「日文特有汉字」判定就会大面积误伤繁体书。故仅用「々」这一强信号。
+    """
+    for text in (
+        "今天是个好日子",
+        "数理信息工程学权威、久珠场俊隆博士去世",
+        "那句话写得很好",
+    ):
+        assert not has_kana_free_japanese_residue(text), text
+        assert not has_blocking_japanese_residue(text), text
+        assert classify_japanese_residue(text)["risk"] == "none", text
+
+
+def test_kana_free_residue_can_be_allowlisted():
+    """新规则必须能被既有的「授权日文标记」放行，否则会卡住正当引用。"""
+    marked = mark_authorized_japanese("日々是好日")
+    assert not has_blocking_japanese_residue(marked)
+    assert classify_japanese_residue(marked)["blocking"] is False

@@ -83,6 +83,102 @@ except Exception:  # pragma: no cover - diagnostics are optional for the core en
 GLOSSARY_EXTRACTION_MODES = {"novel", "lite"}
 
 
+class BatchRunContext:
+    """一次 `translate_batch` 调用的全部可变状态。
+
+    历史实现把这些字段放在一个约 900 行函数的闭包里，靠定义顺序共享；
+    其中一个字段（`uncached_unique`）在赋值前就被日志闭包引用，
+    仅因调用时机靠后才侥幸成立。显式建模后，字段一律先初始化再使用。
+    """
+
+    __slots__ = (
+        "texts",
+        "total",
+        "total_chars",
+        "batch_started_at",
+        "start_api_requests",
+        "start_tokens",
+        "start_batch_total",
+        "start_quality_retranslate",
+        "ordered_results",
+        "results",
+        "completed",
+        "fast_batch_mode",
+        "effective_batch_size",
+        "context_sequence",
+        "use_context_window",
+        "uncached_unique",
+        "pending_tasks",
+        "pending_counts",
+        "seen_uncached",
+        "manual_cache_hits",
+        "cross_model_cache_hits",
+        "pre_translated",
+        "text_cache_hits",
+        "task_texts",
+        "batches",
+        "planned_batches",
+        "failed_texts",
+        "residue_texts",
+        "residue_repair_examples",
+        "residue_repair_examples_lock",
+        "proofread_residue_fragments_seen",
+        "proofread_residue_fragments_lock",
+        "progress_callback",
+        "item_callback",
+        "proofread_callback",
+    )
+
+    def __init__(
+        self,
+        *,
+        texts: List[str],
+        total: int,
+        total_chars: int,
+        batch_started_at: float,
+        start_api_requests: int,
+        start_tokens: int,
+        start_batch_total: int,
+        start_quality_retranslate: int,
+        ordered_results: List[Optional[str]],
+    ) -> None:
+        self.texts = texts
+        self.total = total
+        self.total_chars = total_chars
+        self.batch_started_at = batch_started_at
+        self.start_api_requests = start_api_requests
+        self.start_tokens = start_tokens
+        self.start_batch_total = start_batch_total
+        self.start_quality_retranslate = start_quality_retranslate
+        self.ordered_results = ordered_results
+        self.results: Dict[str, str] = {}
+        self.completed = 0
+        self.fast_batch_mode = False
+        self.effective_batch_size = 1
+        self.context_sequence: List[str] = []
+        self.use_context_window = False
+        self.uncached_unique: List[str] = []
+        self.pending_tasks: Dict[str, Dict[str, Any]] = {}
+        self.pending_counts: Dict[str, int] = {}
+        self.seen_uncached: set = set()
+        self.manual_cache_hits = 0
+        self.cross_model_cache_hits = 0
+        self.pre_translated = 0
+        self.text_cache_hits = 0
+        self.task_texts: Dict[str, str] = {}
+        self.batches: List[List[str]] = []
+        self.planned_batches = 0
+        self.failed_texts: Dict[str, str] = {}
+        self.residue_texts: Dict[str, str] = {}
+        self.residue_repair_examples: Dict[str, Dict[str, str]] = {}
+        self.residue_repair_examples_lock = threading.Lock()
+        self.proofread_residue_fragments_seen: Dict[str, int] = {}
+        self.proofread_residue_fragments_lock = threading.Lock()
+        self.progress_callback: Optional[Callable[[int, int], None]] = None
+        self.item_callback: Optional[Callable[[str, str], None]] = None
+        self.proofread_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+
 # YAML 模块延迟加载（可选依赖）
 _yaml_module = None
 _yaml_available = None
@@ -1101,6 +1197,7 @@ class JaZhTranslator:
                 try:
                     text = json.dumps(source_text, ensure_ascii=False)
                 except Exception:
+                    logger.debug("估算 token 时序列化 source_text 失败，回退到 str()", exc_info=True)
                     text = str(source_text)
             text = str(text or "").strip()
             if text:
@@ -1206,7 +1303,9 @@ class JaZhTranslator:
                 self._rate_wait_seconds = float(wait_seconds)
                 self._rate_wait_context = str(context or "")
         except Exception:
-            pass
+            # 限流状态只影响界面提示，失败不能让翻译主流程中断；
+            # 但要留下痕迹，否则「界面一直不显示等待原因」无从排查。
+            logger.debug("记录限流等待状态失败: wait=%.1fs context=%s", wait_seconds, context, exc_info=True)
 
     def get_rate_wait_info(self) -> Dict[str, Any]:
         """Current throttle wait for UI display. Returns remaining seconds (0 if none)."""
@@ -1221,6 +1320,7 @@ class JaZhTranslator:
                 "context": str(getattr(self, "_rate_wait_context", "") or ""),
             }
         except Exception:
+            logger.debug("读取限流等待状态失败", exc_info=True)
             return {"waiting": False, "remaining": 0.0, "context": ""}
 
     @classmethod
@@ -1296,6 +1396,7 @@ class JaZhTranslator:
         try:
             body = resp.text or ""
         except Exception:
+            logger.debug("读取错误响应体失败，按空响应处理", exc_info=True)
             body = ""
         snippet = self._response_snippet(body, limit=900) if body else "<empty>"
         prefix = "GLM 400" if active_provider == "glm" and status_code == 400 else f"HTTP {status_code}"
@@ -2785,7 +2886,7 @@ class JaZhTranslator:
                             category=f"glossary_extract:{mode}",
                         )
                     except Exception:
-                        pass
+                        logger.debug("术语抽取请求前的诊断日志写入失败（不影响本次请求）", exc_info=True)
                 resp = self.session.post(
                     self.api_url,
                     headers={
@@ -5117,24 +5218,80 @@ JSON 顶层字段：
         batch_size: Optional[int] = None,
         context_texts: Optional[List[str]] = None,
     ) -> Dict[str, str]:
-        """并发批量翻译多个文本（Phase 1 优化版）"""
-        results: Dict[str, str] = {}
+        """并发批量翻译多个文本。
+
+        历史实现是单个约 900 行的函数，内部用闭包共享二十多个可变变量；其中
+        `log_translate_summary` 在 `uncached_unique` 赋值之前就引用了后者，靠调用时机
+        侥幸成立（延迟绑定），任何一次重排都会静默读错变量。现在按阶段拆分：
+
+        1. `_build_batch_run`     解析批量大小、快速批量模式与上下文窗口
+        2. `_collect_cached`      逐条查人工 / 模型 / 跨模型 / 预翻译 / 文本缓存
+        3. `_prepare_batch_plan`  智能分批并写入统计
+        4. `_run_batch_executor`  线程池调度、动态限流、结果回写
+        5. `_finalize_batches`    最终校验、残留汇总、抛错或返回
+
+        所有跨阶段状态显式放在 `BatchRunContext` 上，不再依赖闭包捕获顺序。
+        """
+        ctx = self._build_batch_run(
+            texts,
+            batch_size=batch_size,
+            context_texts=context_texts,
+        )
+        ctx.progress_callback = progress_callback
+        ctx.item_callback = item_callback
+        ctx.proofread_callback = proofread_callback
+
+        self._collect_cached(ctx)
+
+        if not ctx.uncached_unique:
+            if ctx.progress_callback:
+                ctx.progress_callback(ctx.completed, ctx.total)
+            return self._finalize_cache_only(ctx)
+
+        # 批量大小调整必须在首次进度回调之前完成：回调可能读取
+        # `translate_fast_batch_mode` 等统计，顺序与原实现一致。
+        self._adjust_batch_size_for_provider(ctx)
+        if ctx.progress_callback:
+            ctx.progress_callback(ctx.completed, ctx.total)
+
+        self._prepare_batch_plan(ctx)
+        self._run_batch_executor(ctx)
+        return self._finalize_batches(ctx)
+
+    # ------------------------------------------------------------------
+    # translate_batch 阶段实现
+    # ------------------------------------------------------------------
+
+    def _build_batch_run(
+        self,
+        texts: List[str],
+        *,
+        batch_size: Optional[int] = None,
+        context_texts: Optional[List[str]] = None,
+    ) -> "BatchRunContext":
+        """解析本次批量翻译的运行参数，返回初始状态。"""
         total = len(texts)
-        batch_started_at = time.time()
         start_stats = self.get_stats()
-        start_api_requests = int(start_stats.get("api_requests_total", 0))
-        start_tokens = int(start_stats.get("tokens_total", 0))
-        start_batch_total = int(start_stats.get("batch_total", 0))
-        start_quality_retranslate = int(start_stats.get("quality_retranslate", 0))
-        total_chars = sum(len(str(text or "")) for text in texts)
-        planned_batches = 0
-        completed = 0
-        failed_texts: Dict[str, str] = {}
-        residue_texts: Dict[str, str] = {}
+        ctx = BatchRunContext(
+            texts=list(texts),
+            total=total,
+            total_chars=sum(len(str(text or "")) for text in texts),
+            batch_started_at=time.time(),
+            start_api_requests=int(start_stats.get("api_requests_total", 0)),
+            start_tokens=int(start_stats.get("tokens_total", 0)),
+            start_batch_total=int(start_stats.get("batch_total", 0)),
+            start_quality_retranslate=int(start_stats.get("quality_retranslate", 0)),
+            ordered_results=[None] * total,
+        )
+        # 与实例属性保持同一份列表对象：外部仍可依赖 _last_ordered_results。
+        self._last_ordered_results = ctx.ordered_results
 
         # 使用实例配置，允许传入覆盖
         effective_batch_size = batch_size if batch_size is not None else self.batch_size
-        effective_batch_size = max(1, min(int(effective_batch_size or 1), self._current_dynamic_batch_size()))
+        effective_batch_size = max(
+            1, min(int(effective_batch_size or 1), self._current_dynamic_batch_size())
+        )
+
         fast_batch_mode = (
             self.provider in self.FAST_BATCH_PROVIDERS
             and total >= self.FAST_BATCH_MIN_TEXTS
@@ -5145,11 +5302,16 @@ JSON 顶层字段：
             fast_batch_max_items = self._fast_batch_max_items_for_provider()
             effective_batch_size = min(
                 fast_batch_max_items,
-                max(effective_batch_size, min(fast_batch_max_items, max(8, old_effective_batch_size * 2))),
+                max(
+                    effective_batch_size,
+                    min(fast_batch_max_items, max(8, old_effective_batch_size * 2)),
+                ),
             )
             with self._dynamic_limit_lock:
                 self._dynamic_batch_size = max(int(self._dynamic_batch_size), effective_batch_size)
-                self._dynamic_batch_ceiling = max(int(self._dynamic_batch_ceiling), effective_batch_size)
+                self._dynamic_batch_ceiling = max(
+                    int(self._dynamic_batch_ceiling), effective_batch_size
+                )
             self._set_stat("dynamic_limit_batch_size", self._current_dynamic_batch_size())
             self._set_stat("translate_fast_batch_mode", 1)
             logger.info(
@@ -5164,151 +5326,129 @@ JSON 顶层字段：
         else:
             self._set_stat("translate_fast_batch_mode", 0)
 
-        ordered_results: List[Optional[str]] = [None] * total
-        self._last_ordered_results = ordered_results
+        ctx.fast_batch_mode = fast_batch_mode
+        ctx.effective_batch_size = effective_batch_size
+
         context_sequence = list(context_texts or texts)
         if len(context_sequence) < total:
             context_sequence = list(texts)
-        use_context_window = self._provider_uses_context_window_for_task(total)
-        if self._provider_uses_context_window() and not use_context_window:
+        ctx.context_sequence = context_sequence
+        ctx.use_context_window = self._provider_uses_context_window_for_task(total)
+        if self._provider_uses_context_window() and not ctx.use_context_window:
             logger.info(
                 "%s 大书快速策略: texts=%s，已关闭批量上下文窗口以减少 token 与缓存碎片",
                 self.provider,
                 total,
             )
+        return ctx
 
-        def log_translate_summary(status: str, planned: int = 0) -> None:
-            elapsed = max(0.001, time.time() - batch_started_at)
-            stats = self.get_stats()
-            api_delta = max(0, int(stats.get("api_requests_total", 0)) - start_api_requests)
-            token_delta = max(0, int(stats.get("tokens_total", 0)) - start_tokens)
-            batch_delta = max(0, int(stats.get("batch_total", 0)) - start_batch_total)
-            quality_delta = max(0, int(stats.get("quality_retranslate", 0)) - start_quality_retranslate)
-            chars_per_second = int(total_chars / elapsed) if total_chars else 0
-            texts_per_second = round(float(completed) / elapsed, 2) if completed else 0.0
-            self._set_stat("translate_elapsed_ms", int(elapsed * 1000))
-            cache_hits = int(stats.get("translate_cache_hits", 0))
-            if planned or batch_delta or api_delta:
-                logger.info(
-                    "批量JSON翻译完成: status=%s, planned_batches=%s, actual_batch_tasks=%s, "
-                    "api_requests=%s, tokens=%s, elapsed=%.1fs, fast_batch=%s",
-                    status,
-                    planned,
-                    batch_delta,
-                    api_delta,
-                    token_delta,
-                    elapsed,
-                    "on" if fast_batch_mode else "off",
-                )
-            logger.info(
-                "翻译阶段性能汇总: status=%s, texts=%s, completed=%s, chars=%s, elapsed=%.1fs, "
-                "chars/s=%s, texts/s=%s, cache_hits=%s, pending_unique=%s, planned_batches=%s, "
-                "actual_batch_tasks=%s, api_requests=%s, tokens=%s, quality_retranslate=%s, "
-                "context_window=%s, fast_batch=%s",
-                status,
-                total,
-                completed,
-                total_chars,
-                elapsed,
-                chars_per_second,
-                texts_per_second,
-                cache_hits,
-                len(uncached_unique),
-                planned,
-                batch_delta,
-                api_delta,
-                token_delta,
-                quality_delta,
-                "on" if use_context_window else "off",
-                "on" if fast_batch_mode else "off",
+    def _context_for_index(self, ctx: "BatchRunContext", idx: int) -> Tuple[Optional[str], Optional[str]]:
+        """返回第 idx 条文本的前后文，未启用上下文窗口时返回 (None, None)。"""
+        if not ctx.use_context_window or idx < 0 or idx >= len(ctx.context_sequence):
+            return None, None
+        prev_text = ctx.context_sequence[idx - 1] if idx > 0 else None
+        next_text = (
+            ctx.context_sequence[idx + 1] if idx + 1 < len(ctx.context_sequence) else None
+        )
+        return prev_text, next_text
+
+    def _task_key_for(self, ctx: "BatchRunContext", text: str, idx: int) -> str:
+        """按上下文生成缓存键，短句会因前后文不同而分开缓存。"""
+        prev_text, next_text = self._context_for_index(ctx, idx)
+        return self._cache_key_for_context(text, prev_text, next_text)
+
+    def _context_for_task(
+        self, ctx: "BatchRunContext", task_key: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        task = ctx.pending_tasks.get(task_key) or {}
+        return task.get("prev"), task.get("next")
+
+    def _add_pending_task(self, ctx: "BatchRunContext", text: str, idx: int) -> None:
+        key = self._task_key_for(ctx, text, idx)
+        prev_text, next_text = self._context_for_index(ctx, idx)
+        if key not in ctx.pending_tasks:
+            ctx.pending_tasks[key] = {
+                "text": text,
+                "prev": prev_text,
+                "next": next_text,
+                "indices": [],
+            }
+        ctx.pending_tasks[key]["indices"].append(idx)
+        ctx.pending_counts[key] = ctx.pending_counts.get(key, 0) + 1
+        if key not in ctx.seen_uncached:
+            ctx.uncached_unique.append(key)
+            ctx.seen_uncached.add(key)
+
+    def _remember_completed(
+        self, ctx: "BatchRunContext", idx: int, text: str, translated: str
+    ) -> None:
+        translated = self._postprocess_translation(text, translated)
+        ctx.ordered_results[idx] = translated
+        ctx.results.setdefault(text, translated)
+        self._mark_complete(ctx, text)
+
+    def _mark_complete(self, ctx: "BatchRunContext", text: str) -> None:
+        key = str(text or "")
+        if not key:
+            return
+        ctx.failed_texts.pop(key, None)
+        ctx.residue_texts.pop(key, None)
+
+    def _mark_incomplete(
+        self,
+        ctx: "BatchRunContext",
+        text: str,
+        reason: str,
+        translated: Optional[str] = None,
+    ) -> None:
+        key = str(text or "")
+        if not key:
+            return
+        # merge consecutive identical reasons for content-moderation failures
+        prev_reason = ctx.failed_texts.get(key)
+        if (
+            prev_reason
+            and prev_reason != reason
+            and "内容审核拦截" in prev_reason
+            and "内容审核拦截" in reason
+        ):
+            return
+        if translated is not None:
+            translated = self._postprocess_translation(key, translated)
+        if translated is not None and self._has_blocking_japanese_residue(translated):
+            ctx.residue_texts[key] = translated
+            ctx.failed_texts[key] = "译文疑似仍有日文残留"
+            return
+        if translated is None and key in ctx.residue_texts:
+            ctx.failed_texts.setdefault(key, "译文疑似仍有日文残留")
+            return
+        ctx.failed_texts[key] = reason
+
+    def _accept_translation(
+        self,
+        ctx: "BatchRunContext",
+        original: str,
+        translated: Optional[str],
+        reason: str = "",
+    ) -> Optional[str]:
+        cleaned = self._postprocess_translation(original, translated)
+        if not cleaned:
+            self._mark_incomplete(
+                ctx, original, reason or "译文为空（可能是模型内容审核拦截）", cleaned
             )
+            return None
+        if self._is_incomplete_translation(original, cleaned):
+            self._mark_incomplete(ctx, original, reason or "译文为空或仍有日文残留", cleaned)
+            return None
+        self._mark_complete(ctx, original)
+        return cleaned
 
-        def get_context_for_index(idx: int) -> Tuple[Optional[str], Optional[str]]:
-            if not use_context_window or idx < 0 or idx >= len(context_sequence):
-                return None, None
-            prev_text = context_sequence[idx - 1] if idx > 0 else None
-            next_text = context_sequence[idx + 1] if idx + 1 < len(context_sequence) else None
-            return prev_text, next_text
-
-        uncached_unique: List[str] = []
-        pending_tasks: Dict[str, Dict[str, Any]] = {}
-        pending_counts: Dict[str, int] = {}
-        seen_uncached = set()
-
-        def task_key_for(text: str, idx: int) -> str:
-            prev_text, next_text = get_context_for_index(idx)
-            return self._cache_key_for_context(text, prev_text, next_text)
-
-        def add_pending_task(text: str, idx: int) -> None:
-            key = task_key_for(text, idx)
-            prev_text, next_text = get_context_for_index(idx)
-            if key not in pending_tasks:
-                pending_tasks[key] = {
-                    "text": text,
-                    "prev": prev_text,
-                    "next": next_text,
-                    "indices": [],
-                }
-            pending_tasks[key]["indices"].append(idx)
-            pending_counts[key] = pending_counts.get(key, 0) + 1
-            if key not in seen_uncached:
-                uncached_unique.append(key)
-                seen_uncached.add(key)
-
-        def remember_completed(idx: int, text: str, translated: str) -> None:
-            translated = self._postprocess_translation(text, translated)
-            ordered_results[idx] = translated
-            results.setdefault(text, translated)
-            mark_complete(text)
-
-        def mark_incomplete(text: str, reason: str, translated: Optional[str] = None) -> None:
-            key = str(text or "")
-            if not key:
-                return
-            # merge consecutive identical reasons for content-moderation failures
-            prev_reason = failed_texts.get(key)
-            if prev_reason and prev_reason != reason and "内容审核拦截" in prev_reason and "内容审核拦截" in reason:
-                return
-            if translated is not None:
-                translated = self._postprocess_translation(key, translated)
-            if translated is not None and self._has_blocking_japanese_residue(translated):
-                residue_texts[key] = translated
-                failed_texts[key] = "译文疑似仍有日文残留"
-                return
-            if translated is None and key in residue_texts:
-                failed_texts.setdefault(key, "译文疑似仍有日文残留")
-                return
-            failed_texts[key] = reason
-
-        def mark_complete(text: str) -> None:
-            key = str(text or "")
-            if not key:
-                return
-            failed_texts.pop(key, None)
-            residue_texts.pop(key, None)
-
-        def accept_translation(original: str, translated: Optional[str], reason: str = "") -> Optional[str]:
-            cleaned = self._postprocess_translation(original, translated)
-            if not cleaned:
-                mark_incomplete(original, reason or "译文为空（可能是模型内容审核拦截）", cleaned)
-                return None
-            if self._is_incomplete_translation(original, cleaned):
-                mark_incomplete(original, reason or "译文为空或仍有日文残留", cleaned)
-                return None
-            mark_complete(original)
-            return cleaned
-
-        # Phase 1-③: 预翻译计数
-        pre_translated = 0
-        manual_cache_hits = 0
-        cross_model_cache_hits = 0
-        # Phase 1-②: 文本缓存命中计数
-        text_cache_hits = 0
-
+    def _collect_cached(self, ctx: "BatchRunContext") -> None:
+        """逐条尝试各类缓存与本地预翻译，未命中的加入待翻译队列。"""
         with self._cache_lock:
-            for idx, text in enumerate(texts):
+            for idx, text in enumerate(ctx.texts):
                 # ① 人工修改缓存优先级最高，不受模型和跨模型缓存开关影响。
-                cache_key = task_key_for(text, idx)
+                cache_key = self._task_key_for(ctx, text, idx)
                 manual_cached = self._lookup_manual_cache(text)
                 if manual_cached is not None:
                     manual_cached = self._postprocess_translation(text, manual_cached)
@@ -5316,23 +5456,25 @@ JSON 顶层字段：
                     self._is_trusted_manual_cache(text)
                     or not self._is_incomplete_translation(text, manual_cached)
                 ):
-                    remember_completed(idx, text, manual_cached)
+                    self._remember_completed(ctx, idx, text, manual_cached)
                     self.cache[cache_key] = manual_cached
-                    completed += 1
-                    manual_cache_hits += 1
-                    if item_callback:
-                        item_callback(text, manual_cached)
+                    ctx.completed += 1
+                    ctx.manual_cache_hits += 1
+                    if ctx.item_callback:
+                        ctx.item_callback(text, manual_cached)
                     continue
 
                 # ② 模型缓存查找
                 if cache_key in self.cache:
-                    cached_translation = self._postprocess_translation(text, self.cache[cache_key])
+                    cached_translation = self._postprocess_translation(
+                        text, self.cache[cache_key]
+                    )
                     if not self._is_incomplete_translation(text, cached_translation):
                         if self.cache.get(cache_key) != cached_translation:
                             self.cache[cache_key] = cached_translation
                             self._cache_dirty = True
-                        remember_completed(idx, text, cached_translation)
-                        completed += 1
+                        self._remember_completed(ctx, idx, text, cached_translation)
+                        ctx.completed += 1
                         continue
                     self.cache.pop(cache_key, None)
                     self._cache_dirty = True
@@ -5343,493 +5485,607 @@ JSON 顶层字段：
                     if cross_cached is not None:
                         cross_cached = self._postprocess_translation(text, cross_cached)
                         if not self._is_incomplete_translation(text, cross_cached):
-                            remember_completed(idx, text, cross_cached)
+                            self._remember_completed(ctx, idx, text, cross_cached)
                             self.cache[cache_key] = cross_cached
                             self._cache_dirty = True
-                            completed += 1
-                            cross_model_cache_hits += 1
-                            if item_callback:
-                                item_callback(text, cross_cached)
+                            ctx.completed += 1
+                            ctx.cross_model_cache_hits += 1
+                            if ctx.item_callback:
+                                ctx.item_callback(text, cross_cached)
                             continue
 
-                # ③ Phase 1-③: 本地预翻译规则
+                # ④ 本地预翻译规则
                 pre_result = self._pre_translate(text)
                 if pre_result is not None:
                     pre_result = self._postprocess_translation(text, pre_result)
                     if self._is_incomplete_translation(text, pre_result):
-                        add_pending_task(text, idx)
+                        self._add_pending_task(ctx, text, idx)
                         continue
-                    remember_completed(idx, text, pre_result)
+                    self._remember_completed(ctx, idx, text, pre_result)
                     # 同步写入模型缓存
                     self.cache[cache_key] = pre_result
-                    completed += 1
-                    pre_translated += 1
-                    if item_callback:
-                        item_callback(text, pre_result)
+                    ctx.completed += 1
+                    ctx.pre_translated += 1
+                    if ctx.item_callback:
+                        ctx.item_callback(text, pre_result)
                     continue
 
-                # ④ Phase 1-②: 文本级缓存（跨模型复用已通过安全校验的译文）
-                if getattr(self, "allow_text_cache_reuse", False) and not self._is_context_cache_text(text):
+                # ⑤ 文本级缓存（跨模型复用已通过安全校验的译文）
+                if getattr(self, "allow_text_cache_reuse", False) and not self._is_context_cache_text(
+                    text
+                ):
                     text_cached = self._lookup_text_cache(text, allow_unverified=True)
                     if text_cached is not None:
                         text_cached = self._postprocess_translation(text, text_cached)
                         if not self._is_incomplete_translation(text, text_cached):
-                            remember_completed(idx, text, text_cached)
+                            self._remember_completed(ctx, idx, text, text_cached)
                             self.cache[cache_key] = text_cached
-                            completed += 1
-                            text_cache_hits += 1
-                            if item_callback:
-                                item_callback(text, text_cached)
+                            ctx.completed += 1
+                            ctx.text_cache_hits += 1
+                            if ctx.item_callback:
+                                ctx.item_callback(text, text_cached)
                             continue
 
-                # ⑤ 未命中，加入待翻译队列
-                add_pending_task(text, idx)
+                # ⑥ 未命中，加入待翻译队列
+                self._add_pending_task(ctx, text, idx)
 
-        if manual_cache_hits:
-            logger.info(f"人工译文缓存命中: {manual_cache_hits} 条")
-        if cross_model_cache_hits:
-            logger.info(f"跨模型模型缓存命中: {cross_model_cache_hits} 条")
-        if pre_translated:
-            logger.info(f"预翻译命中: {pre_translated} 条")
-        if text_cache_hits:
-            logger.info(f"文本缓存命中: {text_cache_hits} 条（跨模型）")
-        logger.info(f"批量翻译: {total} 条，缓存命中 {completed} 条，待翻译去重后 {len(uncached_unique)} 条")
+        if ctx.manual_cache_hits:
+            logger.info(f"人工译文缓存命中: {ctx.manual_cache_hits} 条")
+        if ctx.cross_model_cache_hits:
+            logger.info(f"跨模型模型缓存命中: {ctx.cross_model_cache_hits} 条")
+        if ctx.pre_translated:
+            logger.info(f"预翻译命中: {ctx.pre_translated} 条")
+        if ctx.text_cache_hits:
+            logger.info(f"文本缓存命中: {ctx.text_cache_hits} 条（跨模型）")
+        logger.info(
+            f"批量翻译: {ctx.total} 条，缓存命中 {ctx.completed} 条，"
+            f"待翻译去重后 {len(ctx.uncached_unique)} 条"
+        )
 
-        if self.proofread_genre == "historical_mystery" and 0 < len(uncached_unique) <= 20 and effective_batch_size > 1:
-            effective_batch_size = 1
+    def _finalize_cache_only(self, ctx: "BatchRunContext") -> Dict[str, str]:
+        """全部命中缓存时的收尾。"""
+        self._save_cache(force=True)
+        if ctx.pre_translated or ctx.text_cache_hits:
+            self._flush_text_cache()
+        self._set_stat("translate_total_texts", ctx.total)
+        self._set_stat("translate_cache_hits", ctx.completed)
+        self._set_stat("translate_pending_unique", 0)
+        self._set_stat("translate_planned_batches", 0)
+        self._set_stat("translate_context_cache_tasks", 0)
+        self._log_batch_summary(ctx, "cache_only", planned=0)
+        self._last_ordered_results = ctx.ordered_results
+        # 保留与结果对齐的原文，供译后一致性检查使用（本地计算，无 API 开销）。
+        self._last_translated_texts = list(ctx.texts)
+        return ctx.results
+
+    def _adjust_batch_size_for_provider(self, ctx: "BatchRunContext") -> None:
+        """按供应商与题材特性下调批量大小（原地修改 ctx.effective_batch_size）。"""
+        if (
+            self.proofread_genre == "historical_mystery"
+            and 0 < len(ctx.uncached_unique) <= 20
+            and ctx.effective_batch_size > 1
+        ):
+            ctx.effective_batch_size = 1
             logger.info(
                 "历史推理少量剩余文本启用保守重试: batch_size=1，不走批量 JSON，禁用自由润色"
             )
-        if self.provider == "hymt2" and self.hymt2_runtime_mode != "gpu" and effective_batch_size > 1:
-            old_effective_batch_size = effective_batch_size
-            effective_batch_size = 1
-            if old_effective_batch_size != effective_batch_size:
+        if (
+            self.provider == "hymt2"
+            and self.hymt2_runtime_mode != "gpu"
+            and ctx.effective_batch_size > 1
+        ):
+            old_effective_batch_size = ctx.effective_batch_size
+            ctx.effective_batch_size = 1
+            if old_effective_batch_size != ctx.effective_batch_size:
                 logger.info("Hy-MT2 本地稳定模式: batch_size=1，不走批量 JSON")
 
-        if progress_callback:
-            progress_callback(completed, total)
-
-        if not uncached_unique:
-            self._save_cache(force=True)
-            if pre_translated or text_cache_hits:
-                self._flush_text_cache()
-            self._set_stat("translate_total_texts", total)
-            self._set_stat("translate_cache_hits", completed)
-            self._set_stat("translate_pending_unique", 0)
-            self._set_stat("translate_planned_batches", 0)
-            self._set_stat("translate_context_cache_tasks", 0)
-            log_translate_summary("cache_only", planned=0)
-            self._last_ordered_results = ordered_results
-            # 保留与结果对齐的原文，供译后一致性检查使用（本地计算，无 API 开销）。
-            self._last_translated_texts = list(texts)
-            return results
-
-        # ---- Phase 1-①: 智能分批 ----
-        task_texts = {key: str(task.get("text", "")) for key, task in pending_tasks.items()}
-        batches = self._smart_batch_task_keys(
-            uncached_unique,
-            task_texts,
-            effective_batch_size,
-            fast_mode=fast_batch_mode,
+    def _prepare_batch_plan(self, ctx: "BatchRunContext") -> None:
+        """根据待翻译量与上下文窗口做智能分批，并写入统计。"""
+        # ---- 智能分批 ----
+        ctx.task_texts = {
+            key: str(task.get("text", "")) for key, task in ctx.pending_tasks.items()
+        }
+        ctx.batches = self._smart_batch_task_keys(
+            ctx.uncached_unique,
+            ctx.task_texts,
+            ctx.effective_batch_size,
+            fast_mode=ctx.fast_batch_mode,
         )
-        planned_batches = len(batches)
-        logger.info(f"智能分批为 {planned_batches} 个批次进行并发翻译")
-        self._set_stat("translate_total_texts", total)
-        self._set_stat("translate_cache_hits", completed)
-        self._set_stat("translate_pending_unique", len(uncached_unique))
-        self._set_stat("translate_planned_batches", planned_batches)
+        ctx.planned_batches = len(ctx.batches)
+        logger.info(f"智能分批为 {ctx.planned_batches} 个批次进行并发翻译")
+        self._set_stat("translate_total_texts", ctx.total)
+        self._set_stat("translate_cache_hits", ctx.completed)
+        self._set_stat("translate_pending_unique", len(ctx.uncached_unique))
+        self._set_stat("translate_planned_batches", ctx.planned_batches)
 
-        if use_context_window:
-            context_cache_count = sum(1 for key, task in pending_tasks.items() if key.startswith("v3ctx:"))
-            logger.info(f"上下文窗口已启用: {len(context_sequence)} 条文本；上下文缓存任务 {context_cache_count} 个")
+        if ctx.use_context_window:
+            context_cache_count = sum(
+                1 for key in ctx.pending_tasks if key.startswith("v3ctx:")
+            )
+            logger.info(
+                f"上下文窗口已启用: {len(ctx.context_sequence)} 条文本；"
+                f"上下文缓存任务 {context_cache_count} 个"
+            )
             self._set_stat("translate_context_cache_tasks", context_cache_count)
         else:
             self._set_stat("translate_context_cache_tasks", 0)
 
-        def get_context_for_task(task_key: str) -> Tuple[Optional[str], Optional[str]]:
-            task = pending_tasks.get(task_key) or {}
-            return task.get("prev"), task.get("next")
-
-        residue_repair_examples: Dict[str, Dict[str, str]] = {}
-        residue_repair_examples_lock = threading.Lock()
-
-        def get_residue_guidance(fragments: Optional[List[str]]) -> str:
-            if not fragments:
-                return ""
-            with residue_repair_examples_lock:
-                examples = [
-                    residue_repair_examples[fragment]
-                    for fragment in fragments
-                    if fragment in residue_repair_examples
-                ]
-            return self._build_residue_repair_guidance(examples)
-
-        def remember_residue_repair(draft: str, revised: str) -> None:
-            fragments = self._extract_japanese_residue_fragments(draft)
-            if not fragments:
-                return
-            if self._has_japanese_residue(revised):
-                return
-            example_revised = (revised or "").strip()[:160]
-            example_draft = (draft or "").strip()[:160]
-            if not example_revised or not example_draft:
-                return
-            with residue_repair_examples_lock:
-                for fragment in fragments:
-                    residue_repair_examples.setdefault(
-                        fragment,
-                        {
-                            "fragment": fragment,
-                            "draft": example_draft,
-                            "revised": example_revised,
-                        },
-                    )
-
-        def call_translate_chunk(
-            text: str,
-            prev_text: Optional[str] = None,
-            next_text: Optional[str] = None,
-            residue_fragments: Optional[List[str]] = None,
-        ) -> str:
-            residue_guidance = get_residue_guidance(residue_fragments)
-            try:
-                return self._translate_chunk(
-                    text,
-                    prev_text=prev_text,
-                    next_text=next_text,
-                    residue_guidance=residue_guidance,
-                )
-            except TypeError as exc:
-                # 兼容测试或旧子类 monkeypatch 的 _translate_chunk(text) 签名。
-                message = str(exc)
-                if "residue_guidance" in message or "unexpected keyword" in message:
-                    try:
-                        return self._translate_chunk(text, prev_text=prev_text, next_text=next_text)
-                    except TypeError:
-                        return self._translate_chunk(text)
-                if "prev_text" in message or "next_text" in message or "positional" in message:
-                    return self._translate_chunk(text)
-                raise
-
-        proofread_residue_fragments_seen: Dict[str, int] = {}
-        proofread_residue_fragments_lock = threading.Lock()
-
-        def repair_batch_quality(batch_keys: List[str], pairs: List[Tuple[str, str, str]]) -> List[Tuple[str, str, str]]:
-            enable_proofread = bool(getattr(self, "enable_proofread", False))
-            pairs = [
-                (task_key, src, self._postprocess_translation(src, dst))
-                for task_key, src, dst in pairs
+    def _get_residue_guidance(
+        self, ctx: "BatchRunContext", fragments: Optional[List[str]]
+    ) -> str:
+        if not fragments:
+            return ""
+        with ctx.residue_repair_examples_lock:
+            examples = [
+                ctx.residue_repair_examples[fragment]
+                for fragment in fragments
+                if fragment in ctx.residue_repair_examples
             ]
-            if len(pairs) <= 1 and not enable_proofread:
-                return pairs
+        return self._build_residue_repair_guidance(examples)
 
-            suspicious_idx = set()
-            proofread_issues: Dict[int, List[str]] = {}
-            retranslate_residue_fragments: Dict[int, List[str]] = {}
-            batch_text_values = [src for _, src, _ in pairs]
-            outputs = [((dst or "").strip()) for _, _, dst in pairs]
-            dup_counter: Dict[str, int] = {}
-            for out in outputs:
-                dup_counter[out] = dup_counter.get(out, 0) + 1
+    def _remember_residue_repair(
+        self, ctx: "BatchRunContext", draft: str, revised: str
+    ) -> None:
+        fragments = self._extract_japanese_residue_fragments(draft)
+        if not fragments:
+            return
+        if self._has_japanese_residue(revised):
+            return
+        example_revised = (revised or "").strip()[:160]
+        example_draft = (draft or "").strip()[:160]
+        if not example_revised or not example_draft:
+            return
+        with ctx.residue_repair_examples_lock:
+            for fragment in fragments:
+                ctx.residue_repair_examples.setdefault(
+                    fragment,
+                    {
+                        "fragment": fragment,
+                        "draft": example_draft,
+                        "revised": example_revised,
+                    },
+                )
 
-            for i, (_, src, dst) in enumerate(pairs):
-                clean_dst = (dst or "").strip()
-                if is_suspicious_translation_pair(src, clean_dst):
-                    suspicious_idx.add(i)
-                    continue
-                if clean_dst and dup_counter.get(clean_dst, 0) >= 3 and len(set(batch_text_values)) >= 3:
-                    suspicious_idx.add(i)
-                    continue
-                if enable_proofread:
-                    issues = self._find_proofread_issues(src, clean_dst)
-                    # 润色档：即便没有硬错误，翻译腔/语气缺失也纳入校对范围。
-                    if bool(getattr(self, "enable_polish", False)):
-                        polish_issues = self._find_polish_issues(src, clean_dst)
-                        if polish_issues:
-                            issues = list(issues) + polish_issues
-                    if issues:
-                        # Phase 2-⑤: 校对分级 — 本地检查通过则跳过 LLM 校对
-                        if self._should_skip_proofread(src, clean_dst):
-                            logger.debug(f"校对分级跳过 [{i}]: 文本过短或匹配跳过模式")
-                            continue
-                        weak_residue_only = (
-                            self._has_weak_japanese_residue(clean_dst)
-                            and not self._has_blocking_japanese_residue(clean_dst)
-                        )
-                        residue_fragments = self._extract_japanese_residue_fragments(clean_dst)
-                        with proofread_residue_fragments_lock:
-                            repeated_fragments = [
-                                fragment for fragment in residue_fragments
-                                if proofread_residue_fragments_seen.get(fragment, 0) > 0
-                            ]
-                            if not repeated_fragments:
-                                for fragment in residue_fragments:
-                                    proofread_residue_fragments_seen[fragment] = (
-                                        proofread_residue_fragments_seen.get(fragment, 0) + 1
-                                    )
-                        if repeated_fragments:
-                            if weak_residue_only:
-                                logger.debug(
-                                    "弱日文残留仅提示不阻塞，跳过重复校对: "
-                                    + " / ".join(repeated_fragments[:5])
+    def _call_translate_chunk_fallback(
+        self,
+        ctx: "BatchRunContext",
+        text: str,
+        prev_text: Optional[str] = None,
+        next_text: Optional[str] = None,
+        residue_fragments: Optional[List[str]] = None,
+    ) -> str:
+        """调用单条翻译，并兼容旧子类/测试里 `_translate_chunk(text)` 的签名。"""
+        residue_guidance = self._get_residue_guidance(ctx, residue_fragments)
+        try:
+            return self._translate_chunk(
+                text,
+                prev_text=prev_text,
+                next_text=next_text,
+                residue_guidance=residue_guidance,
+            )
+        except TypeError as exc:
+            # 兼容测试或旧子类 monkeypatch 的 _translate_chunk(text) 签名。
+            message = str(exc)
+            if "residue_guidance" in message or "unexpected keyword" in message:
+                try:
+                    return self._translate_chunk(text, prev_text=prev_text, next_text=next_text)
+                except TypeError:
+                    return self._translate_chunk(text)
+            if "prev_text" in message or "next_text" in message or "positional" in message:
+                return self._translate_chunk(text)
+            raise
+
+    def _repair_batch_quality(
+        self,
+        ctx: "BatchRunContext",
+        batch_keys: List[str],
+        pairs: List[Tuple[str, str, str]],
+    ) -> List[Tuple[str, str, str]]:
+        """对一批译文做质检：可疑则重译，可校对则校对，必要时回退单条重译。"""
+        enable_proofread = bool(getattr(self, "enable_proofread", False))
+        pairs = [
+            (task_key, src, self._postprocess_translation(src, dst))
+            for task_key, src, dst in pairs
+        ]
+        if len(pairs) <= 1 and not enable_proofread:
+            return pairs
+
+        suspicious_idx = set()
+        proofread_issues: Dict[int, List[str]] = {}
+        retranslate_residue_fragments: Dict[int, List[str]] = {}
+        batch_text_values = [src for _, src, _ in pairs]
+        outputs = [((dst or "").strip()) for _, _, dst in pairs]
+        dup_counter: Dict[str, int] = {}
+        for out in outputs:
+            dup_counter[out] = dup_counter.get(out, 0) + 1
+
+        for i, (_, src, dst) in enumerate(pairs):
+            clean_dst = (dst or "").strip()
+            if is_suspicious_translation_pair(src, clean_dst):
+                suspicious_idx.add(i)
+                continue
+            if clean_dst and dup_counter.get(clean_dst, 0) >= 3 and len(set(batch_text_values)) >= 3:
+                suspicious_idx.add(i)
+                continue
+            if enable_proofread:
+                issues = self._find_proofread_issues(src, clean_dst)
+                # 润色档：即便没有硬错误，翻译腔/语气缺失也纳入校对范围。
+                if bool(getattr(self, "enable_polish", False)):
+                    polish_issues = self._find_polish_issues(src, clean_dst)
+                    if polish_issues:
+                        issues = list(issues) + polish_issues
+                if issues:
+                    # 校对分级 — 本地检查通过则跳过 LLM 校对
+                    if self._should_skip_proofread(src, clean_dst):
+                        logger.debug(f"校对分级跳过 [{i}]: 文本过短或匹配跳过模式")
+                        continue
+                    weak_residue_only = (
+                        self._has_weak_japanese_residue(clean_dst)
+                        and not self._has_blocking_japanese_residue(clean_dst)
+                    )
+                    residue_fragments = self._extract_japanese_residue_fragments(clean_dst)
+                    with ctx.proofread_residue_fragments_lock:
+                        repeated_fragments = [
+                            fragment
+                            for fragment in residue_fragments
+                            if ctx.proofread_residue_fragments_seen.get(fragment, 0) > 0
+                        ]
+                        if not repeated_fragments:
+                            for fragment in residue_fragments:
+                                ctx.proofread_residue_fragments_seen[fragment] = (
+                                    ctx.proofread_residue_fragments_seen.get(fragment, 0) + 1
                                 )
-                                continue
-                            suspicious_idx.add(i)
-                            retranslate_residue_fragments[i] = repeated_fragments
-                            logger.info(
-                                "重复日文残留转为重译，跳过重复校对: "
+                    if repeated_fragments:
+                        if weak_residue_only:
+                            logger.debug(
+                                "弱日文残留仅提示不阻塞，跳过重复校对: "
                                 + " / ".join(repeated_fragments[:5])
                             )
                             continue
-                        proofread_issues[i] = issues
-
-            if proofread_issues:
-                self._inc_stat("proofread_suspicious", len(proofread_issues))
-            if suspicious_idx:
-                self._inc_stat("quality_retranslate", len(suspicious_idx))
-
-            all_repair_idx = suspicious_idx | set(proofread_issues)
-            if not all_repair_idx:
-                return pairs
-
-            logger.info(
-                f"质检发现 {len(all_repair_idx)} 条可疑译文，"
-                f"重译={sorted(suspicious_idx)}，校对={sorted(proofread_issues)}"
-            )
-            repaired = list(pairs)
-            fixed_count = 0
-            proofread_fixed = 0
-            proofread_skipped = 0
-            batch_proofread_revisions: Dict[int, str] = {}
-            proofread_only_idx = sorted(set(proofread_issues) - suspicious_idx)
-            if enable_proofread and len(proofread_only_idx) >= 2:
-                batch_items = []
-                for batch_i in proofread_only_idx:
-                    task_key, src, draft = repaired[batch_i]
-                    proofread_prev, proofread_next = get_context_for_task(task_key)
-                    batch_items.append(
-                        {
-                            "idx": batch_i,
-                            "src": src,
-                            "draft": draft,
-                            "issues": list(proofread_issues[batch_i]),
-                            "prev": proofread_prev,
-                            "next": proofread_next,
-                        }
-                    )
-                try:
-                    batch_proofread_revisions = self._proofread_translations_batch(batch_items)
-                    if batch_proofread_revisions is None:
-                        # 401 / 403 from proofread API — skip proofread for these
-                        # items rather than silently treating draft as revised.
-                        proofread_skipped += len(batch_items)
-                        batch_proofread_revisions = {}
-                        logger.warning(
-                            f"批量校对认证失败，跳过 {len(batch_items)} 条校对"
-                        )
-                    elif batch_proofread_revisions:
+                        suspicious_idx.add(i)
+                        retranslate_residue_fragments[i] = repeated_fragments
                         logger.info(
-                            f"批量校对完成: {len(batch_proofread_revisions)}/{len(batch_items)} 条"
+                            "重复日文残留转为重译，跳过重复校对: "
+                            + " / ".join(repeated_fragments[:5])
                         )
-                except Exception as batch_proofread_error:
-                    logger.warning(f"批量校对失败，回退单条校对: {batch_proofread_error}")
+                        continue
+                    proofread_issues[i] = issues
 
-            for i in sorted(all_repair_idx):
-                task_key, src, _ = repaired[i]
-                try:
-                    if enable_proofread and i in proofread_issues and i not in suspicious_idx:
-                        draft = repaired[i][2]
-                        issues = list(proofread_issues[i])
-                        if getattr(self, "_proofread_auth_failed", False):
-                            proofread_skipped += 1
-                            continue
-                        if i in batch_proofread_revisions:
-                            revised = batch_proofread_revisions[i]
-                        else:
-                            proofread_prev, proofread_next = get_context_for_task(task_key)
-                            try:
-                                revised = self._proofread_translation(
-                                    src,
-                                    draft,
-                                    issues,
-                                    prev_text=proofread_prev,
-                                    next_text=proofread_next,
-                                )
-                            except TypeError as exc:
-                                message = str(exc)
-                                if "prev_text" in message or "next_text" in message or "unexpected keyword" in message:
-                                    revised = self._proofread_translation(src, draft, issues)
-                                else:
-                                    raise
-                        if revised is None:
-                            proofread_skipped += 1
-                            continue
-                        revised = self._postprocess_translation(src, revised)
-                        if (
-                            any("日文" in issue or "假名" in issue for issue in issues)
-                            and self._has_blocking_japanese_residue(revised)
-                        ):
-                            try:
-                                fallback_prev, fallback_next = get_context_for_task(task_key)
-                                fallback_revised = call_translate_chunk(
-                                    src,
-                                    fallback_prev,
-                                    fallback_next,
-                                    self._extract_japanese_residue_fragments(revised),
-                                )
-                                if fallback_revised:
-                                    revised = self._postprocess_translation(src, fallback_revised)
-                                issues.append("校对后仍残留日文，已回退单条重译")
-                            except Exception as fallback_error:
-                                logger.warning(f"校对后单条重译失败 [{i}]: {fallback_error}")
-                        repaired[i] = (task_key, src, revised)
-                        remember_residue_repair(draft, revised)
-                        if not self._is_context_cache_text(src):
-                            self._save_text_cache_entry(src, revised, verified=True)
-                        proofread_fixed += 1
-                        if proofread_callback:
-                            detail = {
-                                "original": src,
-                                "draft": draft,
-                                "revised": revised,
-                                "issues": issues,
-                                "japanese_residue": any("日文" in issue or "假名" in issue for issue in issues),
-                                "glossary_mismatch": any("术语" in issue for issue in issues),
-                            }
-                            try:
-                                proofread_callback(detail)
-                            except Exception as callback_error:
-                                logger.warning(f"译后校对详情回调失败: {callback_error}")
-                    else:
-                        repair_prev, repair_next = get_context_for_task(task_key)
-                        repaired_text = call_translate_chunk(
-                            src,
-                            repair_prev,
-                            repair_next,
-                            retranslate_residue_fragments.get(i),
-                        )
-                        repaired[i] = (
-                            task_key,
-                            src,
-                            self._postprocess_translation(src, repaired_text),
-                        )
-                    fixed_count += 1
-                except Exception as e:
-                    logger.warning(f"质检重译失败 [{i}]: {e}")
-            if proofread_fixed:
-                self._inc_stat("proofread_fixed", proofread_fixed)
-            if proofread_skipped:
-                logger.info(
-                    f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条，"
-                    f"因认证失败跳过校对 {proofread_skipped} 条"
+        if proofread_issues:
+            self._inc_stat("proofread_suspicious", len(proofread_issues))
+        if suspicious_idx:
+            self._inc_stat("quality_retranslate", len(suspicious_idx))
+
+        all_repair_idx = suspicious_idx | set(proofread_issues)
+        if not all_repair_idx:
+            return pairs
+
+        logger.info(
+            f"质检发现 {len(all_repair_idx)} 条可疑译文，"
+            f"重译={sorted(suspicious_idx)}，校对={sorted(proofread_issues)}"
+        )
+        repaired = list(pairs)
+        fixed_count = 0
+        proofread_fixed = 0
+        proofread_skipped = 0
+        batch_proofread_revisions: Dict[int, str] = {}
+        proofread_only_idx = sorted(set(proofread_issues) - suspicious_idx)
+        if enable_proofread and len(proofread_only_idx) >= 2:
+            batch_items = []
+            for batch_i in proofread_only_idx:
+                task_key, src, draft = repaired[batch_i]
+                context_prev, context_next = self._context_for_task(ctx, task_key)
+                batch_items.append(
+                    {
+                        "idx": batch_i,
+                        "src": src,
+                        "draft": draft,
+                        "issues": list(proofread_issues[batch_i]),
+                        "prev": context_prev,
+                        "next": context_next,
+                    }
                 )
-            else:
-                logger.info(f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条")
-            return repaired
-
-        def translate_one_batch(batch: List[str]) -> List[Tuple[str, str, str]]:
-            if self.cancel_event.is_set():
-                raise RuntimeError("翻译已取消")
-
-            batch_texts = [task_texts[key] for key in batch]
-
-            if len(batch) == 1:
-                task_key = batch[0]
-                text = batch_texts[0]
-                prev_ctx, next_ctx = get_context_for_task(task_key)
-                zh = call_translate_chunk(text, prev_ctx, next_ctx)
-                return repair_batch_quality(batch, [(task_key, text, zh)])
-
-            self._inc_stat("batch_total")
-            # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
-            item_contexts = (
-                [get_context_for_task(task_key) for task_key in batch]
-                if use_context_window and self.ENABLE_BATCH_ITEM_CONTEXT
-                else None
-            )
-            batch_prev_ctx, batch_next_ctx = get_context_for_task(batch[0])
             try:
-                result = self._call_deepseek_batch_json(
-                    batch_texts,
-                    prev_text=batch_prev_ctx,
-                    next_text=batch_next_ctx,
-                    item_contexts=item_contexts,
-                )
-            except TypeError as exc:
-                if "item_contexts" not in str(exc):
-                    raise
-                result = self._call_deepseek_batch_json(
-                    batch_texts,
-                    prev_text=batch_prev_ctx,
-                    next_text=batch_next_ctx,
-                )
-            except ContentModerationError as moderation_exc:
-                logger.warning(
-                    "批量 JSON 被内容审核拦截，拆单条重试: %s",
-                    moderation_exc,
-                )
-                self._inc_stat("batch_moderation_fallback")
-                single_parts: List[Optional[str]] = []
-                for task_key, text in zip(batch, batch_texts):
-                    try:
-                        retry_prev, retry_next = get_context_for_task(task_key)
-                        single_parts.append(call_translate_chunk(text, retry_prev, retry_next))
-                    except Exception as single_exc:
-                        logger.warning(
-                            "内容审核拦截后的单条重试失败: %s",
-                            single_exc,
-                        )
-                        single_parts.append(None)
-                return repair_batch_quality(batch, list(zip(batch, batch_texts, single_parts)))
+                batch_proofread_revisions = self._proofread_translations_batch(batch_items)
+                if batch_proofread_revisions is None:
+                    # 401 / 403 from proofread API — skip proofread for these
+                    # items rather than silently treating draft as revised.
+                    proofread_skipped += len(batch_items)
+                    batch_proofread_revisions = {}
+                    logger.warning(f"批量校对认证失败，跳过 {len(batch_items)} 条校对")
+                elif batch_proofread_revisions:
+                    logger.info(
+                        f"批量校对完成: {len(batch_proofread_revisions)}/{len(batch_items)} 条"
+                    )
+            except Exception as batch_proofread_error:
+                logger.warning(f"批量校对失败，回退单条校对: {batch_proofread_error}")
 
-            # Case 1: 全部成功（所有 idx 都有有效译文）
-            if result.translations is not None and not result.missing_indices:
-                json_parts = result.translations
-                if isinstance(json_parts, list) and len(json_parts) == len(batch):
-                    if self.extract_glossary and result.new_terms:
-                        cleaned_terms = self._clean_new_terms(result.new_terms)
-                        self._merge_new_terms_into_glossary(cleaned_terms)
-                    self._inc_stat("batch_json_success")
-                    return repair_batch_quality(batch, list(zip(batch, batch_texts, json_parts)))
+        for i in sorted(all_repair_idx):
+            task_key, src, _ = repaired[i]
+            try:
+                if enable_proofread and i in proofread_issues and i not in suspicious_idx:
+                    draft = repaired[i][2]
+                    issues = list(proofread_issues[i])
+                    if getattr(self, "_proofread_auth_failed", False):
+                        proofread_skipped += 1
+                        continue
+                    if i in batch_proofread_revisions:
+                        revised = batch_proofread_revisions[i]
+                    else:
+                        context_prev, context_next = self._context_for_task(ctx, task_key)
+                        try:
+                            revised = self._proofread_translation(
+                                src,
+                                draft,
+                                issues,
+                                prev_text=context_prev,
+                                next_text=context_next,
+                            )
+                        except TypeError as exc:
+                            message = str(exc)
+                            if (
+                                "prev_text" in message
+                                or "next_text" in message
+                                or "unexpected keyword" in message
+                            ):
+                                revised = self._proofread_translation(src, draft, issues)
+                            else:
+                                raise
+                    if revised is None:
+                        proofread_skipped += 1
+                        continue
+                    revised = self._postprocess_translation(src, revised)
+                    if (
+                        any("日文" in issue or "假名" in issue for issue in issues)
+                        and self._has_blocking_japanese_residue(revised)
+                    ):
+                        try:
+                            fallback_prev, fallback_next = self._context_for_task(ctx, task_key)
+                            fallback_revised = self._call_translate_chunk_fallback(
+                                ctx,
+                                src,
+                                fallback_prev,
+                                fallback_next,
+                                self._extract_japanese_residue_fragments(revised),
+                            )
+                            if fallback_revised:
+                                revised = self._postprocess_translation(src, fallback_revised)
+                            issues.append("校对后仍残留日文，已回退单条重译")
+                        except Exception as fallback_error:
+                            logger.warning(f"校对后单条重译失败 [{i}]: {fallback_error}")
+                    repaired[i] = (task_key, src, revised)
+                    self._remember_residue_repair(ctx, draft, revised)
+                    if not self._is_context_cache_text(src):
+                        self._save_text_cache_entry(src, revised, verified=True)
+                    proofread_fixed += 1
+                    if ctx.proofread_callback:
+                        detail = {
+                            "original": src,
+                            "draft": draft,
+                            "revised": revised,
+                            "issues": issues,
+                            "japanese_residue": any(
+                                "日文" in issue or "假名" in issue for issue in issues
+                            ),
+                            "glossary_mismatch": any("术语" in issue for issue in issues),
+                        }
+                        try:
+                            ctx.proofread_callback(detail)
+                        except Exception as callback_error:
+                            logger.warning(f"译后校对详情回调失败: {callback_error}")
+                else:
+                    repair_prev, repair_next = self._context_for_task(ctx, task_key)
+                    repaired_text = self._call_translate_chunk_fallback(
+                        ctx,
+                        src,
+                        repair_prev,
+                        repair_next,
+                        retranslate_residue_fragments.get(i),
+                    )
+                    repaired[i] = (
+                        task_key,
+                        src,
+                        self._postprocess_translation(src, repaired_text),
+                    )
+                fixed_count += 1
+            except Exception as e:
+                logger.warning(f"质检重译失败 [{i}]: {e}")
+        if proofread_fixed:
+            self._inc_stat("proofread_fixed", proofread_fixed)
+        if proofread_skipped:
+            logger.info(
+                f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条，"
+                f"因认证失败跳过校对 {proofread_skipped} 条"
+            )
+        else:
+            logger.info(f"质检修复完成，成功修复 {fixed_count}/{len(all_repair_idx)} 条")
+        return repaired
 
-            # Case 2: 部分成功 — 有效条目直接用，缺失条目单条重试
-            if result.translations is not None and result.missing_indices:
+    def _translate_one_batch(
+        self, ctx: "BatchRunContext", batch: List[str]
+    ) -> List[Tuple[str, str, str]]:
+        """翻译一个批次：单条直译、批量 JSON、部分成功重试、整体回退逐条。"""
+        if self.cancel_event.is_set():
+            raise RuntimeError("翻译已取消")
+
+        batch_texts = [ctx.task_texts[key] for key in batch]
+
+        if len(batch) == 1:
+            task_key = batch[0]
+            text = batch_texts[0]
+            prev_ctx, next_ctx = self._context_for_task(ctx, task_key)
+            zh = self._call_translate_chunk_fallback(ctx, text, prev_ctx, next_ctx)
+            return self._repair_batch_quality(ctx, batch, [(task_key, text, zh)])
+
+        self._inc_stat("batch_total")
+        # 优先使用结构化 JSON 返回，减少分割符丢失导致的拆分失败。
+        item_contexts = (
+            [self._context_for_task(ctx, task_key) for task_key in batch]
+            if ctx.use_context_window and self.ENABLE_BATCH_ITEM_CONTEXT
+            else None
+        )
+        batch_prev_ctx, batch_next_ctx = self._context_for_task(ctx, batch[0])
+        try:
+            result = self._call_deepseek_batch_json(
+                batch_texts,
+                prev_text=batch_prev_ctx,
+                next_text=batch_next_ctx,
+                item_contexts=item_contexts,
+            )
+        except TypeError as exc:
+            if "item_contexts" not in str(exc):
+                raise
+            result = self._call_deepseek_batch_json(
+                batch_texts,
+                prev_text=batch_prev_ctx,
+                next_text=batch_next_ctx,
+            )
+        except ContentModerationError as moderation_exc:
+            logger.warning(
+                "批量 JSON 被内容审核拦截，拆单条重试: %s",
+                moderation_exc,
+            )
+            self._inc_stat("batch_moderation_fallback")
+            single_parts: List[Optional[str]] = []
+            for task_key, text in zip(batch, batch_texts):
+                try:
+                    retry_prev, retry_next = self._context_for_task(ctx, task_key)
+                    single_parts.append(
+                        self._call_translate_chunk_fallback(ctx, text, retry_prev, retry_next)
+                    )
+                except Exception as single_exc:
+                    logger.warning(
+                        "内容审核拦截后的单条重试失败: %s",
+                        single_exc,
+                    )
+                    single_parts.append(None)
+            return self._repair_batch_quality(
+                ctx, batch, list(zip(batch, batch_texts, single_parts))
+            )
+
+        # Case 1: 全部成功（所有 idx 都有有效译文）
+        if result.translations is not None and not result.missing_indices:
+            json_parts = result.translations
+            if isinstance(json_parts, list) and len(json_parts) == len(batch):
                 if self.extract_glossary and result.new_terms:
                     cleaned_terms = self._clean_new_terms(result.new_terms)
                     self._merge_new_terms_into_glossary(cleaned_terms)
                 self._inc_stat("batch_json_success")
-                self._inc_stat("batch_partial_retry")
+                return self._repair_batch_quality(
+                    ctx, batch, list(zip(batch, batch_texts, json_parts))
+                )
 
-                final_parts = list(result.translations)  # 复制
-                for idx in result.missing_indices:
-                    logger.info(f"部分成功重试: 缺失索引 {idx} 走单条翻译")
-                    try:
-                        retry_prev, retry_next = get_context_for_task(batch[idx])
-                        final_parts[idx] = call_translate_chunk(batch_texts[idx], retry_prev, retry_next)
-                    except Exception as e:
-                        logger.warning(f"单条重试失败 [idx={idx}]: {e}")
-                        final_parts[idx] = None  # 保留为未完成，禁止回写原文
+        # Case 2: 部分成功 — 有效条目直接用，缺失条目单条重试
+        if result.translations is not None and result.missing_indices:
+            if self.extract_glossary and result.new_terms:
+                cleaned_terms = self._clean_new_terms(result.new_terms)
+                self._merge_new_terms_into_glossary(cleaned_terms)
+            self._inc_stat("batch_json_success")
+            self._inc_stat("batch_partial_retry")
 
-                return repair_batch_quality(batch, list(zip(batch, batch_texts, final_parts)))
-
-            # Case 3: 批量 JSON 两次仍全部失败 — 直接逐条单条翻译。
-            # 不再走分隔符批量，避免格式/分隔符再次失败导致最后少量文本反复卡住。
-            self._inc_stat("batch_fallback")
-            logger.info("批量 JSON 多次失败，回退逐条单条翻译: %s 条", len(batch))
-            single_parts: List[Optional[str]] = []
-            for task_key, text in zip(batch, batch_texts):
+            final_parts = list(result.translations)  # 复制
+            for idx in result.missing_indices:
+                logger.info(f"部分成功重试: 缺失索引 {idx} 走单条翻译")
                 try:
-                    retry_prev, retry_next = get_context_for_task(task_key)
-                    single_parts.append(call_translate_chunk(text, retry_prev, retry_next))
+                    retry_prev, retry_next = self._context_for_task(ctx, batch[idx])
+                    final_parts[idx] = self._call_translate_chunk_fallback(
+                        ctx, batch_texts[idx], retry_prev, retry_next
+                    )
                 except Exception as e:
-                    logger.warning(f"批量失败后的单条翻译失败: {e}")
-                    single_parts.append(None)
-            return repair_batch_quality(batch, list(zip(batch, batch_texts, single_parts)))
+                    logger.warning(f"单条重试失败 [idx={idx}]: {e}")
+                    final_parts[idx] = None  # 保留为未完成，禁止回写原文
 
+            return self._repair_batch_quality(
+                ctx, batch, list(zip(batch, batch_texts, final_parts))
+            )
+
+        # Case 3: 批量 JSON 两次仍全部失败 — 直接逐条单条翻译。
+        # 不再走分隔符批量，避免格式/分隔符再次失败导致最后少量文本反复卡住。
+        self._inc_stat("batch_fallback")
+        logger.info("批量 JSON 多次失败，回退逐条单条翻译: %s 条", len(batch))
+        single_parts = []
+        for task_key, text in zip(batch, batch_texts):
+            try:
+                retry_prev, retry_next = self._context_for_task(ctx, task_key)
+                single_parts.append(
+                    self._call_translate_chunk_fallback(ctx, text, retry_prev, retry_next)
+                )
+            except Exception as e:
+                logger.warning(f"批量失败后的单条翻译失败: {e}")
+                single_parts.append(None)
+        return self._repair_batch_quality(
+            ctx, batch, list(zip(batch, batch_texts, single_parts))
+        )
+
+    def _record_batch_results(
+        self, ctx: "BatchRunContext", batch_results: List[Tuple[str, str, str]]
+    ) -> None:
+        """把一个批次的结果写入缓存与输出，并推进进度。"""
+        for task_key, original, translated in batch_results:
+            accepted = self._accept_translation(
+                ctx, original, translated, "批次译文疑似未完成"
+            )
+            if accepted is None:
+                continue
+            translated = accepted
+            if self._should_write_cache():
+                with self._cache_lock:
+                    self.cache[task_key] = translated
+            if not self._is_context_cache_text(original):
+                self._save_text_cache_entry(original, translated, verified=False)
+            task = ctx.pending_tasks.get(task_key, {})
+            for occurrence_idx in task.get("indices", []):
+                ctx.ordered_results[occurrence_idx] = translated
+            ctx.results.setdefault(original, translated)
+            ctx.completed += ctx.pending_counts.get(task_key, 1)
+            if ctx.item_callback:
+                ctx.item_callback(original, translated)
+            if ctx.progress_callback:
+                ctx.progress_callback(ctx.completed, ctx.total)
+
+    def _retry_single_after_batch_failure(
+        self, ctx: "BatchRunContext", batch: List[str]
+    ) -> None:
+        """整批失败后逐条重试，失败则记为未完成（绝不回写原文）。"""
+        for task_key in batch:
+            if self.cancel_event.is_set():
+                self._save_cache(force=True)
+                raise RuntimeError("翻译已取消")
+            text = ctx.task_texts[task_key]
+            try:
+                fallback_prev, fallback_next = self._context_for_task(ctx, task_key)
+                zh = self._call_translate_chunk_fallback(
+                    ctx, text, fallback_prev, fallback_next
+                )
+                accepted = self._accept_translation(
+                    ctx, text, zh, "批次失败后的单条重试仍未完成"
+                )
+                if accepted is None:
+                    continue
+                zh = accepted
+                if self._should_write_cache():
+                    with self._cache_lock:
+                        self.cache[task_key] = zh
+                task = ctx.pending_tasks.get(task_key, {})
+                for occurrence_idx in task.get("indices", []):
+                    ctx.ordered_results[occurrence_idx] = zh
+                ctx.results.setdefault(text, zh)
+            except Exception as e2:
+                logger.error(f"翻译失败: {e2}")
+                self._mark_incomplete(ctx, text, f"单条重试失败: {e2}")
+                continue
+            ctx.completed += ctx.pending_counts.get(task_key, 1)
+            if ctx.item_callback:
+                ctx.item_callback(text, zh)
+            if ctx.progress_callback:
+                ctx.progress_callback(ctx.completed, ctx.total)
+
+    def _run_batch_executor(self, ctx: "BatchRunContext") -> None:
+        """线程池调度：增量提交、动态收缩并发、收集结果。"""
         executor = ThreadPoolExecutor(max_workers=max(1, self.max_workers))
         futures: Dict[Any, List[str]] = {}
         future_order = deque()
-        batch_queue = deque(batches)
+        batch_queue = deque(ctx.batches)
 
         def pop_next_dynamic_batch() -> List[str]:
             batch = list(batch_queue.popleft())
@@ -5850,13 +6106,13 @@ JSON 顶层字段：
                 batch = pop_next_dynamic_batch()
                 if not batch:
                     continue
-                future = executor.submit(translate_one_batch, batch)
+                future = executor.submit(self._translate_one_batch, ctx, batch)
                 futures[future] = batch
                 future_order.append(future)
                 current_limit = self._current_dynamic_workers()
 
         def trim_excess_futures() -> None:
-            """Cancel queued futures when dynamic concurrency shrinks."""
+            """动态并发上限收缩时取消排队中的任务。"""
             limit = self._current_dynamic_workers()
             if len(futures) <= limit:
                 return
@@ -5894,8 +6150,7 @@ JSON 顶层字段：
                     submit_available_batches()
                     continue
 
-                # Remove completed futures from future_order first so the deque
-                # is not resized mid-iteration by worker callbacks. See #71.
+                # 先剔除已完成的 future，避免遍历过程中 deque 被工作线程回调改写。
                 done_set = set(done)
                 new_future_order = deque(f for f in future_order if f not in done_set)
                 future_order.clear()
@@ -5906,101 +6161,67 @@ JSON 顶层字段：
                         continue
                     try:
                         batch_results = future.result()
-                        for task_key, original, translated in batch_results:
-                            accepted = accept_translation(original, translated, "批次译文疑似未完成")
-                            if accepted is None:
-                                continue
-                            translated = accepted
-                            if self._should_write_cache():
-                                with self._cache_lock:
-                                    self.cache[task_key] = translated
-                            # Phase 1-②: 写入文本级缓存（非短文本才写入）
-                            if not self._is_context_cache_text(original):
-                                self._save_text_cache_entry(original, translated, verified=False)
-                            task = pending_tasks.get(task_key, {})
-                            for occurrence_idx in task.get("indices", []):
-                                ordered_results[occurrence_idx] = translated
-                            results.setdefault(original, translated)
-                            completed += pending_counts.get(task_key, 1)
-                            if item_callback:
-                                item_callback(original, translated)
-                            if progress_callback:
-                                progress_callback(completed, total)
+                        self._record_batch_results(ctx, batch_results)
                         if self._should_write_cache():
                             self._save_cache()
                     except Exception as e:
                         logger.error(f"批次翻译失败: {e}")
                         if "502" in str(e):
                             raise
-                        for task_key in batch:
-                            if self.cancel_event.is_set():
-                                self._save_cache(force=True)
-                                raise RuntimeError("翻译已取消")
-                            text = task_texts[task_key]
-                            try:
-                                fallback_prev, fallback_next = get_context_for_task(task_key)
-                                zh = call_translate_chunk(text, fallback_prev, fallback_next)
-                                accepted = accept_translation(text, zh, "批次失败后的单条重试仍未完成")
-                                if accepted is None:
-                                    continue
-                                zh = accepted
-                                if self._should_write_cache():
-                                    with self._cache_lock:
-                                        self.cache[task_key] = zh
-                                task = pending_tasks.get(task_key, {})
-                                for occurrence_idx in task.get("indices", []):
-                                    ordered_results[occurrence_idx] = zh
-                                results.setdefault(text, zh)
-                            except Exception as e2:
-                                logger.error(f"翻译失败: {e2}")
-                                mark_incomplete(text, f"单条重试失败: {e2}")
-                                continue
-                            completed += pending_counts.get(task_key, 1)
-                            if item_callback:
-                                item_callback(text, zh)
-                            if progress_callback:
-                                progress_callback(completed, total)
+                        self._retry_single_after_batch_failure(ctx, batch)
 
                 submit_available_batches()
                 trim_excess_futures()
         finally:
             executor.shutdown(wait=not self.cancel_event.is_set(), cancel_futures=True)
 
+    def _finalize_batches(self, ctx: "BatchRunContext") -> Dict[str, str]:
+        """收尾：最终校验、残留汇总、必要时抛出 TranslationIncompleteError。"""
         self._save_cache(force=True)
         self._flush_text_cache()
 
-        for idx, text in enumerate(texts):
-            translated = ordered_results[idx] if idx < len(ordered_results) else None
-            cache_key = task_key_for(text, idx)
+        for idx, text in enumerate(ctx.texts):
+            translated = (
+                ctx.ordered_results[idx] if idx < len(ctx.ordered_results) else None
+            )
+            cache_key = self._task_key_for(ctx, text, idx)
             if translated is None:
                 with self._cache_lock:
                     cached = self.cache.get(cache_key)
                 if cached is not None:
-                    accepted = accept_translation(text, cached, "最终缓存补全疑似未完成")
+                    accepted = self._accept_translation(
+                        ctx, text, cached, "最终缓存补全疑似未完成"
+                    )
                 else:
                     accepted = None
                 if accepted is not None:
-                    ordered_results[idx] = accepted
-                    results.setdefault(text, accepted)
+                    ctx.ordered_results[idx] = accepted
+                    ctx.results.setdefault(text, accepted)
                 elif cached is not None:
                     with self._cache_lock:
                         self.cache.pop(cache_key, None)
                         self._cache_dirty = True
                 continue
-            accepted = accept_translation(text, translated, "最终校验发现译文仍未完成")
+            accepted = self._accept_translation(
+                ctx, text, translated, "最终校验发现译文仍未完成"
+            )
             if accepted is None:
-                ordered_results[idx] = None
+                ctx.ordered_results[idx] = None
             else:
-                ordered_results[idx] = accepted
-                results.setdefault(text, accepted)
+                ctx.ordered_results[idx] = accepted
+                ctx.results.setdefault(text, accepted)
 
-        missing_texts = [text for idx, text in enumerate(texts) if idx >= len(ordered_results) or not ordered_results[idx]]
+        missing_texts = [
+            text
+            for idx, text in enumerate(ctx.texts)
+            if idx >= len(ctx.ordered_results) or not ctx.ordered_results[idx]
+        ]
         for text in missing_texts:
-            mark_incomplete(text, "未返回安全译文")
+            self._mark_incomplete(ctx, text, "未返回安全译文")
 
-        if failed_texts or residue_texts:
-            unique_failed = list(dict.fromkeys(failed_texts.keys()))
-            unique_residue = list(dict.fromkeys(residue_texts.keys()))
+        if ctx.failed_texts or ctx.residue_texts:
+            unique_failed = list(dict.fromkeys(ctx.failed_texts.keys()))
+            unique_residue = list(dict.fromkeys(ctx.residue_texts.keys()))
             if unique_failed:
                 self._inc_stat("translation_incomplete", len(unique_failed))
             if unique_residue:
@@ -6008,25 +6229,25 @@ JSON 顶层字段：
             failed_details = [
                 {
                     "text": text,
-                    "reason": failed_texts.get(text) or "未返回安全译文",
+                    "reason": ctx.failed_texts.get(text) or "未返回安全译文",
                 }
                 for text in unique_failed
             ]
             residue_details = []
             for text in unique_residue:
-                translated = residue_texts.get(text, "")
+                translated = ctx.residue_texts.get(text, "")
                 residue_details.append(
                     {
                         "original": text,
                         "translated": translated,
                         "fragments": self._extract_japanese_residue_fragments(translated),
-                        "reason": failed_texts.get(text) or "译文疑似仍有日文残留",
+                        "reason": ctx.failed_texts.get(text) or "译文疑似仍有日文残留",
                     }
                 )
             incomplete_error = TranslationIncompleteError(
                 failed_texts=unique_failed,
                 residue_texts=unique_residue,
-                partial_results=results,
+                partial_results=ctx.results,
                 failed_details=failed_details,
                 residue_details=residue_details,
             )
@@ -6035,17 +6256,74 @@ JSON 顶层字段：
                 incomplete_error.format_diagnostics(max_items=5),
                 self.japanese_residue_allowlist_path(),
             )
-            log_translate_summary("incomplete", planned=planned_batches)
+            self._log_batch_summary(ctx, "incomplete", planned=ctx.planned_batches)
             raise incomplete_error
 
-        if progress_callback and completed < total:
-            progress_callback(total, total)
+        if ctx.progress_callback and ctx.completed < ctx.total:
+            ctx.progress_callback(ctx.total, ctx.total)
 
-        log_translate_summary("success", planned=planned_batches)
-        self._last_ordered_results = ordered_results
+        self._log_batch_summary(ctx, "success", planned=ctx.planned_batches)
+        self._last_ordered_results = ctx.ordered_results
         # 保留与结果对齐的原文，供译后一致性检查使用（本地计算，无 API 开销）。
-        self._last_translated_texts = list(texts)
-        return results
+        self._last_translated_texts = list(ctx.texts)
+        return ctx.results
+
+    def _log_batch_summary(
+        self, ctx: "BatchRunContext", status: str, planned: int = 0
+    ) -> None:
+        """阶段性能汇总。
+
+        `pending_unique` 直接读 ctx.uncached_unique，不再依赖闭包捕获时机；
+        原实现中该名称在赋值前就被引用，只是靠调用顺序侥幸成立。
+        """
+        elapsed = max(0.001, time.time() - ctx.batch_started_at)
+        stats = self.get_stats()
+        api_delta = max(0, int(stats.get("api_requests_total", 0)) - ctx.start_api_requests)
+        token_delta = max(0, int(stats.get("tokens_total", 0)) - ctx.start_tokens)
+        batch_delta = max(0, int(stats.get("batch_total", 0)) - ctx.start_batch_total)
+        quality_delta = max(
+            0, int(stats.get("quality_retranslate", 0)) - ctx.start_quality_retranslate
+        )
+        chars_per_second = int(ctx.total_chars / elapsed) if ctx.total_chars else 0
+        texts_per_second = (
+            round(float(ctx.completed) / elapsed, 2) if ctx.completed else 0.0
+        )
+        self._set_stat("translate_elapsed_ms", int(elapsed * 1000))
+        cache_hits = int(stats.get("translate_cache_hits", 0))
+        if planned or batch_delta or api_delta:
+            logger.info(
+                "批量JSON翻译完成: status=%s, planned_batches=%s, actual_batch_tasks=%s, "
+                "api_requests=%s, tokens=%s, elapsed=%.1fs, fast_batch=%s",
+                status,
+                planned,
+                batch_delta,
+                api_delta,
+                token_delta,
+                elapsed,
+                "on" if ctx.fast_batch_mode else "off",
+            )
+        logger.info(
+            "翻译阶段性能汇总: status=%s, texts=%s, completed=%s, chars=%s, elapsed=%.1fs, "
+            "chars/s=%s, texts/s=%s, cache_hits=%s, pending_unique=%s, planned_batches=%s, "
+            "actual_batch_tasks=%s, api_requests=%s, tokens=%s, quality_retranslate=%s, "
+            "context_window=%s, fast_batch=%s",
+            status,
+            ctx.total,
+            ctx.completed,
+            ctx.total_chars,
+            elapsed,
+            chars_per_second,
+            texts_per_second,
+            cache_hits,
+            len(ctx.uncached_unique),
+            planned,
+            batch_delta,
+            api_delta,
+            token_delta,
+            quality_delta,
+            "on" if ctx.use_context_window else "off",
+            "on" if ctx.fast_batch_mode else "off",
+        )
 
     def __del__(self):
         """析构时保存缓存"""

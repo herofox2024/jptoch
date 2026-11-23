@@ -125,7 +125,7 @@ def _preextract_glossary_profiles(
             try:
                 status_callback(message)
             except Exception:
-                pass
+                logger.debug("术语提取状态回调失败: %s", message, exc_info=True)
 
     if not force and not bool(cfg.get("pre_extract_glossary", False)):
         return {"ok": True, "message": "未启用术语提取", "profile_ids": [], "profiles": [], "text_count": 0, "char_count": 0}
@@ -236,7 +236,9 @@ def _preextract_glossary_profiles(
                 try:
                     progress_callback(batch_index, total_batches)
                 except Exception:
-                    pass
+                    logger.debug(
+                        "术语提取进度回调失败: %s/%s", batch_index, total_batches, exc_info=True
+                    )
             _emit_status(f"正在提取术语 {batch_index}/{total_batches}: {provider}/{model or ''}")
 
         extracted = extractor.extract_glossary_candidates(
@@ -252,7 +254,7 @@ def _preextract_glossary_profiles(
             if extractor is not None:
                 extractor.request_cancel(close_session=True)
         except Exception:
-            pass
+            logger.debug("术语提取器关闭失败（不影响提取结果）", exc_info=True)
 
     profile_ids = []
     profiles = []
@@ -626,6 +628,7 @@ class _TranslateWorker(QObject):
                 try:
                     wait_info = translator.get_rate_wait_info() if translator else {}
                 except Exception:
+                    logger.debug("读取限流等待信息失败，本轮不显示等待原因", exc_info=True)
                     wait_info = {}
                 if wait_info and wait_info.get("waiting"):
                     remaining = wait_info.get("remaining") or 0
@@ -706,6 +709,7 @@ class _TranslateWorker(QObject):
                     try:
                         allowlist_path = JaZhTranslator.japanese_residue_allowlist_path()
                     except Exception:
+                        logger.debug("解析日文残留白名单路径失败，提示中省略该路径", exc_info=True)
                         allowlist_path = ""
                     known_terms_path = tq.known_katakana_terms_path()
                     detail += (
@@ -863,7 +867,7 @@ class _TranslateWorker(QObject):
                         if t_name:
                             candidates.append(str(t_name))
                     except Exception:
-                        pass
+                        logger.debug("单独翻译书名失败，回退到其他候选书名", exc_info=True)
                 for title in toc_titles:
                     title_index = all_texts.index(title) if title in all_texts else -1
                     tt = ordered_results[title_index] if ordered_results and title_index >= 0 else results.get(title)
@@ -876,6 +880,7 @@ class _TranslateWorker(QObject):
                         safe_output_title = safe
                         break
             except Exception:
+                logger.warning("推导输出书名失败，将回退为原始文件名", exc_info=True)
                 safe_output_title = ""
 
             if safe_output_title and cfg.get("direction") == "zh":
@@ -903,7 +908,7 @@ class _TranslateWorker(QObject):
                         Path(cfg["out"]).rename(candidate_path)
                         final_out = candidate_path
                 except Exception:
-                    pass
+                    logger.warning("按译名重命名输出文件失败，保留原输出文件名: %s", cfg["out"], exc_info=True)
 
             on_progress(total_texts, total_texts)
             translator.flush_cache()
@@ -1727,7 +1732,7 @@ class TranslateBridge(QObject):
                     error=str(exc),
                 )
             except Exception:
-                pass
+                logger.debug("写入翻译失败诊断事件失败（诊断可选）", exc_info=True)
 
     def _record_translation_task_save_residue(self, residue_samples, residue_total, report_path):
         if not self._current_task_id:
@@ -1760,7 +1765,7 @@ class TranslateBridge(QObject):
                 error=f"pre-save residue count={residue_total}; report={report_path or ''}",
             )
         except Exception:
-            pass
+            logger.debug("写入保存前残留诊断事件失败（诊断可选）", exc_info=True)
 
     def _register_active_texts(self, texts, translator):
         self._active_texts = list(texts or [])
@@ -1776,6 +1781,7 @@ class TranslateBridge(QObject):
             translator.disable_cache_writes()
             return translator.clear_cache_for_texts(self._active_texts)
         except Exception as e:
+            logger.warning("停止时清理缓存失败", exc_info=True)
             self.errorDetail.emit(f"停止清理缓存失败: {e}")
             return 0
 
@@ -1786,7 +1792,7 @@ class TranslateBridge(QObject):
             try:
                 translator.request_cancel(close_session=close_session)
             except Exception:
-                pass
+                logger.debug("取消翻译会话失败（关闭路径，可忽略）", exc_info=True)
 
     @Slot()
     def shutdown(self):
@@ -1798,7 +1804,7 @@ class TranslateBridge(QObject):
                     thread.quit()
                     thread.wait(1500)
             except Exception:
-                pass
+                logger.debug("关闭工作线程失败（退出路径，可忽略）", exc_info=True)
 
     @Property(float, notify=_progressValueChanged)
     def progressValue(self) -> float:
@@ -2047,6 +2053,9 @@ class TranslateBridge(QObject):
             try:
                 paths = paths.toVariant()
             except Exception:
+                # 拖拽/文件对话框传入的 QVariant 转换失败会变成「没有选中任何文件」，
+                # 用户只会看到列表为空，必须留下线索。
+                logger.warning("转换 QVariant 文件路径失败，按空列表处理", exc_info=True)
                 paths = []
         if isinstance(paths, (str, bytes)):
             paths = [paths]
@@ -2583,6 +2592,9 @@ class TranslateBridge(QObject):
                         if not original_title:
                             original_title = Path(source).stem
                     except Exception:
+                        # 书名缺失只影响版权页的一行文字，仍继续添加提示页；
+                        # 但要记录，否则版权页出现「原书名：」空白时无从追查。
+                        logger.warning("提取原书信息失败，版权页书名留空: %s", source, exc_info=True)
                         original_title = ""
                     add_translation_notice_page(
                         book,
@@ -2691,6 +2703,7 @@ class TranslateBridge(QObject):
             self.failed.emit("未找到该原文的缓存译文")
             self.statusChanged.emit("未找到缓存译文，可以手动输入")
         except Exception as e:
+            logger.warning("查找译文失败: %s", src, exc_info=True)
             self.failed.emit(f"查找译文失败: {e}")
             self.statusChanged.emit(f"查找译文失败: {e}")
 
@@ -2873,6 +2886,8 @@ class TranslateBridge(QObject):
                             zf.write(str(log_file), f"logs/{log_file.name}")
             return True
         except Exception as e:
+            # 诊断导出失败往往与权限或磁盘有关，UI 只显示一行消息，日志要留全量堆栈。
+            logger.warning("导出诊断包失败", exc_info=True)
             self.errorDetail.emit(f"Diagnostic export failed: {e}")
             return False
 
@@ -2886,8 +2901,7 @@ class TranslateBridge(QObject):
                       creationflags=0x08000000 if hasattr(_sp, "CREATE_NO_WINDOW") else 0,
                       stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
         except Exception:
-            pass
-
+            logger.debug("播放完成语音失败（提示功能，可忽略）", exc_info=True)
 
     @Slot(result=str)
     def dataDir(self) -> str:

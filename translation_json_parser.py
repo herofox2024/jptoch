@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     import json_repair
@@ -84,7 +87,7 @@ def extract_json_object(raw: str, prefer_new_terms: bool = False) -> Optional[di
                     if coerced is not None:
                         return coerced
                 except Exception:
-                    pass
+                    logger.debug("json_repair 修复首个候选失败，继续尝试下一种解析方式", exc_info=True)
         decoder = json.JSONDecoder()
         fallback = None
         for match in re.finditer(r"[\{\[]", candidate):
@@ -95,6 +98,9 @@ def extract_json_object(raw: str, prefer_new_terms: bool = False) -> Optional[di
                     try:
                         parsed = json_repair.loads(candidate[match.start():])
                     except Exception:
+                        logger.debug(
+                            "json_repair 修复候选片段失败，跳过偏移 %s", match.start(), exc_info=True
+                        )
                         continue
                 else:
                     continue

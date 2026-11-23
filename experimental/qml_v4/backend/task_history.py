@@ -285,6 +285,9 @@ class TranslationTaskHistoryStore:
             try:
                 payload = json.loads(self.path.read_text(encoding="utf-8-sig"))
             except Exception:
+                # 返回空列表等价于「历史记录全没了」。用户看到任务历史清空时，
+                # 这条日志是唯一能区分「文件损坏」和「真的没有记录」的线索。
+                logger.warning("读取任务历史失败，按空历史处理: %s", self.path, exc_info=True)
                 return []
             if isinstance(payload, dict):
                 records = payload.get("tasks", [])

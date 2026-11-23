@@ -70,6 +70,8 @@ def _asset_size_text(size_bytes: int) -> str:
     try:
         size = float(size_bytes or 0)
     except Exception:
+        # GitHub Release 的 size 字段偶尔是 None/字符串，展示成「未知大小」即可。
+        logger.debug("资源大小无法解析为数字: %r", size_bytes, exc_info=True)
         size = 0.0
     if size <= 0:
         return "未知大小"
@@ -291,7 +293,7 @@ class UpdateBridge(QObject):
                 if part.exists():
                     part.unlink()
             except Exception:
-                pass
+                logger.debug("删除未完成的下载临时文件失败: %s", part, exc_info=True)
             self.downloadFailed.emit(str(exc))
         finally:
             self._set_downloading(False)

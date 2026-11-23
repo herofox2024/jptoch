@@ -3,11 +3,14 @@
 
 import hashlib
 import json
+import logging
 import os
 import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
+
+logger = logging.getLogger(__name__)
 
 SHA256_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -94,5 +97,7 @@ def atomic_write_json(path: Union[str, Path], payload: Dict[str, Any]) -> None:
             if os.path.exists(tmp_name):
                 os.remove(tmp_name)
         except OSError:
-            pass
+            # 清理临时文件失败不应掩盖真正的写入异常（下面会 raise 原始错误），
+            # 但残留的 .tmp 会堆积在数据目录里，需要留痕便于排查。
+            logger.debug("清理缓存临时文件失败: %s", tmp_name, exc_info=True)
         raise

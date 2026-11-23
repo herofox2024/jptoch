@@ -188,6 +188,7 @@ class LocalModelBridge(QObject):
                 check=False,
             )
         except Exception as exc:
+            logger.warning("NVIDIA GPU 检测失败，降级为 CPU 模式", exc_info=True)
             return False, f"GPU 检测失败，按 CPU 模式启动: {exc}"
         output = (result.stdout or result.stderr or "").strip()
         if result.returncode == 0 and ("GPU" in output or "NVIDIA" in output.upper()):
@@ -572,7 +573,7 @@ class LocalModelBridge(QObject):
             try:
                 self._log_file.close()
             except Exception:
-                pass
+                logger.debug("关闭本地模型日志文件失败（停止路径，可忽略）", exc_info=True)
             self._log_file = None
         if self._python_service is not None:
             try:

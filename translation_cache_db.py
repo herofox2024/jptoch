@@ -579,6 +579,14 @@ class SQLiteCacheMapping(MutableMapping[str, Any]):
             try:
                 self.database.put_many(self.cache_type, pending)
             except Exception:
+                # 这次写入失败会把整批条目退回 _pending 等下次重放；
+                # 若反复失败，缓存会越积越多，必须能从日志看出根因。
+                logger.error(
+                    "缓存批量写入失败，%s 条退回复重队列: %s",
+                    len(pending),
+                    self.cache_type,
+                    exc_info=True,
+                )
                 with self._lock:
                     for key, value in pending:
                         self._pending.setdefault(key, value)

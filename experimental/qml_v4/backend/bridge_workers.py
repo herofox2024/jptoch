@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
 
 import requests
 from PySide6.QtCore import QObject, Signal
+
+logger = logging.getLogger(__name__)
 
 
 def collect_translatable_texts(epub_path: str) -> List[str]:
@@ -52,6 +55,7 @@ class EstimateWorker(QObject):
             all_texts.extend(extract_toc_titles(book))
             self.finished.emit(self._path, sum(len(text) for text in all_texts))
         except Exception as exc:
+            logger.warning("统计 EPUB 字数失败: %s", self._path, exc_info=True)
             self.failed.emit(self._path, str(exc))
 
 
@@ -88,6 +92,7 @@ class ClearBookCacheWorker(QObject):
             unique_total = len({str(text or "").strip() for text in texts if str(text or "").strip()})
             self.finished.emit(removed, unique_total)
         except Exception as exc:
+            logger.warning("清理书籍缓存失败", exc_info=True)
             self.failed.emit(str(exc))
 
 
@@ -133,4 +138,5 @@ class TestConnectionWorker(QObject):
             else:
                 self.result.emit(f"失败: 网络连接失败 — {message[:240]}")
         except Exception as exc:
+            logger.warning("连接测试出现未预期异常", exc_info=True)
             self.result.emit(f"失败: {exc}")

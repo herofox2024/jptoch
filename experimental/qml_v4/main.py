@@ -2,9 +2,12 @@
 EPUB 日译中工具 — PySide6 + QML 主入口
 """
 
+import logging
 import os
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 EXPERIMENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EXPERIMENT_DIR.parent.parent
@@ -41,7 +44,7 @@ def _set_windows_app_user_model_id():
         app_id = "EPUBTranslator.AIJPZH.V4"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
     except Exception:
-        pass
+        logger.debug("设置 Windows AppUserModelID 失败（仅影响任务栏图标分组）", exc_info=True)
 
 
 def _apply_windows_titlebar_theme(window, theme):
@@ -88,7 +91,8 @@ def _apply_windows_titlebar_theme(window, theme):
             hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color)
         )
     except Exception:
-        pass
+        # 标题栏着色是纯外观增强，失败时保留系统默认外观即可。
+        logger.debug("设置 Windows 标题栏主题失败", exc_info=True)
 
 
 def _choose_font_family(candidates, fallback="Microsoft YaHei UI"):
@@ -116,6 +120,9 @@ def _read_startup_theme() -> str:
         theme = str(data.get("theme") or "light").strip().lower()
         return theme if theme in {"light", "dark", "glass"} else "light"
     except Exception:
+        # 首次启动没有 config.json 属于正常路径，因此用 debug；
+        # 但若文件存在却读不出来（编码/权限问题），用户会看到启动画面主题不对。
+        logger.debug("读取启动主题失败，回退 light", exc_info=True)
         return "light"
 
 

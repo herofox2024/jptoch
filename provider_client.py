@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """Small OpenAI-compatible provider client helpers used by the translator."""
 
+import logging
 import re
 from typing import Any, Dict
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 CONTENT_MODERATION_SNIPPETS = (
@@ -70,6 +73,9 @@ def is_content_moderation_http_error(error: requests.exceptions.HTTPError) -> bo
     try:
         body = (resp.text or "").lower()
     except Exception:
+        # 读取响应体失败意味着无法判定是否为内容审核拦截，
+        # 会退化为「普通 HTTP 错误」，值得留痕。
+        logger.debug("读取错误响应体失败，无法判定内容审核拦截", exc_info=True)
         return False
     if not body:
         return False

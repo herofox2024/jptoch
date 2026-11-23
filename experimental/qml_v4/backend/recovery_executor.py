@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 import translation_quality as tq
 from translation_models import RecoveryAction, RecoveryDecision, RecoveryExecutionResult, RecoveryIssue
+
+logger = logging.getLogger(__name__)
 
 
 class RecoveryExecutor:
@@ -70,6 +73,9 @@ class RecoveryExecutor:
             else:
                 return self._review(action, "未实现的恢复动作", attempts)
         except Exception as exc:
+            logger.warning(
+                "恢复动作执行失败，转人工复核: action=%s", action, exc_info=True
+            )
             return self._review(action, f"恢复执行失败: {type(exc).__name__}", attempts)
 
         translation = str(translation or "").strip()

@@ -7,10 +7,13 @@ Execution is intentionally deferred to the next recovery stage.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, Optional
 
 from translation_json_parser import extract_json_object
 from translation_models import RecoveryAction, RecoveryDecision, RecoveryIssue, RecoveryIssueType
+
+logger = logging.getLogger(__name__)
 
 from .recovery_prompts import build_recovery_prompt
 
@@ -124,6 +127,12 @@ class RecoveryAgent:
         try:
             payload = extract_json_object(str(raw_response or ""))
         except Exception:
+            # 这是「恢复模型输出不可解析」的路径：决定会回退为人工复核，
+            # 保留原始响应片段才能判断是模型问题还是解析器问题。
+            logger.warning(
+                "恢复模型返回内容不是有效 JSON，转人工复核: %r", str(raw_response or "")[:400],
+                exc_info=True,
+            )
             return self._review("恢复模型返回内容不是有效 JSON", issue)
         return self._validate(payload, issue)
 
@@ -137,5 +146,8 @@ class RecoveryAgent:
         try:
             raw_response = self.request_executor(self.build_request(issue))
         except Exception as exc:
+            logger.warning(
+                "恢复模型请求失败，转人工复核: %s", type(exc).__name__, exc_info=True
+            )
             return self._review(f"恢复模型请求失败: {type(exc).__name__}", issue)
         return self.parse_response(raw_response, issue)

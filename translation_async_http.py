@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from typing import Any, Dict, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 try:
     import httpx
@@ -88,6 +91,9 @@ class AsyncHttpJsonExecutor:
             try:
                 json_data = response.json()
             except Exception:
+                # 非 JSON 响应在这里是预期路径（错误页、HTML 网关页），
+                # 上层会用 text 做内容审核/错误判断。
+                logger.debug("异步响应不是合法 JSON，回退到文本内容", exc_info=True)
                 json_data = None
             return HttpxResponseAdapter(
                 response.status_code,
@@ -122,8 +128,8 @@ class AsyncHttpJsonExecutor:
             future = asyncio.run_coroutine_threadsafe(close_client(), self._loop)
             future.result(timeout=5)
         except Exception:
-            pass
+            logger.debug("关闭异步 HTTP 客户端超时或失败（关闭路径）", exc_info=True)
         try:
             self._loop.call_soon_threadsafe(self._loop.stop)
         except Exception:
-            pass
+            logger.debug("停止异步事件循环失败（关闭路径）", exc_info=True)

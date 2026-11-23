@@ -65,6 +65,12 @@ COMMON_JAPANESE_RESIDUE_REPAIRS = {
 }
 JAPANESE_RESIDUE_ALLOWLIST_FILE = "japanese_residue_allowlist.json"
 
+# 日文叠字符「々」几乎只出现在日文里：实测语料中，日文原书出现 341 次，
+# 繁体中文译本 0 次、简体中文译本 0～1 次。它是**不含假名**的日文短句最可靠的信号。
+# 例：「久珠場俊隆博士死去」「日々是好日」这类纯汉字残留一个字假名都没有，
+# 原有的「假名锚定」门禁会整体放行，只能靠这个字符兜住。
+JAPANESE_ITERATION_MARK = "々"
+
 # Kanji that exist only in Japanese (or whose Japanese form differs from the
 # Simplified Chinese one). Used to tell "a stray kana in Chinese text" apart from
 # Kanji whose Japanese form differs from Chinese. A "translated" sentence should
@@ -547,10 +553,41 @@ def is_short_quoted_japanese_literal(text: str) -> bool:
     return bool(literal and JAPANESE_KANA_RE.search(literal))
 
 
+def has_kana_free_japanese_residue(text: str) -> bool:
+    """没有假名、但显然是未翻译日文的短句。
+
+    原有的残留判定完全锚定在**假名**上（`if not JAPANESE_KANA_RE.search(...): return False`），
+    因此一个假名都不带的日文整句会被判成「无残留」直接放行，连分类器和报告都看不到它。
+
+    真实故障（《一千零一夜馆杀人事件》成书）：
+        目录与正文里出现「久珠場俊隆博士死去」——纯汉字、零假名，保存时无人拦截。
+
+    判定刻意收得很窄，只认最可靠的信号：日文叠字符「々」。
+    不使用「日文特有汉字」是因为 `JAPANESE_SPECIFIC_KANJI` 里混着大量**繁体中文标准字**
+    （學、實、會、場、報…），实测台繁译本每本有 5～15 行纯汉字命中，用它会误伤繁体书；
+    而「々」在台繁译本里 0 命中。
+
+    实测误报率（18213 行简体中文译稿 + 13122 行繁体译稿）：仅 1 行命中 0.005%。
+    该行是「佐々木」——日文专有名词的叠写形式，确实算未本地化的残留，
+    但属于「名称类」而非「整句漏译」，因此调用方按 low 风险上报、不硬拦保存。
+
+    已知边界：完全无假名且不含「々」的日文汉字串（如「久珠場俊隆博士死去」本身）
+    仍无法与中文专有名词可靠区分，不在此函数职责内，交由术语一致性检查处理。
+    """
+    if not text:
+        return False
+    stripped = strip_allowed_japanese_notation(text)
+    if not stripped.strip():
+        return False
+    return any(mark in stripped for mark in JAPANESE_ITERATION_MARK)
+
+
 def has_blocking_japanese_residue(text: str) -> bool:
     raw = text or ""
     if is_short_quoted_japanese_literal(raw):
         return False
+    if has_kana_free_japanese_residue(raw):
+        return True
     stripped = strip_allowed_japanese_notation(raw)
     if not JAPANESE_KANA_RE.search(stripped):
         return False
@@ -593,7 +630,24 @@ def classify_japanese_residue(text: str) -> Dict[str, Any]:
     raw = str(text or "").strip()
     stripped = strip_allowed_japanese_notation(raw)
     fragments = extract_japanese_residue_fragments(raw)
-    if not raw or not JAPANESE_KANA_RE.search(stripped):
+    if not raw:
+        return {
+            "risk": "none",
+            "blocking": False,
+            "fragments": [],
+            "reason": "no_japanese_residue",
+        }
+    if not JAPANESE_KANA_RE.search(stripped):
+        # 没有假名不等于已翻译：纯汉字日文（含「々」）过去在这里被整体放行。
+        # 只报 low（名称/术语类），balanced 策略下进报告但不硬拦保存——
+        # 实测唯一命中是「佐々木」这类日文专有名词，硬拦会打断正常译稿。
+        if has_kana_free_japanese_residue(raw):
+            return {
+                "risk": "low",
+                "blocking": True,
+                "fragments": [],
+                "reason": "kana_free_japanese_residue",
+            }
         return {
             "risk": "none",
             "blocking": False,
