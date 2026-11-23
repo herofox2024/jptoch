@@ -1,3 +1,41 @@
+[project]
+name = "epub-translator"
+# 版本号不由本文件维护：唯一来源是 experimental/qml_v4/backend/app_info.py
+# 的 APP_VERSION（tests/test_version_single_source.py 会校验两者一致）。
+dynamic = ["version"]
+description = "基于大模型 API 的日文 EPUB 自动翻译工具（Windows 桌面端）"
+requires-python = ">=3.11"
+dependencies = [
+    # 核心运行时：epub_io.py 直接依赖 ebooklib 与 bs4
+    "ebooklib",
+    "beautifulsoup4",
+    # bs4 的 "xml" 解析器（epub_io.py 解析 container.xml / OPF）需要 lxml
+    "lxml",
+    "requests",
+    # QML/V4 是唯一发布目标
+    "PySide6>=6.5",
+    # dict/*.yaml 提示词模板依赖；缺失时 translator 会降级为内置提示词
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# 可选加速：启用异步连接池快速批量模式（translation_async_http.py）
+async = ["httpx"]
+# 可选：Hy-MT2 Python 本地推理模式（experimental/qml_v4/backend/python_llama_service.py）
+local-llm = ["llama-cpp-python"]
+# 开发与测试（发布工作流会自动安装这些）
+dev = ["pytest", "ruff", "pytest-cov"]
+# 归档回退版 Qt V3.2.1 专用依赖（archived/qt_v3/main_qt.py）。
+# 注意：它与 PySide6 不是同一套 Qt 绑定，**不要**和核心依赖一起安装。
+legacy-qt = [
+    "PyQt5",
+    "PyQt-Fluent-Widgets",
+    "tkinterdnd2",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "experimental.qml_v4.backend.app_info.APP_VERSION" }
+
 [tool.ruff]
 # 目标与兼容性：与 CI 打包环境、本地开发环境保持一致（.python-version）
 target-version = "py312"

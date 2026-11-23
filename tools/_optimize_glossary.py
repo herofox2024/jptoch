@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Optimize glossary.json: clean format, merge duplicates, remove honorific variants, categorize."""
+"""Optimize glossary.json: clean format, merge duplicates, remove honorific variants, categorize.
+
+!! 危险：一次性迁移脚本，请勿在未备份的情况下运行 !!
+
+- 它直接**覆盖写** ``~/.epub_translator/glossary.json``（用户真实词库）。
+- 合并表（merge_map）是为某一部特定作品手工整理的，换一本书基本无用。
+- 脚本在模块顶层执行，导入即运行，没有命令行参数或 dry-run。
+
+保留原因：合并表里是人工累积的等价词对，可作为术语归一化的参考资料。
+若要重新使用，建议先复制一份词库另测，不要直接指向真实文件。
+"""
 
 import json
 import re

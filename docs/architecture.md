@@ -117,6 +117,53 @@ prerelease do not guarantee identical behaviour in the stable release build.
 - Current modules must not import archived UI code.
 - Release workflows, installers and current tests target QML/V4 unless a test explicitly validates the archive layout.
 
+## Why `experimental/` Is Not Renamed
+
+`experimental/qml_v4` is the **only release target**, yet it lives under a directory whose
+name says it is an experiment. This is a known naming debt, kept deliberately:
+
+- The path appears in packaging specs, installer scripts, CI, and the user's own
+  configured data locations. A rename touches all of them at once.
+- The benefit is cosmetic; the risk is a broken release at tag time.
+
+If it is ever renamed, these must change together, in one commit:
+
+| Location | Why it breaks |
+| --- | --- |
+| `experimental/qml_v4/EPUBTranslator*.spec` | PyInstaller entry paths and `datas` |
+| `installer/EPUB日译中V4.0*.iss` | `MyAppSourceDir`, `MyAppExeName` |
+| `.github/workflows/release-qml-v4.yml` | build, smoke-test and portable-zip paths |
+| `tests/test_repository_layout.py` | asserts the current layout |
+| `tests/_qml_ui_probe_runner.py`, `tools/capture_readme_screenshots.py` | hard-coded QML root |
+| `README.md`, `README_EN.md`, `docs/architecture.md` | documented commands |
+| `sys.path` bootstrapping in `main.py` and the bridges | inserts `PROJECT_ROOT` and `EXPERIMENT_DIR` |
+| User config with absolute paths | e.g. `~/.epub_translator/config.json` |
+
+Until such a migration is scheduled, treat the directory name as frozen. Do not "fix" it
+as drive-by cleanup: it would fail at packaging time, not at import time.
+
+## Dependency Single Source
+
+`pyproject.toml` → `[project].dependencies` is the only authoritative dependency list.
+
+| File | Role |
+| --- | --- |
+| `pyproject.toml` | Authoritative dependencies, optional groups, tool config |
+| `requirements.txt` | pip-compatible mirror; must match `pyproject.toml` |
+| `experimental/qml_v4/requirements.txt` | pip-compatible mirror for the QML build; must match the above |
+
+The two `requirements.txt` files exist only because the release workflow and README invoke
+them by path. `tests/test_dependency_single_source.py` enforces that all three agree, and that
+the archived Qt V3 bindings (PyQt5, PyQt-Fluent-Widgets, tkinterdnd2) stay inside the
+`legacy-qt` optional group — they must never be installed alongside PySide6 by default.
+
+## Repository Root
+
+Keep the root free of runtime artifacts and one-off scripts. `.gitignore` covers
+`cache.json`, `glossary.json`, `.coverage`, `__pycache__/` and the test caches, but ignored
+files still slow down any directory-wide tooling, so clean them up rather than relying on
+git only. One-off migration scripts belong in `tools/`, not the root.
+
 ## QML Design Tokens
 
 Visual constants have exactly one owner each:

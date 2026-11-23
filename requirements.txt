@@ -1,14 +1,24 @@
-# 归档版 Qt V3.2.1 运行时依赖（archived/qt_v3/main_qt.py）
-# 当前主力版本 QML/V4 请改用 experimental/qml_v4/requirements.txt
+# ---------------------------------------------------------------------------
+# 依赖的权威定义在 pyproject.toml 的 [project].dependencies。
+# 本文件是 pip 兼容入口，必须与 pyproject.toml 保持一致；
+# tests/test_dependency_single_source.py 会强制校验两者同步，改一处必须改另一处。
+#
+# 本文件即为当前主力版本 QML/V4 的运行时依赖。
+# ---------------------------------------------------------------------------
 ebooklib
 beautifulsoup4
 lxml
 requests
-tkinterdnd2
-PyQt5
-PyQt-Fluent-Widgets
+PySide6>=6.5
 PyYAML>=6.0
 
+# 可选运行时依赖（需要时显式安装）：
+#   pip install httpx              —— 启用异步连接池快速批量模式（translation_async_http）
+#   pip install llama-cpp-python   —— 启用 Hy-MT2 Python 本地推理模式
+#
 # 开发依赖（发布工作流会自动安装）：
-#   pytest
-#   ruff
+#   pip install pytest ruff pytest-cov
+#
+# 归档回退版 Qt V3.2.1 的依赖（PyQt5 / PyQt-Fluent-Widgets / tkinterdnd2）
+# 已移到 pyproject.toml 的 optional-dependencies.[legacy-qt]，
+# 避免默认安装时把 PySide6 和 PyQt5 两套 Qt 绑定同时装进同一个环境。

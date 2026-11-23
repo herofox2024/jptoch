@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿<div align="center">
+﻿﻿﻿﻿﻿﻿<div align="center">
 
 <img src="assets/logo.png" width="180" alt="AI日译中 EPUB 翻译器">
 
@@ -111,8 +111,11 @@ python experimental/qml_v4/main.py
 
 ### 方式三：运行归档回退版 Qt V3.2.1
 
+归档版使用 PyQt5，与主力版本的 PySide6 是两套不同的 Qt 绑定，**不要装在同一个环境里**。
+它的依赖单独放在 `pyproject.toml` 的可选分组中：
+
 ```powershell
-pip install -r requirements.txt
+pip install -e ".[legacy-qt]"
 python archived/qt_v3/main_qt.py
 ```
 

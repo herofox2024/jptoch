@@ -94,8 +94,12 @@ python experimental/qml_v4/main.py
 
 ### Option 3: Run the archived Qt V3.2.1 fallback
 
+The archived build uses PyQt5, which is a different Qt binding from the PySide6 used by
+the main version. **Do not install both into the same environment.** Its dependencies
+live in the `legacy-qt` optional group of `pyproject.toml`:
+
 ```powershell
-pip install -r requirements.txt
+pip install -e ".[legacy-qt]"
 python archived/qt_v3/main_qt.py
 ```
 
