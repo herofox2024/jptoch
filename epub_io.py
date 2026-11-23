@@ -552,7 +552,7 @@ def repair_epub(path: str) -> str:
             mimetype_path = os.path.join(temp_dir, "mimetype")
             if os.path.exists(mimetype_path):
                 zf.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
-            for root, dirs, files in os.walk(temp_dir):
+            for root, _dirs, files in os.walk(temp_dir):
                 if "repaired.epub" in files:
                     files.remove("repaired.epub")
                 for file in files:
@@ -570,7 +570,8 @@ def repair_epub(path: str) -> str:
         # （例如 BadZipFile vs PermissionError 的处理方式完全不同）。
         logger.error("EPUB 修复失败: %s", temp_epub, exc_info=True)
         shutil.rmtree(temp_dir, ignore_errors=True)
-        raise RuntimeError(f"EPUB 修复失败: {e}")
+        # 保留原始异常链：BadZipFile / PermissionError 等底层原因对定位至关重要。
+        raise RuntimeError(f"EPUB 修复失败: {e}") from e
     finally:
         # success path cleanup is delegated to save_book via _repaired_temp_path
         pass
@@ -643,7 +644,8 @@ def load_book(path: str, try_repair: bool = True) -> epub.EpubBook:
         return book
     except (KeyError, zipfile.BadZipFile, ValueError, OSError) as e:
         if not try_repair:
-            raise RuntimeError(f"EPUB 文件损坏: {e}")
+            # 带上原始异常，否则调用方只能看到 "EPUB 文件损坏" 而不知是哪种损坏。
+            raise RuntimeError(f"EPUB 文件损坏: {e}") from e
 
         logger.warning(f"EPUB 加载失败，尝试自动修复: {e}")
 
@@ -1190,7 +1192,7 @@ def set_reading_direction(epub_path: str, chinese_mode: bool = True) -> None:
             mimetype_path = os.path.join(temp_dir, "mimetype")
             if os.path.exists(mimetype_path):
                 zf.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
-            for root, dirs, files in os.walk(temp_dir):
+            for root, _dirs, files in os.walk(temp_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
                     arc_name = os.path.relpath(file_path, temp_dir).replace("\\", "/")

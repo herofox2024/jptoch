@@ -3020,7 +3020,9 @@ class JaZhTranslator:
                 self._inc_stat("api_requests_failed")
                 self._log_http_error_response(e, "术语抽取")
                 if self._is_content_moderation_http_error(e):
-                    raise ContentModerationError(str(e))
+                    # 保留原始 HTTPError 作为原因链，便于日志里同时看到
+                    # 「内容审核拦截」和底层 400 响应体。
+                    raise ContentModerationError(str(e)) from e
                 if not is_retryable_status(getattr(getattr(e, "response", None), "status_code", None)):
                     return BatchJsonResult(
                         translations=None,
@@ -4811,7 +4813,7 @@ JSON 顶层字段：
                         raise ContentModerationError(
                             f"内容审核拦截: {e}",
                             offending_indices=list(range(len(texts))),
-                        )
+                        ) from e
                     self._log_http_error_response(
                         e,
                         "批量 JSON 翻译",
@@ -4924,7 +4926,9 @@ JSON 顶层字段：
                     )
                     for item_index, item in enumerate(chunk, start=1):
                         if self.cancel_event.is_set():
-                            raise RuntimeError("术语预提取已取消")
+                            # 取消是主动控制流，不是被中断异常导致的级联失败，
+                            # 因此抑制上下文，避免日志里出现误导性的 "During handling of..." 链。
+                            raise RuntimeError("术语预提取已取消") from None
                         try:
                             item_result = self._call_glossary_extraction_json(
                                 [item],
@@ -5947,7 +5951,7 @@ JSON 顶层字段：
             )
             self._inc_stat("batch_moderation_fallback")
             single_parts: List[Optional[str]] = []
-            for task_key, text in zip(batch, batch_texts):
+            for task_key, text in zip(batch, batch_texts, strict=True):
                 try:
                     retry_prev, retry_next = self._context_for_task(ctx, task_key)
                     single_parts.append(
@@ -5960,7 +5964,7 @@ JSON 顶层字段：
                     )
                     single_parts.append(None)
             return self._repair_batch_quality(
-                ctx, batch, list(zip(batch, batch_texts, single_parts))
+                ctx, batch, list(zip(batch, batch_texts, single_parts, strict=True))
             )
 
         # Case 1: 全部成功（所有 idx 都有有效译文）
@@ -5972,7 +5976,7 @@ JSON 顶层字段：
                     self._merge_new_terms_into_glossary(cleaned_terms)
                 self._inc_stat("batch_json_success")
                 return self._repair_batch_quality(
-                    ctx, batch, list(zip(batch, batch_texts, json_parts))
+                    ctx, batch, list(zip(batch, batch_texts, json_parts, strict=True))
                 )
 
         # Case 2: 部分成功 — 有效条目直接用，缺失条目单条重试
@@ -5996,7 +6000,7 @@ JSON 顶层字段：
                     final_parts[idx] = None  # 保留为未完成，禁止回写原文
 
             return self._repair_batch_quality(
-                ctx, batch, list(zip(batch, batch_texts, final_parts))
+                ctx, batch, list(zip(batch, batch_texts, final_parts, strict=True))
             )
 
         # Case 3: 批量 JSON 两次仍全部失败 — 直接逐条单条翻译。
@@ -6004,7 +6008,7 @@ JSON 顶层字段：
         self._inc_stat("batch_fallback")
         logger.info("批量 JSON 多次失败，回退逐条单条翻译: %s 条", len(batch))
         single_parts = []
-        for task_key, text in zip(batch, batch_texts):
+        for task_key, text in zip(batch, batch_texts, strict=True):
             try:
                 retry_prev, retry_next = self._context_for_task(ctx, task_key)
                 single_parts.append(
@@ -6014,7 +6018,7 @@ JSON 顶层字段：
                 logger.warning(f"批量失败后的单条翻译失败: {e}")
                 single_parts.append(None)
         return self._repair_batch_quality(
-            ctx, batch, list(zip(batch, batch_texts, single_parts))
+            ctx, batch, list(zip(batch, batch_texts, single_parts, strict=True))
         )
 
     def _record_batch_results(

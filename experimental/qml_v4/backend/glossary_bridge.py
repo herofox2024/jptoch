@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from PySide6.QtCore import (
-    QAbstractListModel, QModelIndex, Qt, QObject, Signal, Slot, Property,
+    QAbstractListModel, Qt, QObject, Signal, Slot, Property,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,10 @@ class GlossaryModel(QAbstractListModel):
         self._category_filter = "全部分类"
         self._source_filter = "全部来源"
 
-    def rowCount(self, parent=QModelIndex()) -> int:
+    def rowCount(self, parent=None) -> int:
+        # parent 在 list model 中语义固定且不被读取，因此不做类型注解。
+        # 早期写成 `parent=QModelIndex()`：这会在**定义时**就构造一次默认值，
+        # 作为共享的可变默认参数传给所有调用（B008）。改用 None 哨兵即可。
         return len(self._filtered)
 
     def roleNames(self):
@@ -381,7 +384,7 @@ class GlossaryModel(QAbstractListModel):
             # 转成 ValueError 是为了让 QML 拿到可读消息，但原始异常类型会被丢掉，
             # 因此这里必须留一条带堆栈的记录。
             logger.warning("导入术语 JSON 失败: %s", path_str, exc_info=True)
-            raise ValueError(str(e))
+            raise ValueError(str(e)) from e
 
     def import_csv(self, path_str: str):
         try:
@@ -416,7 +419,7 @@ class GlossaryModel(QAbstractListModel):
             }
         except Exception as e:
             logger.warning("导入术语 CSV 失败: %s", path_str, exc_info=True)
-            raise ValueError(str(e))
+            raise ValueError(str(e)) from e
 
     def export_json(self, path_str: str):
         translator_cls = _translator_cls()
@@ -464,7 +467,7 @@ class GlossaryModel(QAbstractListModel):
             return len(self._all_rows)
         except Exception as e:
             logger.warning("从备份恢复术语表失败: %s", path_str, exc_info=True)
-            raise ValueError(str(e))
+            raise ValueError(str(e)) from e
 
     def search(self, query: str, category_filter: str, source_filter: str):
         self._query = query.strip().lower()

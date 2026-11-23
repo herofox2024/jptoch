@@ -73,7 +73,10 @@ def _safe_file_name(name: str) -> str:
         cleaned += ".exe"
     cleaned = cleaned[:180]
     # 只剩 ".exe"（主文件名为空）在 Windows 上是无效文件名，回退到默认名。
-    if cleaned.strip(" ._.exeEXE") == "":
+    # 注意：这里剥掉的是扩展名本身，用 removesuffix 明确表达意图；
+    # 之前写成 strip(" ._.exeEXE")，那是按**字符集**剥离，语义容易误读（B005）。
+    stem = cleaned[: -len(".exe")] if cleaned.lower().endswith(".exe") else cleaned
+    if not stem.strip(" ._"):
         return fallback
     return cleaned or fallback
 

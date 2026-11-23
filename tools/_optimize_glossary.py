@@ -75,7 +75,7 @@ for k, v in list(entries.items()):
 
 # Apply merges
 merged = 0
-for canonical, variants in merge_map.items():
+for _canonical, variants in merge_map.items():
     for v in variants:
         if v in entries:
             del entries[v]

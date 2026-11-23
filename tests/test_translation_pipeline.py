@@ -849,7 +849,7 @@ class PipelineTests(unittest.TestCase):
                 self.last_ordered_results = [f"译文:{text}" for text in texts]
                 kwargs["progress_callback"](len(texts), len(texts))
                 kwargs["item_callback"](texts[0], self.last_ordered_results[0])
-                return dict(zip(texts, self.last_ordered_results))
+                return dict(zip(texts, self.last_ordered_results, strict=True))
 
         progress = []
         items = []
